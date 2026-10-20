@@ -233,7 +233,7 @@ if(NOT "${CMAKE_CURRENT_BINARY_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
 set(SERVER_EXECUTABLE DDNet-Server CACHE STRING "Name of the built server executable")
-set(CLIENT_EXECUTABLE DDNet CACHE STRING "Name of the build client executable")
+set(CLIENT_EXECUTABLE LazyClient CACHE STRING "Name of the build client executable")
 set(IOS_BUNDLE_IDENTIFIER "org.ddnet.client" CACHE STRING "iOS bundle identifier")
 
 ########################################################################
@@ -1752,6 +1752,7 @@ set(EXPECTED_DATA
   languages/traditional_chinese.txt
   languages/turkish.txt
   languages/ukrainian.txt
+  lazy/banner.png
   mapres/basic_freeze.png
   mapres/bg_cloud1.png
   mapres/bg_cloud2.png
@@ -2451,6 +2452,7 @@ set_src(ENGINE_SHARED GLOB_RECURSE src/engine/shared
   config_domains.h
   config_includes.h
   config_variables.h
+  config_variables_lazy.h
   config_variables_tclient.h
   console.cpp
   console.h
@@ -2813,6 +2815,7 @@ if(CLIENT)
     components/items.h
     components/key_binder.cpp
     components/key_binder.h
+    components/lazy/menus_lazy.cpp
     components/local_server.cpp
     components/local_server.h
     components/mapimages.cpp

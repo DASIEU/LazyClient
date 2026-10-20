@@ -54,6 +54,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		TCLocalize("TClient"), // TClient
 		Localize("Profiles"), // TClient
 		Localize("Configs"), // TClient
+		Localize("LazyClient"), // LazyClient
 		Localize("Credits")};
 	static CButtonContainer s_aTabButtons[SETTINGS_LENGTH];
 
@@ -133,6 +134,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_PLAYER);
 		RenderSettingsTClientConfigs(MainView);
 	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_LAZY) // LazyClient
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
+		RenderSettingsLazy(MainView);
+	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_CREDITS)
 	{
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_CREDITS);
@@ -151,7 +157,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		if(m_NeedRestartUpdate)
 		{
 			TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
-			Ui()->DoLabel(&RestartWarning, Localize("DDNet Client needs to be restarted to complete update!"), 14.0f, TEXTALIGN_ML);
+			Ui()->DoLabel(&RestartWarning, Localize("LazyClient needs to be restarted to complete update!"), 14.0f, TEXTALIGN_ML);
 			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 		}
 		else

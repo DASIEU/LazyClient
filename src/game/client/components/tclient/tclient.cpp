@@ -22,7 +22,7 @@
 #include <game/localization.h>
 #include <game/version.h>
 
-static constexpr const char *TCLIENT_INFO_URL = "https://update.tclient.app/info.json";
+static constexpr const char *LAZYCLIENT_INFO_URL = "https://api.github.com/repos/DASIEU/LazyClient/releases?per_page=1";
 
 CTClient::CTClient()
 {
@@ -579,7 +579,7 @@ void CTClient::FetchTClientInfo()
 	if(m_pTClientInfoTask && !m_pTClientInfoTask->Done())
 		return;
 	char aUrl[256];
-	str_copy(aUrl, TCLIENT_INFO_URL);
+	str_copy(aUrl, LAZYCLIENT_INFO_URL);
 	m_pTClientInfoTask = HttpGet(aUrl);
 	m_pTClientInfoTask->Timeout(CTimeout{10000, 0, 500, 10});
 	m_pTClientInfoTask->IpResolve(IPRESOLVE::V4);
@@ -592,6 +592,11 @@ static const TVersion gs_InvalidTCVersion = std::make_tuple(-1, -1, -1);
 static TVersion ToTCVersion(char *pStr)
 {
 	int aVersion[3] = {0, 0, 0};
+	if(*pStr == 'v' || *pStr == 'V')
+		pStr++;
+	char *pSuffix = (char *)str_find(pStr, "-");
+	if(pSuffix != nullptr)
+		*pSuffix = '\0';
 	const char *p = strtok(pStr, ".");
 
 	for(int i = 0; i < 3 && p; ++i)
@@ -615,24 +620,30 @@ void CTClient::FinishTClientInfo()
 	if(!pJson)
 		return;
 	const json_value &Json = *pJson;
-	const json_value &CurrentVersion = Json["version"];
 
-	if(CurrentVersion.type == json_string)
+	m_FetchedTClientInfo = true;
+
+	const json_value *pRelease = Json.type == json_array ? json_array_get(&Json, 0) : nullptr;
+	const json_value *pTagName = pRelease != nullptr ? json_object_get(pRelease, "tag_name") : nullptr;
+
+	if(pTagName != nullptr && pTagName->type == json_string)
 	{
+		const char *pVersion = json_string_get(pTagName);
 		char aNewVersionStr[64];
-		str_copy(aNewVersionStr, CurrentVersion);
+		str_copy(aNewVersionStr, pVersion);
 		char aCurVersionStr[64];
-		str_copy(aCurVersionStr, TCLIENT_VERSION);
+		str_copy(aCurVersionStr, LAZYCLIENT_VERSION);
 		if(ToTCVersion(aNewVersionStr) > ToTCVersion(aCurVersionStr))
 		{
-			str_copy(m_aVersionStr, CurrentVersion);
+			if(*pVersion == 'v' || *pVersion == 'V')
+				pVersion++;
+			str_copy(m_aVersionStr, pVersion);
 		}
 		else
 		{
 			m_aVersionStr[0] = '0';
 			m_aVersionStr[1] = '\0';
 		}
-		m_FetchedTClientInfo = true;
 	}
 
 	json_value_free(pJson);

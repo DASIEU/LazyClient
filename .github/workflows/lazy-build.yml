@@ -1,0 +1,52 @@
+name: LazyClient Linux build
+
+on:
+  push:
+    branches:
+      - lazy
+      - "lazy/**"
+  pull_request:
+    branches:
+      - lazy
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libcurl4-openssl-dev libfreetype-dev libharfbuzz-dev \
+            libogg-dev libopus-dev libopusfile-dev libpng-dev \
+            libsdl2-dev libssl-dev libsqlite3-dev zlib1g-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPREFER_BUNDLED_LIBS=ON \
+            -DCLIENT=ON \
+            -DSERVER=ON
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Upload LazyClient
+        uses: actions/upload-artifact@v4
+        with:
+          name: LazyClient-linux-x86_64
+          path: |
+            build/LazyClient
+            build/DDNet-Server
+          if-no-files-found: error

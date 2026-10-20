@@ -720,6 +720,7 @@ public:
 		SETTINGS_TCLIENT, // TClient
 		SETTINGS_PROFILES, // TClient
 		SETTINGS_CONFIGS, // TClient
+		SETTINGS_LAZY, // LazyClient
 		SETTINGS_CREDITS,
 		SETTINGS_LENGTH,
 	};
@@ -877,6 +878,14 @@ private:
 	void RenderSettingsTClientProfiles(CUIRect MainView);
 	void RenderSettingsTClientConfigs(CUIRect MainView);
 	void RenderTeeCute(const CAnimState *pAnim, const CTeeRenderInfo *pInfo, int Emote, vec2 Dir, vec2 Pos, bool CuteEyes, float Alpha = 1.0f);
+
+	// LazyClient: found in components/lazy/menus_lazy.cpp
+	void RenderSettingsLazy(CUIRect MainView);
+	void RenderSettingsLazyGame(CUIRect MainView);
+	void RenderSettingsLazyVisuals(CUIRect MainView);
+	void RenderSettingsLazyChatTriggers(CUIRect MainView);
+	void RenderSettingsLazyMiscellaneous(CUIRect MainView);
+	void RenderSettingsLazyInfo(CUIRect MainView);
 
 	// TClient
 	const CWarType *m_pRemoveWarType = nullptr;

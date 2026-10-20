@@ -21,12 +21,19 @@ extern const char *GIT_SHORTREV_HASH;
 #define GAME_NETVERSION7 "0.7 802f1be60a05665f"
 
 // TClient
+// Kept for compatibility with servers and code that still expects the
+// TClient version string. LazyClient has its own version below.
 #ifndef TCLIENT_VERSION
 #define TCLIENT_VERSION "10.9.0"
 #endif
 
+// LazyClient
+#ifndef LAZYCLIENT_VERSION
+#define LAZYCLIENT_VERSION "0.1.0"
+#endif
+
 // custom
-#define CLIENT_NAME "TClient"
-#define CLIENT_RELEASE_VERSION TCLIENT_VERSION
+#define CLIENT_NAME "LazyClient"
+#define CLIENT_RELEASE_VERSION LAZYCLIENT_VERSION
 
 #endif

@@ -29,7 +29,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	Graphics()->TextureSet(g_pData->m_aImages[IMAGE_BANNER].m_Id);
 	Graphics()->QuadsBegin();
 	Graphics()->SetColor(1, 1, 1, 1);
-	IGraphics::CQuadItem QuadItem(MainView.w / 2 - 170, 60, 360, 103);
+	IGraphics::CQuadItem QuadItem(MainView.w / 2 - 160, 50, 320, 109);
 	Graphics()->QuadsDrawTL(&QuadItem, 1);
 	Graphics()->QuadsEnd();
 
@@ -44,10 +44,11 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	ExtMenu.VSplitLeft(100.0f, &ExtMenu, nullptr);
 
 	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);
-	static CButtonContainer s_DiscordButton;
-	if(GameClient()->m_Menus.DoButton_Menu(&s_DiscordButton, Localize("Discord"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	static CButtonContainer s_GoresButton;
+	if(GameClient()->m_Menus.DoButton_Menu(&s_GoresButton, Localize("Gores"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 	{
-		Client()->ViewLink(Localize("https://ddnet.org/discord"));
+		str_copy(g_Config.m_BrFilterString, "kog", sizeof(g_Config.m_BrFilterString));
+		NewPage = CMenus::PAGE_INTERNET;
 	}
 
 	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr); // little space
@@ -68,10 +69,10 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr); // little space
 	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);
-	static CButtonContainer s_WebsiteButton;
-	if(GameClient()->m_Menus.DoButton_Menu(&s_WebsiteButton, Localize("Website"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	static CButtonContainer s_GithubButton;
+	if(GameClient()->m_Menus.DoButton_Menu(&s_GithubButton, Localize("GitHub"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 	{
-		Client()->ViewLink("https://ddnet.org/");
+		Client()->ViewLink("https://github.com/DASIEU/LazyClient");
 	}
 
 	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr); // little space
@@ -156,23 +157,23 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	ConsoleButton.VSplitRight(40.0f, nullptr, &ConsoleButton);
 	Ui()->DoLabel(&CurVersion, GAME_RELEASE_VERSION, 14.0f, TEXTALIGN_MR);
 
-	CUIRect TClientVersion;
-	MainView.HSplitTop(15.0f, &TClientVersion, &MainView);
-	TClientVersion.VSplitRight(40.0f, &TClientVersion, nullptr);
+	CUIRect LazyVersion;
+	MainView.HSplitTop(15.0f, &LazyVersion, &MainView);
+	LazyVersion.VSplitRight(40.0f, &LazyVersion, nullptr);
 	char aTBuf[64];
 	str_format(aTBuf, sizeof(aTBuf), CLIENT_NAME " %s", CLIENT_RELEASE_VERSION);
-	Ui()->DoLabel(&TClientVersion, aTBuf, 14.0f, TEXTALIGN_MR);
+	Ui()->DoLabel(&LazyVersion, aTBuf, 14.0f, TEXTALIGN_MR);
 #if defined(CONF_AUTOUPDATE)
 	CUIRect UpdateToDateText;
 	MainView.HSplitTop(15.0f, &UpdateToDateText, nullptr);
 	UpdateToDateText.VSplitRight(40.0f, &UpdateToDateText, nullptr);
 	if(!GameClient()->m_TClient.NeedUpdate() && GameClient()->m_TClient.m_FetchedTClientInfo)
 	{
-		Ui()->DoLabel(&UpdateToDateText, TCLocalize("(On Latest)"), 14.0f, TEXTALIGN_MR);
+		Ui()->DoLabel(&UpdateToDateText, Localize("(LazyClient is up to date)"), 14.0f, TEXTALIGN_MR);
 	}
 	else
 	{
-		Ui()->DoLabel(&UpdateToDateText, TCLocalize("(Fetching Update Info)"), 14.0f, TEXTALIGN_MR);
+		Ui()->DoLabel(&UpdateToDateText, Localize("(Checking for updates)"), 14.0f, TEXTALIGN_MR);
 	}
 #endif
 	static CButtonContainer s_ConsoleButton;
@@ -220,7 +221,7 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 
 	if(State == IUpdater::CLEAN && NeedUpdate)
 	{
-		str_format(aBuf, sizeof(aBuf), Localize("TClient %s is out!"), GameClient()->m_TClient.m_aVersionStr);
+		str_format(aBuf, sizeof(aBuf), Localize("LazyClient %s is out!"), GameClient()->m_TClient.m_aVersionStr);
 		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
 	}
 	else if(State == IUpdater::CLEAN)
@@ -240,13 +241,13 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 	}
 	else if(State == IUpdater::NEED_RESTART)
 	{
-		str_copy(aBuf, Localize("DDNet Client updated!"));
+		str_copy(aBuf, Localize("LazyClient updated!"));
 		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
 	}
 	Ui()->DoLabel(&VersionUpdate, aBuf, 14.0f, TEXTALIGN_ML);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
-#elif defined(CONF_INFORM_UPDATE)
-	if(str_comp(Client()->LatestVersion(), "0") != 0 && false)
+#else
+	if(GameClient()->m_TClient.NeedUpdate() && GameClient()->m_TClient.m_FetchedTClientInfo)
 	{
 		CUIRect DownloadButton;
 		VersionUpdate.VSplitRight(100.0f, &VersionUpdate, &DownloadButton);
@@ -255,13 +256,13 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		static CButtonContainer s_DownloadButton;
 		if(GameClient()->m_Menus.DoButton_Menu(&s_DownloadButton, Localize("Download"), 0, &DownloadButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 		{
-			Client()->ViewLink("https://ddnet.org/downloads/");
+			Client()->ViewLink("https://github.com/DASIEU/LazyClient/releases/latest");
 		}
 
 		char aBuf[64];
-		str_format(aBuf, sizeof(aBuf), Localize("DDNet %s is out!"), Client()->LatestVersion());
+		str_format(aBuf, sizeof(aBuf), Localize("LazyClient %s is out!"), GameClient()->m_TClient.m_aVersionStr);
 		SLabelProperties UpdateLabelProps;
-		UpdateLabelProps.SetColor(ColorRGBA(1.0f, 0.4f, 0.4f, 1.0f));
+		UpdateLabelProps.SetColor(ColorRGBA(0.72f, 0.66f, 1.0f, 1.0f));
 		Ui()->DoLabel(&VersionUpdate, aBuf, 14.0f, TEXTALIGN_ML, UpdateLabelProps);
 	}
 #endif
