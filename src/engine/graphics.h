@@ -676,6 +676,9 @@ protected:
 public:
 	// TClient
 	virtual void SetForcedAspect(bool Force) = 0;
+
+	// LazyClient
+	virtual void SetCustomAspect(float Aspect) = 0;
 };
 
 class IEngineGraphics : public IGraphics

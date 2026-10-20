@@ -2207,7 +2207,7 @@ int CGraphics_Threaded::IssueInit()
 		Flags |= IGraphicsBackend::INITFLAG_VSYNC;
 	}
 
-	const int Result = m_pBackend->Init("TClient", &g_Config.m_GfxScreen, &g_Config.m_GfxScreenWidth, &g_Config.m_GfxScreenHeight, &g_Config.m_GfxScreenRefreshRate, &g_Config.m_GfxFsaaSamples, Flags, &m_DesktopSize.x, &m_DesktopSize.y, &m_ScreenWidth, &m_ScreenHeight, m_pStorage);
+	const int Result = m_pBackend->Init("LazyClient", &g_Config.m_GfxScreen, &g_Config.m_GfxScreenWidth, &g_Config.m_GfxScreenHeight, &g_Config.m_GfxScreenRefreshRate, &g_Config.m_GfxFsaaSamples, Flags, &m_DesktopSize.x, &m_DesktopSize.y, &m_ScreenWidth, &m_ScreenHeight, m_pStorage);
 	m_DrawableWidth = m_ScreenWidth;
 	m_DrawableHeight = m_ScreenHeight;
 	AddBackEndWarningIfExists();
@@ -2228,6 +2228,10 @@ int CGraphics_Threaded::IssueInit()
 
 // TClient
 bool g_GraphicsForcedAspect = true;
+
+// LazyClient
+float g_GraphicsCustomAspect = 0.0f;
+
 void CGraphics_Threaded::SetForcedAspect(bool Force)
 {
 	if(!IsBackendInitialized())
@@ -2247,17 +2251,54 @@ void CGraphics_Threaded::SetForcedAspect(bool Force)
 		ResizeListener();
 }
 
+// LazyClient
+void CGraphics_Threaded::SetCustomAspect(float Aspect)
+{
+	if(!IsBackendInitialized())
+		return;
+	if(g_GraphicsCustomAspect == Aspect)
+		return;
+
+	g_GraphicsCustomAspect = Aspect;
+	AdjustViewport(false);
+	UpdateViewport(m_ViewportX, 0, m_ScreenWidth, m_ScreenHeight, false);
+
+	// kick the command buffer and wait
+	KickCommandBuffer();
+	WaitForIdle();
+
+	for(auto &ResizeListener : m_vResizeListeners)
+		ResizeListener();
+}
+
 void CGraphics_Threaded::AdjustViewport(bool SendViewportChangeToBackend)
 {
 	// exclude the area covered by the display cutout, as nothing rendered there is visible
 	int InsetLeft, InsetRight;
 	m_pBackend->GetDisplayCutoutInsets(InsetLeft, InsetRight);
+	const int AvailableWidth = std::max(1, m_DrawableWidth - InsetLeft - InsetRight);
+	const int AvailableHeight = std::max(1, m_DrawableHeight);
 	m_ViewportX = InsetLeft;
-	m_ScreenWidth = m_DrawableWidth - InsetLeft - InsetRight;
+	m_ScreenWidth = AvailableWidth;
+	m_ScreenHeight = AvailableHeight;
 
 	// adjust the viewport to only allow certain aspect ratios
 	// keep this in sync with backend_vulkan GetSwapImageSize's check
-	if(m_ScreenHeight > 4 * m_ScreenWidth / 5 && g_GraphicsForcedAspect)
+	if(g_GraphicsCustomAspect > 0.0f)
+	{
+		// LazyClient: fit the drawable area to the requested aspect ratio
+		int FitWidth = AvailableWidth;
+		int FitHeight = AvailableHeight;
+		if((float)AvailableWidth / (float)AvailableHeight > g_GraphicsCustomAspect)
+			FitWidth = (int)(AvailableHeight * g_GraphicsCustomAspect + 0.5f);
+		else
+			FitHeight = (int)(AvailableWidth / g_GraphicsCustomAspect + 0.5f);
+		m_ScreenWidth = std::clamp(FitWidth, 1, AvailableWidth);
+		m_ScreenHeight = std::clamp(FitHeight, 1, AvailableHeight);
+		m_ViewportX = InsetLeft + (AvailableWidth - m_ScreenWidth) / 2;
+		m_IsForcedViewport = true;
+	}
+	else if(m_ScreenHeight > 4 * m_ScreenWidth / 5 && g_GraphicsForcedAspect)
 	{
 		m_IsForcedViewport = true;
 		m_ScreenHeight = 4 * m_ScreenWidth / 5;
@@ -2267,7 +2308,7 @@ void CGraphics_Threaded::AdjustViewport(bool SendViewportChangeToBackend)
 		m_IsForcedViewport = false;
 	}
 
-	if(SendViewportChangeToBackend && (m_ScreenWidth != m_DrawableWidth || m_ScreenHeight != m_DrawableHeight))
+	if(SendViewportChangeToBackend && (m_ScreenWidth != m_DrawableWidth || m_ScreenHeight != m_DrawableHeight || m_ViewportX != InsetLeft))
 	{
 		UpdateViewport(m_ViewportX, 0, m_ScreenWidth, m_ScreenHeight, true);
 	}

@@ -4177,7 +4177,16 @@ public:
 		VkExtent2D AutoViewportExtent = RetSize;
 		bool UsesForcedViewport = false;
 		// keep this in sync with graphics_threaded AdjustViewport's check
-		if(AutoViewportExtent.height > 4 * AutoViewportExtent.width / 5 && g_GraphicsForcedAspect)
+		if(g_GraphicsCustomAspect > 0.0f && AutoViewportExtent.height > 0)
+		{
+			const float Aspect = g_GraphicsCustomAspect;
+			if((float)AutoViewportExtent.width / (float)AutoViewportExtent.height > Aspect)
+				AutoViewportExtent.width = std::max<uint32_t>(1, (uint32_t)(AutoViewportExtent.height * Aspect + 0.5f));
+			else
+				AutoViewportExtent.height = std::max<uint32_t>(1, (uint32_t)(AutoViewportExtent.width / Aspect + 0.5f));
+			UsesForcedViewport = true;
+		}
+		else if(AutoViewportExtent.height > 4 * AutoViewportExtent.width / 5 && g_GraphicsForcedAspect)
 		{
 			AutoViewportExtent.height = 4 * AutoViewportExtent.width / 5;
 			UsesForcedViewport = true;

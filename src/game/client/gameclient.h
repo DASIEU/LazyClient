@@ -49,6 +49,7 @@
 #include "components/infomessages.h"
 #include "components/items.h"
 #include "components/key_binder.h"
+#include "components/lazy/lazy.h"
 #include "components/local_server.h"
 #include "components/mapimages.h"
 #include "components/maplayers.h"
@@ -241,6 +242,7 @@ public:
 	CScripting m_Scripting;
 	CMod m_Mod;
 	CCustomCommunities m_CustomCommunities;
+	CLazyClient m_Lazy;
 	CMovingTiles m_MovingTilesBackground = CMovingTiles{false};
 	CMovingTiles m_MovingTilesForeground = CMovingTiles{true};
 

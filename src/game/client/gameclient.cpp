@@ -164,6 +164,7 @@ void CGameClient::OnConsoleInit()
 					      &m_PlayerIndicator, // TClient
 					      &m_Mod, // TClient
 					      &m_CustomCommunities, // TClient
+					      &m_Lazy, // LazyClient
 					      &m_Hud,
 					      &m_Spectator,
 					      &m_Emoticon,
@@ -4429,7 +4430,8 @@ void CGameClient::DetectStrongHook()
 
 vec2 CGameClient::GetSmoothPos(int ClientId)
 {
-	const int FastInputTicks = g_Config.m_TcFastInput ? (g_Config.m_TcFastInputAmount + 19) / 20 : 0;
+	const float InputOffset = m_Lazy.InputOffsetTicks();
+	const int FastInputTicks = InputOffset > 0.0f ? (int)std::ceil(InputOffset) : 0;
 	vec2 Pos = mix(m_aClients[ClientId].m_PrevPredicted.m_Pos, m_aClients[ClientId].m_Predicted.m_Pos, Client()->PredIntraGameTick(g_Config.m_ClDummy));
 	int64_t Now = time_get();
 	for(int i = 0; i < 2; i++)
@@ -4443,7 +4445,7 @@ vec2 CGameClient::GetSmoothPos(int ClientId)
 			float SmoothIntra;
 			Client()->GetSmoothTick(&SmoothTick, &SmoothIntra, MixAmount);
 
-			if(ClientId != m_Snap.m_LocalClientId && g_Config.m_TcFastInputOthers && FastInputTicks > 0)
+			if(ClientId != m_Snap.m_LocalClientId && m_Lazy.ApplyInputToOthers() && FastInputTicks > 0)
 				SmoothTick += FastInputTicks;
 
 			if(SmoothTick > 0 &&
@@ -4461,8 +4463,10 @@ vec2 CGameClient::GetFastInputPos(int ClientId)
 
 	vec2 Pos = mix(m_aClients[ClientId].m_PrevPredicted.m_Pos, m_aClients[ClientId].m_Predicted.m_Pos, PredIntraTick);
 
-	float FastInputIntra = (g_Config.m_TcFastInputAmount % 20) / 20.0f;
-	int FastInputTicks = g_Config.m_TcFastInputAmount / 20;
+	const float InputOffset = m_Lazy.InputOffsetTicks();
+	float WholeInputTicks = 0.0f;
+	const float FastInputIntra = std::modf(InputOffset, &WholeInputTicks);
+	int FastInputTicks = (int)WholeInputTicks;
 
 	float CombinedIntra = PredIntraTick + FastInputIntra;
 
@@ -4522,8 +4526,10 @@ vec2 CGameClient::GetFreezePos(int ClientId)
 	m_SmoothTick = SmoothTick;
 	m_SmoothIntraTick = SmoothIntra;
 
-	float FastInputIntra = (g_Config.m_TcFastInputAmount % 20) / 20.0f;
-	int FastInputTicks = g_Config.m_TcFastInputAmount / 20;
+	const float InputOffset = m_Lazy.InputOffsetTicks();
+	float WholeInputTicks = 0.0f;
+	const float FastInputIntra = std::modf(InputOffset, &WholeInputTicks);
+	int FastInputTicks = (int)WholeInputTicks;
 
 	float CombinedIntra = SmoothIntra + FastInputIntra;
 
@@ -4534,12 +4540,12 @@ vec2 CGameClient::GetFreezePos(int ClientId)
 	FastInputTicks += CarryOverTicks;
 
 	const bool IsLocal = ClientId == m_Snap.m_LocalClientId || (PredictDummy() && ClientId == m_aLocalIds[!g_Config.m_ClDummy]);
-	if(IsLocal && g_Config.m_TcFastInput)
+	if(IsLocal && m_Lazy.InputModeActive())
 	{
 		SmoothTick += FastInputTicks;
 		SmoothIntra = FinalIntra;
 	}
-	else if(!IsLocal && g_Config.m_TcFastInputOthers && g_Config.m_TcFastInput)
+	else if(!IsLocal && m_Lazy.ApplyInputToOthers() && m_Lazy.InputModeActive())
 	{
 		SmoothTick += FastInputTicks;
 		SmoothIntra = FinalIntra;

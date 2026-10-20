@@ -2815,6 +2815,8 @@ if(CLIENT)
     components/items.h
     components/key_binder.cpp
     components/key_binder.h
+    components/lazy/lazy.cpp
+    components/lazy/lazy.h
     components/lazy/menus_lazy.cpp
     components/local_server.cpp
     components/local_server.h

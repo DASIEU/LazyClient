@@ -4,22 +4,22 @@
 
 LazyClient is an all-in-one **gores-focused** fork of [TClient](https://github.com/TaterClient/TClient) and [DDNet](https://ddnet.org/), built for hook-heavy corridors, freeze walls, and the long grind of gores maps.
 
-It is designed for servers like **King of Gores** and **FoxNet**: the prediction, visibility, and recording tools that gores players actually use, without turning the game into something that plays itself.
+LazyClient is designed for servers like **King of Gores** and **FoxNet**: the prediction, input, visibility, and recording tools that gores players actually use, kept local and configurable.
 
 > [!IMPORTANT]
-> LazyClient is **fair play only**. There is no automation, no aim assistance, no hidden information, and no gameplay advantage that a vanilla client could not also use. Every feature is local and client-side.
+> LazyClient is **fair play only**. There is no aim assistance, hidden information, or server-side gameplay modification. Optional input helpers such as gores mode, snap tap, and input modes are off by default; server and community rules may restrict them, so use them only where they are allowed.
 
 ---
 
 ## Why LazyClient?
 
-Most clients are either a general DDNet client with gores settings buried somewhere, or a collection of scripts held together by a config file. LazyClient puts the gores layer first:
+Most clients are either a general DDNet client with gores settings buried somewhere, or a collection of scripts held together by a config file. LazyClient keeps the TClient base and adds a focused gores layer:
 
-- **Gores preset** — one click for the prediction, input, and recording setup most gores players want.
-- **Better visibility** — tile outlines for freeze, unfreeze, kill, teleport, and hookable tiles; colored frozen tees; frozen-team HUD; moving tiles in entities.
-- **Better prediction** — TClient's improved antiping, negative certainty buffer, stable-direction prediction, fast input, and DDNet antiping controls in one place.
-- **Recording that works** — automatic race demo recording, race ghosts, replays, and ghost opacity.
-- **Chat triggers** — execute commands on connect/join, auto-replies, vote helpers, and chat filters.
+- **Input modes** — off, fast, best, saiko, and cloud modes with their own amount and smoothing settings.
+- **Gores mode** — hold the gun, fire to hammer, then switch back after a configurable delay; ignore heavy weapons; dedicated gun-fire key.
+- **Snap tap** — prioritize the last pressed movement direction with configurable delay and release smoothing.
+- **Automatic prediction margin** — raise the antiping margin when ping or jitter gets high.
+- **Custom aspect ratio** — fit the game to a chosen ratio with a 5-second confirm/revert prompt.
 - **Local-first** — no accounts, no KoG API, no telemetry, and no server-side requirements.
 - **Config compatible** — reads your existing DDNet and TClient settings and keeps them intact.
 
@@ -29,15 +29,14 @@ LazyClient is built on TClient 10.9.x / DDNet 20.x. It keeps the TClient feature
 
 ## Fair play
 
-LazyClient is intended for servers that allow client-side quality-of-life features. It does **not** include:
+LazyClient is intended for servers that allow client-side features. It does **not** include:
 
 - Aimbots or trigger bots
 - Automatic movement, hooking, or race completion
-- Input automation that plays the game for you
-- Map or player information that is hidden by the server
+- Hidden map or player information
 - Any feature that modifies server-side game state
 
-If a server's rules are stricter than LazyClient's feature set, follow the server's rules. You are responsible for the client you use.
+Optional input helpers (gores mode, snap tap, input modes) are disabled by default. Some servers and communities may consider them disallowed even though they are purely client-side; follow those rules.
 
 ---
 
@@ -123,10 +122,10 @@ You can open the config files directly from **Settings → LazyClient → Miscel
 
 **Settings → LazyClient** contains:
 
-- **Game** — gores preset, prediction, fast input, antiping, race ghosts, replays, and auto-record.
-- **Visuals** — tile outlines, frozen tee colors/HUD, moving tiles, entity visibility, and screen-center helpers.
-- **Chat triggers** — on-connect/on-join commands, auto-replies, vote helpers, and chat filtering.
-- **Miscellaneous** — config file shortcuts, release links, quality-of-life options, and the status bar.
+- **Game** — input modes (fast, best, saiko, cloud), gores mode, automatic prediction margin, snap tap, and custom aspect ratio.
+- **Visuals** — reserved for future LazyClient-only visual options.
+- **Chat triggers** — reserved for future LazyClient-only chat options.
+- **Miscellaneous** — config file shortcuts and release links.
 - **Info** — version information, links, credits, and license.
 
 Only implemented controls are shown. Planned features are tracked in the issue tracker instead of appearing as dead toggles.

@@ -6,6 +6,7 @@
 #include <engine/storage.h>
 #include <engine/textrender.h>
 
+#include <game/client/components/lazy/lazy.h>
 #include <game/client/components/menus.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
@@ -111,7 +112,7 @@ void CMenus::RenderSettingsLazy(CUIRect MainView)
 
 void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 {
-	CUIRect Left, Right, Button;
+	CUIRect Left, Right, Button, Tabs;
 	static CScrollRegion s_ScrollRegion;
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
@@ -120,97 +121,124 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	Left.VSplitLeft(5.0f, nullptr, &Left);
 	Right.VSplitRight(5.0f, &Right, nullptr);
 
-	// Left column: Gores preset and TClient prediction.
-	LazySectionTitle(&Left, Localize("Gores Preset"), Ui());
-	LazyInfoLabel(&Left, Localize("One click sets the prediction and recording options most gores players use."), Ui(), TextRender());
+	// ---------------------------------------------------------------- Input modes
+	LazySectionTitle(&Left, Localize("Input Modes"), Ui());
+	LazyInfoLabel(&Left, Localize("Shifts input prediction forward. The higher the amount, the earlier your tee reacts."), Ui(), TextRender());
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	static CButtonContainer s_ApplyGoresPreset;
-	if(DoButton_Menu(&s_ApplyGoresPreset, Localize("Apply Gores Preset"), 0, &Button))
+
+	Left.HSplitTop(LazyLineSize, &Tabs, &Left);
+	static const char *s_apInputModes[] = {"Off", "Fast", "Best", "Saiko", "Cloud"};
+	static CButtonContainer s_aInputModeButtons[5] = {};
+	const float InputModeWidth = Tabs.w / 5.0f;
+	for(int Mode = 0; Mode < 5; ++Mode)
 	{
-		g_Config.m_TcAntiPingImproved = 1;
-		g_Config.m_TcAntiPingNegativeBuffer = 1;
-		g_Config.m_TcAntiPingStableDirection = 1;
-		g_Config.m_TcAntiPingUncertaintyScale = 150;
-		g_Config.m_TcFastInput = 1;
-		g_Config.m_TcFastInputAmount = 20;
-		g_Config.m_TcFastInputRepredictHook = 1;
-		g_Config.m_ClAntiPing = 1;
-		g_Config.m_ClAntiPingPlayers = 1;
-		g_Config.m_ClAntiPingGrenade = 1;
-		g_Config.m_ClAntiPingWeapons = 1;
-		g_Config.m_ClAntiPingGunfire = 1;
-		g_Config.m_ClPredictionMargin = 10;
-		g_Config.m_ClPredictFreeze = 1;
-		g_Config.m_ClAutoRaceRecord = 1;
-		g_Config.m_ClRaceGhost = 1;
-		g_Config.m_ClRaceShowGhost = 1;
+		CUIRect Tab;
+		Tabs.VSplitLeft(InputModeWidth, &Tab, &Tabs);
+		const int Corners = Mode == 0 ? IGraphics::CORNER_L : Mode == 4 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE;
+		if(DoButton_MenuTab(&s_aInputModeButtons[Mode], Localize(s_apInputModes[Mode]), g_Config.m_LcInputMode == Mode, &Tab, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
+			g_Config.m_LcInputMode = Mode;
 	}
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize, &Button, &Left);
-	static CButtonContainer s_ResetGoresPreset;
-	if(DoButton_Menu(&s_ResetGoresPreset, Localize("Reset Game Options"), 0, &Button))
+
+	if(g_Config.m_LcInputMode == 1)
 	{
-		ConfigManager()->Reset("tc_antiping_improved");
-		ConfigManager()->Reset("tc_antiping_negative_buffer");
-		ConfigManager()->Reset("tc_antiping_stable_direction");
-		ConfigManager()->Reset("tc_antiping_uncertainty_scale");
-		ConfigManager()->Reset("tc_fast_input");
-		ConfigManager()->Reset("tc_fast_input_amount");
-		ConfigManager()->Reset("tc_fast_input_repredict_hook");
-		ConfigManager()->Reset("cl_antiping");
-		ConfigManager()->Reset("cl_antiping_players");
-		ConfigManager()->Reset("cl_antiping_grenade");
-		ConfigManager()->Reset("cl_antiping_weapons");
-		ConfigManager()->Reset("cl_antiping_gunfire");
-		ConfigManager()->Reset("cl_prediction_margin");
-		ConfigManager()->Reset("cl_predict_freeze");
-		ConfigManager()->Reset("cl_auto_race_record");
-		ConfigManager()->Reset("cl_race_ghost");
-		ConfigManager()->Reset("cl_race_show_ghost");
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		Ui()->DoScrollbarOption(&g_Config.m_LcFastInputAmount, &g_Config.m_LcFastInputAmount, &Button, Localize("Fast amount"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "ms");
+	}
+	else if(g_Config.m_LcInputMode == 2)
+	{
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		Ui()->DoScrollbarOption(&g_Config.m_LcBestInputAmount, &g_Config.m_LcBestInputAmount, &Button, Localize("Best amount"), 0, 1000, &CUi::ms_LinearScrollbarScale, 0, "0.01 ticks");
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		Ui()->DoScrollbarOption(&g_Config.m_LcBestInputSmoothing, &g_Config.m_LcBestInputSmoothing, &Button, Localize("Smoothing"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		Ui()->DoScrollbarOption(&g_Config.m_LcBestInputLatencyComp, &g_Config.m_LcBestInputLatencyComp, &Button, Localize("Latency compensation"), 0, 50, &CUi::ms_LinearScrollbarScale, 0, "%");
+	}
+	else if(g_Config.m_LcInputMode == 3)
+	{
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		Ui()->DoScrollbarOption(&g_Config.m_LcSaikoInputAmount, &g_Config.m_LcSaikoInputAmount, &Button, Localize("Saiko amount"), 0, 500, &CUi::ms_LinearScrollbarScale, 0, "0.01 ticks");
+	}
+	else if(g_Config.m_LcInputMode == 4)
+	{
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		Ui()->DoScrollbarOption(&g_Config.m_LcCloudInputAmount, &g_Config.m_LcCloudInputAmount, &Button, Localize("Cloud amount"), 0, 500, &CUi::ms_LinearScrollbarScale, 0, "0.01 ticks");
 	}
 
+	if(g_Config.m_LcInputMode != 0)
+	{
+		Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcInputOthers, Localize("Apply to other tees"), &g_Config.m_LcInputOthers, &Left, LazyLineSize);
+	}
+
+	// ---------------------------------------------------------------- Gores mode
 	Left.HSplitTop(LazyMargin * 1.5f, nullptr, &Left);
-	LazySectionTitle(&Left, Localize("Prediction"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiPingImproved, Localize("Improved antiping smoothing"), &g_Config.m_TcAntiPingImproved, &Left, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiPingNegativeBuffer, Localize("Negative certainty buffer (gores)"), &g_Config.m_TcAntiPingNegativeBuffer, &Left, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiPingStableDirection, Localize("Predict optimistically along stable axis"), &g_Config.m_TcAntiPingStableDirection, &Left, LazyLineSize);
-	Left.HSplitTop(LazyLineSize, &Button, &Left);
-	Ui()->DoScrollbarOption(&g_Config.m_TcAntiPingUncertaintyScale, &g_Config.m_TcAntiPingUncertaintyScale, &Button, Localize("Uncertainty duration"), 50, 400, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "%");
-
+	LazySectionTitle(&Left, Localize("Gores Mode"), Ui());
+	LazyInfoLabel(&Left, Localize("Holds the gun. Firing switches to the hammer and back after the delay."), Ui(), TextRender());
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	LazySectionTitle(&Left, Localize("Input"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInput, Localize("Fast input"), &g_Config.m_TcFastInput, &Left, LazyLineSize);
-	Left.HSplitTop(LazyLineSize, &Button, &Left);
-	Ui()->DoScrollbarOption(&g_Config.m_TcFastInputAmount, &g_Config.m_TcFastInputAmount, &Button, Localize("Fast input window"), 1, 100, &CUi::ms_LinearScrollbarScale, 0, "ms");
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInputRepredictHook, Localize("Repredict hook on direction change"), &g_Config.m_TcFastInputRepredictHook, &Left, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSubTickAiming, Localize("Sub-tick aiming"), &g_Config.m_ClSubTickAiming, &Left, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcGoresMode, Localize("Enable gores mode"), &g_Config.m_LcGoresMode, &Left, LazyLineSize);
 
-	// Right column: DDNet prediction and recording.
-	LazySectionTitle(&Right, Localize("DDNet Prediction"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClAntiPing, Localize("Enable antiping"), &g_Config.m_ClAntiPing, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClAntiPingGrenade, Localize("Predict grenades"), &g_Config.m_ClAntiPingGrenade, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClAntiPingWeapons, Localize("Predict weapons"), &g_Config.m_ClAntiPingWeapons, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClAntiPingGunfire, Localize("Predict gunfire"), &g_Config.m_ClAntiPingGunfire, &Right, LazyLineSize);
-	Right.HSplitTop(LazyLineSize, &Button, &Right);
-	Ui()->DoScrollbarOption(&g_Config.m_ClAntiPingPlayers, &g_Config.m_ClAntiPingPlayers, &Button, Localize("Predict other players"), 0, 3, &CUi::ms_LinearScrollbarScale, 0, "");
-	Right.HSplitTop(LazyLineSize, &Button, &Right);
-	Ui()->DoScrollbarOption(&g_Config.m_ClPredictionMargin, &g_Config.m_ClPredictionMargin, &Button, Localize("Prediction margin"), 1, 300, &CUi::ms_LinearScrollbarScale, 0, "ms");
-	Right.HSplitTop(LazyLineSize, &Button, &Right);
-	Ui()->DoScrollbarOption(&g_Config.m_ClPredictFreeze, &g_Config.m_ClPredictFreeze, &Button, Localize("Predict freeze tiles"), 0, 2, &CUi::ms_LinearScrollbarScale, 0, "");
+	if(g_Config.m_LcGoresMode)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcGoresDisableIfWeapons, Localize("Ignore shotgun, grenade, laser and ninja"), &g_Config.m_LcGoresDisableIfWeapons, &Left, LazyLineSize);
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		Ui()->DoScrollbarOption(&g_Config.m_LcGoresSwitchDelay, &g_Config.m_LcGoresSwitchDelay, &Button, Localize("Switch back delay"), 0, 500, &CUi::ms_LinearScrollbarScale, 0, "ms");
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		static CLineInput s_GunKeyInput(g_Config.m_LcGoresGunKey, sizeof(g_Config.m_LcGoresGunKey));
+		DoEditBoxWithLabel(&s_GunKeyInput, &Button, Localize("Gun fire key"), Localize("e.g. w"), g_Config.m_LcGoresGunKey, sizeof(g_Config.m_LcGoresGunKey));
+		Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
+		Left.HSplitTop(LazyLineSize, &Button, &Left);
+		static CButtonContainer s_BindGunKeyButton;
+		if(DoButton_Menu(&s_BindGunKeyButton, Localize("Apply gun key bind"), 0, &Button))
+			GameClient()->m_Lazy.BindGunKey();
+	}
+
+	// ---------------------------------------------------------------- Right column
+	LazySectionTitle(&Right, Localize("Antiping"), Ui());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcAutoMargin, Localize("Automatic prediction margin"), &g_Config.m_LcAutoMargin, &Right, LazyLineSize);
+	LazyInfoLabel(&Right, Localize("Raises the prediction margin when ping or jitter gets high."), Ui(), TextRender());
 
 	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
-	LazySectionTitle(&Right, Localize("Recording"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClAutoRaceRecord, Localize("Auto-record race demos"), &g_Config.m_ClAutoRaceRecord, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClRaceGhost, Localize("Enable race ghost"), &g_Config.m_ClRaceGhost, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClRaceShowGhost, Localize("Show race ghost"), &g_Config.m_ClRaceShowGhost, &Right, LazyLineSize);
-	Right.HSplitTop(LazyLineSize, &Button, &Right);
-	Ui()->DoScrollbarOption(&g_Config.m_ClRaceGhostAlpha, &g_Config.m_ClRaceGhostAlpha, &Button, Localize("Ghost opacity"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClReplays, Localize("Enable replays"), &g_Config.m_ClReplays, &Right, LazyLineSize);
-	if(g_Config.m_ClReplays)
+	LazySectionTitle(&Right, Localize("Snap Tap"), Ui());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcSnapTap, Localize("Enable snap tap"), &g_Config.m_LcSnapTap, &Right, LazyLineSize);
+	if(g_Config.m_LcSnapTap)
 	{
 		Right.HSplitTop(LazyLineSize, &Button, &Right);
-		Ui()->DoScrollbarOption(&g_Config.m_ClReplayLength, &g_Config.m_ClReplayLength, &Button, Localize("Replay length"), 10, 3600, &CUi::ms_LogarithmicScrollbarScale, 0, "s");
+		Ui()->DoScrollbarOption(&g_Config.m_LcSnapTapDelay, &g_Config.m_LcSnapTapDelay, &Button, Localize("Switch delay"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "ms");
+		Right.HSplitTop(LazyLineSize, &Button, &Right);
+		Ui()->DoScrollbarOption(&g_Config.m_LcSnapTapSmoothness, &g_Config.m_LcSnapTapSmoothness, &Button, Localize("Release smoothing"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "ms");
+	}
+
+	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
+	LazySectionTitle(&Right, Localize("Custom Aspect Ratio"), Ui());
+	Right.HSplitTop(LazyLineSize, &Button, &Right);
+	Ui()->DoScrollbarOption(&g_Config.m_LcCustomAspect, &g_Config.m_LcCustomAspect, &Button, Localize("Aspect ratio x100"), 0, 400, &CUi::ms_LinearScrollbarScale, 0, "");
+	if(g_Config.m_LcCustomAspect > 0)
+	{
+		char aRatio[64];
+		str_format(aRatio, sizeof(aRatio), Localize("Current: %.2f:1"), g_Config.m_LcCustomAspect / 100.0f);
+		LazyInfoLabel(&Right, aRatio, Ui(), TextRender());
+	}
+	else
+	{
+		LazyInfoLabel(&Right, Localize("0 = off. 125 = 5:4, 133 = 4:3, 150 = 3:2, 177 = 16:9."), Ui(), TextRender());
+	}
+
+	if(GameClient()->m_Lazy.AspectConfirmActive())
+	{
+		char aConfirm[128];
+		str_format(aConfirm, sizeof(aConfirm), Localize("Keep this aspect ratio? Reverting in %d..."), GameClient()->m_Lazy.AspectSecondsLeft());
+		LazyInfoLabel(&Right, aConfirm, Ui(), TextRender());
+		Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
+
+		CUIRect KeepButton, RevertButton;
+		Right.HSplitTop(LazyLineSize * 1.5f, &KeepButton, &Right);
+		KeepButton.VSplitMid(&KeepButton, &RevertButton, 5.0f);
+		static CButtonContainer s_KeepAspectButton, s_RevertAspectButton;
+		if(DoButton_Menu(&s_KeepAspectButton, Localize("Keep"), 0, &KeepButton))
+			GameClient()->m_Lazy.KeepAspect();
+		if(DoButton_Menu(&s_RevertAspectButton, Localize("Revert"), 0, &RevertButton))
+			GameClient()->m_Lazy.RevertAspect();
 	}
 
 	s_ScrollRegion.End();
@@ -218,145 +246,28 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 
 void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 {
-	CUIRect Left, Right, Button;
+	CUIRect Label;
 	static CScrollRegion s_ScrollRegion;
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
-	MainView.VSplitMid(&Left, &Right, 30.0f);
-	Left.VSplitLeft(5.0f, nullptr, &Left);
-	Right.VSplitRight(5.0f, &Right, nullptr);
-
-	LazySectionTitle(&Left, Localize("Gores Visuals"), Ui());
-	LazyInfoLabel(&Left, Localize("Highlights freeze, kill and teleporter tiles without changing the map."), Ui(), TextRender());
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	static CButtonContainer s_ApplyGoresVisuals;
-	if(DoButton_Menu(&s_ApplyGoresVisuals, Localize("Apply Clean Gores Visuals"), 0, &Button))
-	{
-		g_Config.m_TcOutline = 1;
-		g_Config.m_TcOutlineSolid = 0;
-		g_Config.m_TcOutlineFreeze = 1;
-		g_Config.m_TcOutlineUnfreeze = 1;
-		g_Config.m_TcOutlineKill = 1;
-		g_Config.m_TcOutlineTele = 1;
-		g_Config.m_TcOutlineWidthSolid = 2;
-		g_Config.m_TcOutlineWidthFreeze = 2;
-		g_Config.m_TcOutlineWidthUnfreeze = 2;
-		g_Config.m_TcOutlineWidthKill = 2;
-		g_Config.m_TcOutlineWidthTele = 2;
-		g_Config.m_TcColorFreeze = 1;
-		g_Config.m_TcShowFrozenHud = 1;
-		g_Config.m_TcMovingTilesEntities = 1;
-		g_Config.m_ClOverlayEntities = 0;
-		g_Config.m_ClShowQuads = 1;
-	}
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize, &Button, &Left);
-	static CButtonContainer s_ResetGoresVisuals;
-	if(DoButton_Menu(&s_ResetGoresVisuals, Localize("Reset Visual Options"), 0, &Button))
-	{
-		ConfigManager()->Reset("tc_outline");
-		ConfigManager()->Reset("tc_outline_solid");
-		ConfigManager()->Reset("tc_outline_freeze");
-		ConfigManager()->Reset("tc_outline_unfreeze");
-		ConfigManager()->Reset("tc_outline_kill");
-		ConfigManager()->Reset("tc_outline_tele");
-		ConfigManager()->Reset("tc_outline_width_solid");
-		ConfigManager()->Reset("tc_outline_width_freeze");
-		ConfigManager()->Reset("tc_outline_width_unfreeze");
-		ConfigManager()->Reset("tc_outline_width_kill");
-		ConfigManager()->Reset("tc_outline_width_tele");
-		ConfigManager()->Reset("tc_color_freeze");
-		ConfigManager()->Reset("tc_frozen_tees_hud");
-		ConfigManager()->Reset("tc_moving_tiles_entities");
-		ConfigManager()->Reset("cl_overlay_entities");
-		ConfigManager()->Reset("cl_showquads");
-	}
-
-	Left.HSplitTop(LazyMargin * 1.5f, nullptr, &Left);
-	LazySectionTitle(&Left, Localize("Tile Outlines"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcOutline, Localize("Enable outlines"), &g_Config.m_TcOutline, &Left, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcOutlineSolid, Localize("Outline hookable tiles"), &g_Config.m_TcOutlineSolid, &Left, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcOutlineFreeze, Localize("Outline freeze tiles"), &g_Config.m_TcOutlineFreeze, &Left, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcOutlineUnfreeze, Localize("Outline unfreeze tiles"), &g_Config.m_TcOutlineUnfreeze, &Left, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcOutlineKill, Localize("Outline kill tiles"), &g_Config.m_TcOutlineKill, &Left, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcOutlineTele, Localize("Outline teleporters"), &g_Config.m_TcOutlineTele, &Left, LazyLineSize);
-
-	LazySectionTitle(&Right, Localize("Tees and Tiles"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcColorFreeze, Localize("Use skin colors for frozen tees"), &g_Config.m_TcColorFreeze, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFrozenKatana, Localize("Show katana on frozen tees"), &g_Config.m_TcFrozenKatana, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcMovingTilesEntities, Localize("Show moving tiles in entities"), &g_Config.m_TcMovingTilesEntities, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcShowFrozenHud, Localize("Show frozen tee HUD"), &g_Config.m_TcShowFrozenHud, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcShowFrozenHudSkins, Localize("Use skins in frozen tee HUD"), &g_Config.m_TcShowFrozenHudSkins, &Right, LazyLineSize);
-
-	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
-	LazySectionTitle(&Right, Localize("Map Visibility"), Ui());
-	Right.HSplitTop(LazyLineSize, &Button, &Right);
-	Ui()->DoScrollbarOption(&g_Config.m_ClOverlayEntities, &g_Config.m_ClOverlayEntities, &Button, Localize("Overlay entities"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowQuads, Localize("Show background quads"), &g_Config.m_ClShowQuads, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcShowCenter, Localize("Show screen center lines"), &g_Config.m_TcShowCenter, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcMiniDebug, Localize("Show position and angle"), &g_Config.m_TcMiniDebug, &Right, LazyLineSize);
+	LazySectionTitle(&MainView, Localize("Visuals"), Ui());
+	MainView.HSplitTop(20.0f, &Label, &MainView);
+	Ui()->DoLabel(&Label, Localize("No options yet."), 14.0f, TEXTALIGN_ML);
 
 	s_ScrollRegion.End();
 }
 
 void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 {
-	CUIRect Left, Right, Button;
+	CUIRect Label;
 	static CScrollRegion s_ScrollRegion;
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
-	MainView.VSplitMid(&Left, &Right, 30.0f);
-	Left.VSplitLeft(5.0f, nullptr, &Left);
-	Right.VSplitRight(5.0f, &Right, nullptr);
-
-	LazySectionTitle(&Left, Localize("On Connect / Join"), Ui());
-	LazyInfoLabel(&Left, Localize("Commands run locally after connecting or joining a team."), Ui(), TextRender());
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize, &Button, &Left);
-	static CLineInput s_ConnectInput(g_Config.m_TcExecuteOnConnect, sizeof(g_Config.m_TcExecuteOnConnect));
-	DoEditBoxWithLabel(&s_ConnectInput, &Button, Localize("On connect"), Localize("e.g. showall 1"), g_Config.m_TcExecuteOnConnect, sizeof(g_Config.m_TcExecuteOnConnect));
-	Left.HSplitTop(LazyLineSize, &Button, &Left);
-	static CLineInput s_JoinInput(g_Config.m_TcExecuteOnJoin, sizeof(g_Config.m_TcExecuteOnJoin));
-	DoEditBoxWithLabel(&s_JoinInput, &Button, Localize("On join"), Localize("e.g. /rank"), g_Config.m_TcExecuteOnJoin, sizeof(g_Config.m_TcExecuteOnJoin));
-	Left.HSplitTop(LazyLineSize, &Button, &Left);
-	Ui()->DoScrollbarOption(&g_Config.m_TcExecuteOnJoinDelay, &g_Config.m_TcExecuteOnJoinDelay, &Button, Localize("Join delay"), 7, 50000, &CUi::ms_LogarithmicScrollbarScale, 0, "ticks");
-
-	Left.HSplitTop(LazyMargin * 1.5f, nullptr, &Left);
-	LazySectionTitle(&Left, Localize("Chat Filter"), Ui());
-	Left.HSplitTop(LazyLineSize, &Button, &Left);
-	static CLineInput s_ChatFilterInput(g_Config.m_TcRegexChatIgnore, sizeof(g_Config.m_TcRegexChatIgnore));
-	DoEditBoxWithLabel(&s_ChatFilterInput, &Button, Localize("Ignore regex"), Localize("Filters chat messages"), g_Config.m_TcRegexChatIgnore, sizeof(g_Config.m_TcRegexChatIgnore));
-
-	LazySectionTitle(&Right, Localize("Auto Reply"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAutoReplyMuted, Localize("Reply to muted players"), &g_Config.m_TcAutoReplyMuted, &Right, LazyLineSize);
-	if(g_Config.m_TcAutoReplyMuted)
-	{
-		Right.HSplitTop(LazyLineSize, &Button, &Right);
-		static CLineInput s_MutedReplyInput(g_Config.m_TcAutoReplyMutedMessage, sizeof(g_Config.m_TcAutoReplyMutedMessage));
-		DoEditBoxWithLabel(&s_MutedReplyInput, &Button, Localize("Message"), "", g_Config.m_TcAutoReplyMutedMessage, sizeof(g_Config.m_TcAutoReplyMutedMessage));
-	}
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAutoReplyMinimized, Localize("Reply when tabbed out"), &g_Config.m_TcAutoReplyMinimized, &Right, LazyLineSize);
-	if(g_Config.m_TcAutoReplyMinimized)
-	{
-		Right.HSplitTop(LazyLineSize, &Button, &Right);
-		static CLineInput s_MinimizedReplyInput(g_Config.m_TcAutoReplyMinimizedMessage, sizeof(g_Config.m_TcAutoReplyMinimizedMessage));
-		DoEditBoxWithLabel(&s_MinimizedReplyInput, &Button, Localize("Message"), "", g_Config.m_TcAutoReplyMinimizedMessage, sizeof(g_Config.m_TcAutoReplyMinimizedMessage));
-	}
-
-	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
-	LazySectionTitle(&Right, Localize("Voting"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAutoVoteWhenFar, Localize("Auto vote no when far"), &g_Config.m_TcAutoVoteWhenFar, &Right, LazyLineSize);
-	if(g_Config.m_TcAutoVoteWhenFar)
-	{
-		Right.HSplitTop(LazyLineSize, &Button, &Right);
-		Ui()->DoScrollbarOption(&g_Config.m_TcAutoVoteWhenFarTime, &g_Config.m_TcAutoVoteWhenFarTime, &Button, Localize("Minimum time"), 0, 20, &CUi::ms_LinearScrollbarScale, 0, " min");
-		Right.HSplitTop(LazyLineSize, &Button, &Right);
-		static CLineInput s_VoteMessageInput(g_Config.m_TcAutoVoteWhenFarMessage, sizeof(g_Config.m_TcAutoVoteWhenFarMessage));
-		DoEditBoxWithLabel(&s_VoteMessageInput, &Button, Localize("Message"), Localize("Optional"), g_Config.m_TcAutoVoteWhenFarMessage, sizeof(g_Config.m_TcAutoVoteWhenFarMessage));
-	}
+	LazySectionTitle(&MainView, Localize("Chat Triggers"), Ui());
+	MainView.HSplitTop(20.0f, &Label, &MainView);
+	Ui()->DoLabel(&Label, Localize("No options yet."), 14.0f, TEXTALIGN_ML);
 
 	s_ScrollRegion.End();
 }
@@ -401,27 +312,13 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	if(DoButton_Menu(&s_LazyConfig, Localize("Open LazyClient Config"), 0, &Button))
 		OpenConfig("settings_lazy.cfg");
 
-	Left.HSplitTop(LazyMargin * 1.5f, nullptr, &Left);
-	LazySectionTitle(&Left, Localize("Updates"), Ui());
-	LazyInfoLabel(&Left, Localize("Release builds are published on GitHub."), Ui(), TextRender());
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
+	LazySectionTitle(&Right, Localize("Updates"), Ui());
+	LazyInfoLabel(&Right, Localize("Release builds are published on GitHub."), Ui(), TextRender());
+	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
 	static CButtonContainer s_ReleasesButton;
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
+	Right.HSplitTop(LazyLineSize * 1.5f, &Button, &Right);
 	if(DoButton_Menu(&s_ReleasesButton, Localize("Open GitHub Releases"), 0, &Button))
 		Client()->ViewLink("https://github.com/DASIEU/LazyClient/releases");
-
-	LazySectionTitle(&Right, Localize("Quality of Life"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcShowChatClient, Localize("Show client chat messages"), &g_Config.m_TcShowChatClient, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcLimitMouseToScreen, Localize("Limit mouse to screen"), &g_Config.m_TcLimitMouseToScreen, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcScaleMouseDistance, Localize("Improve mouse precision"), &g_Config.m_TcScaleMouseDistance, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcTranslateAuto, Localize("Auto-translate incoming chat"), &g_Config.m_TcTranslateAuto, &Right, LazyLineSize);
-
-	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
-	LazySectionTitle(&Right, Localize("Status Bar"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcStatusBar, Localize("Enable status bar"), &g_Config.m_TcStatusBar, &Right, LazyLineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcStatusBarLabels, Localize("Show status bar labels"), &g_Config.m_TcStatusBarLabels, &Right, LazyLineSize);
-	Right.HSplitTop(LazyLineSize, &Button, &Right);
-	Ui()->DoScrollbarOption(&g_Config.m_TcStatusBarHeight, &g_Config.m_TcStatusBarHeight, &Button, Localize("Status bar height"), 1, 16, &CUi::ms_LinearScrollbarScale, 0, "px");
 
 	s_ScrollRegion.End();
 }
