@@ -277,6 +277,11 @@ private:
 	NETSOCKET m_Socket;
 	NETSTATS m_Stats;
 
+	// Estimated from gaps in received vital chunk sequences.
+	uint64_t m_RecvVitalChunks = 0;
+	uint64_t m_LostVitalChunks = 0;
+	int m_LastCountedLossAck = -1;
+
 	std::array<char, NETADDR_MAXSTRSIZE> m_aPeerAddrStr;
 	std::array<char, NETADDR_MAXSTRSIZE> m_aPeerAddrStrNoPort;
 	// client 0.7
@@ -342,6 +347,8 @@ public:
 	int AckSequence() const { return m_Ack; }
 	int SeqSequence() const { return m_Sequence; }
 	int SecurityToken() const { return m_SecurityToken; }
+	uint64_t RecvVitalChunks() const { return m_RecvVitalChunks; }
+	uint64_t LostVitalChunks() const { return m_LostVitalChunks; }
 	CStaticRingBuffer<CNetChunkResend, NET_CONN_BUFFERSIZE> *ResendBuffer() { return &m_Buffer; }
 
 	void ResumeConnection(const NETADDR *pAddr, int Sequence, int Ack, SECURITY_TOKEN SecurityToken, CStaticRingBuffer<CNetChunkResend, NET_CONN_BUFFERSIZE> *pResendBuffer, bool Sixup);
@@ -645,6 +652,8 @@ public:
 	int State();
 	const NETADDR *ServerAddress() const { return m_Connection.PeerAddress(); }
 	void ConnectAddresses(const NETADDR **ppAddrs, int *pNumAddrs) const { m_Connection.ConnectAddresses(ppAddrs, pNumAddrs); }
+	uint64_t RecvVitalChunks() const { return m_Connection.RecvVitalChunks(); }
+	uint64_t LostVitalChunks() const { return m_Connection.LostVitalChunks(); }
 	bool GotProblems(int64_t MaxLatency) const;
 	const char *ErrorString() const;
 

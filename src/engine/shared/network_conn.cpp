@@ -45,6 +45,9 @@ void CNetConnection::ClearPeerAddr()
 void CNetConnection::ResetStats()
 {
 	m_Stats = {};
+	m_RecvVitalChunks = 0;
+	m_LostVitalChunks = 0;
+	m_LastCountedLossAck = -1;
 	ClearPeerAddr();
 	m_LastUpdateTime = 0;
 }
@@ -72,6 +75,10 @@ void CNetConnection::Reset()
 	mem_zero(&m_aConnectAddrs, sizeof(m_aConnectAddrs));
 	m_NumConnectAddrs = 0;
 	m_UnknownSeq = false;
+
+	m_RecvVitalChunks = 0;
+	m_LostVitalChunks = 0;
+	m_LastCountedLossAck = -1;
 
 	m_Buffer.Init();
 

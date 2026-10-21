@@ -362,6 +362,12 @@ public:
 	// ---
 
 	int GetPredictionTime() override;
+	SClientNetStats GetNetStats(int Conn) const override
+	{
+		if(Conn < 0 || Conn >= NUM_CONNS)
+			return {};
+		return {m_aNetClient[Conn].RecvVitalChunks(), m_aNetClient[Conn].LostVitalChunks()};
+	}
 	CSnapItem SnapGetItem(int SnapId, int Index) const override;
 	int GetPredictionTick() override;
 	const void *SnapFindItem(int SnapId, int Type, int Id) const override;

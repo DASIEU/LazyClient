@@ -101,6 +101,25 @@ private:
 	bool m_WasAutoMarginEnabled = false;
 	int m_SavedMargin = -1;
 
+	// Telemetry
+	static constexpr int TELEMETRY_FRAME_SAMPLES = 4096;
+	float m_aTelemetryFrameTimes[TELEMETRY_FRAME_SAMPLES] = {};
+	float m_aTelemetrySorted[TELEMETRY_FRAME_SAMPLES] = {};
+	int m_TelemetryFrameCount = 0;
+	int m_TelemetryFrameNext = 0;
+	float m_TelemetryStatsTimer = 0.0f;
+	float m_TelemetryFpsAvg = 0.0f;
+	float m_TelemetryFps1Pct = 0.0f;
+	float m_TelemetryFps01Pct = 0.0f;
+	float m_TelemetryPing = 0.0f;
+	float m_TelemetryJitter = 0.0f;
+	float m_TelemetryLastPing = -1.0f;
+	float m_TelemetryPacketLoss = 0.0f;
+	int m_TelemetrySnapshots = 0;
+	float m_TelemetrySnapshotRate = 0.0f;
+	uint64_t m_TelemetryPrevRecvVital = 0;
+	uint64_t m_TelemetryPrevLostVital = 0;
+
 	// Antipiping
 	float m_AntipingSmoothedPing = -1.0f;
 
@@ -141,6 +160,10 @@ private:
 	void UpdateBestClientList();
 	void FinishBestClientList();
 	void ResetBestClientList();
+	void ResetTelemetry();
+	void UpdateTelemetry();
+	void RenderTelemetry();
+	int FindZeroGravityTarget() const;
 	void UpdateZeroGravityPredictor();
 	bool PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos) const;
 	void RenderZeroGravityWarning();

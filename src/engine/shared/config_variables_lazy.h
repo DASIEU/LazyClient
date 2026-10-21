@@ -48,3 +48,17 @@ MACRO_CONFIG_INT(LcBetterVotes, lc_better_votes, 1, 0, 1, CFGFLAG_CLIENT | CFGFL
 MACRO_CONFIG_INT(LcVotePassPercentage, lc_vote_pass_percentage, 50, 1, 99, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vote yes percentage required to pass (match the server setting)")
 MACRO_CONFIG_INT(LcZeroGravPredict, lc_zerograv_predict, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict freeze tiles after holding a zero-gravity wall position")
 MACRO_CONFIG_INT(LcZeroGravPredictTime, lc_zerograv_predict_time, 3, 1, 5, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity freeze warning time in seconds")
+MACRO_CONFIG_INT(LcZeroGravHoldTiles, lc_zerograv_hold_tiles, 4, 1, 16, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity hold area radius in tiles")
+
+// Telemetry
+MACRO_CONFIG_INT(LcTelemetry, lc_telemetry, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the LazyClient telemetry overlay")
+MACRO_CONFIG_INT(LcTelemetryFps, lc_telemetry_fps, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: current FPS")
+MACRO_CONFIG_INT(LcTelemetryFpsAvg, lc_telemetry_fps_avg, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: average FPS")
+MACRO_CONFIG_INT(LcTelemetryFps1Pct, lc_telemetry_fps_1pct, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: 1% low FPS")
+MACRO_CONFIG_INT(LcTelemetryFps01Pct, lc_telemetry_fps_01pct, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: 0.1% low FPS")
+MACRO_CONFIG_INT(LcTelemetryFrametime, lc_telemetry_frametime, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: frame time in milliseconds")
+MACRO_CONFIG_INT(LcTelemetryPing, lc_telemetry_ping, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: ping in milliseconds")
+MACRO_CONFIG_INT(LcTelemetryJitter, lc_telemetry_jitter, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: ping jitter in milliseconds")
+MACRO_CONFIG_INT(LcTelemetryLoss, lc_telemetry_loss, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: estimated packet loss percentage")
+MACRO_CONFIG_INT(LcTelemetryPrediction, lc_telemetry_prediction, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: prediction time in milliseconds")
+MACRO_CONFIG_INT(LcTelemetrySnaps, lc_telemetry_snaps, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry: snapshots received per second")

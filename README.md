@@ -13,9 +13,10 @@ LazyClient is built on TClient 10.9.x / DDNet 20.x. The current release is
 ## Fair play and privacy
 
 LazyClient is fair-play only. It does not include aim assistance, hidden
-information, or server-side gameplay changes, and it does not use accounts,
-telemetry, a KoG API, or a general presence service. Optional input helpers are
-off by default. The optional BestClient client-icon lookup only downloads
+information, or server-side gameplay changes, and it does not use accounts or
+send telemetry, use a KoG API, or a general presence service. The optional
+telemetry overlay is local-only and is never transmitted. Optional input
+helpers are off by default. The optional BestClient client-icon lookup only downloads
 BestClient's public player list to match names on the current server; it can be
 disabled in **Settings → LazyClient → Visuals**. Server and community rules may
 be stricter than the client, so use those features only where they are allowed.

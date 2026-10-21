@@ -400,11 +400,37 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	{
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 5, &CUi::ms_LinearScrollbarScale, 0, "s");
-		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook, after staying within about two tiles for two seconds. A small countdown appears when the trajectory reaches freeze within the warning time. Works for your tee and for a spectated player."), Ui(), TextRender());
+
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravHoldTiles, &g_Config.m_LcZeroGravHoldTiles, &Button, Localize("Hold area radius"), 1, 16, &CUi::ms_LinearScrollbarScale, 0, " tiles");
+
+		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. A small countdown appears when the trajectory reaches freeze within the warning time. Works for your tee, a followed player, and the tee nearest the camera in freeview."), Ui(), TextRender());
 	}
 	else
 	{
 		LazyInfoLabel(&MainView, Localize("No hooked freeze warning is shown."), Ui(), TextRender());
+	}
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Telemetry"), Ui());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetry, Localize("Show telemetry overlay"), &g_Config.m_LcTelemetry, &MainView, LazyLineSize);
+	if(g_Config.m_LcTelemetry)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps, Localize("FPS"), &g_Config.m_LcTelemetryFps, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFpsAvg, Localize("Average FPS"), &g_Config.m_LcTelemetryFpsAvg, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps1Pct, Localize("1% low FPS"), &g_Config.m_LcTelemetryFps1Pct, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps01Pct, Localize("0.1% low FPS"), &g_Config.m_LcTelemetryFps01Pct, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFrametime, Localize("Frame time"), &g_Config.m_LcTelemetryFrametime, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryPing, Localize("Ping"), &g_Config.m_LcTelemetryPing, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryJitter, Localize("Ping jitter"), &g_Config.m_LcTelemetryJitter, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryLoss, Localize("Packet loss"), &g_Config.m_LcTelemetryLoss, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryPrediction, Localize("Prediction time"), &g_Config.m_LcTelemetryPrediction, &MainView, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetrySnaps, Localize("Snapshots per second"), &g_Config.m_LcTelemetrySnaps, &MainView, LazyLineSize);
+		LazyInfoLabel(&MainView, Localize("Local-only overlay in the top-right. Packet loss is estimated from missing vital network chunks over the last second."), Ui(), TextRender());
+	}
+	else
+	{
+		LazyInfoLabel(&MainView, Localize("No telemetry overlay is shown."), Ui(), TextRender());
 	}
 
 	s_ScrollRegion.End();

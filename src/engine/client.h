@@ -7,6 +7,7 @@
 #include "message.h"
 
 #include <base/hash.h>
+#include <base/types.h>
 
 #include <engine/client/enums.h>
 #include <engine/friends.h>
@@ -25,6 +26,12 @@ class CSnapshot;
 class CSnapshotBuffer;
 class IMap;
 struct SWarning;
+
+struct SClientNetStats
+{
+	uint64_t m_RecvVitalChunks = 0;
+	uint64_t m_LostVitalChunks = 0;
+};
 
 enum
 {
@@ -273,6 +280,7 @@ public:
 	// server info
 	virtual const class CServerInfo &ServerInfo() const = 0;
 	virtual bool ServerCapAnyPlayerFlag() const = 0;
+	virtual SClientNetStats GetNetStats(int Conn) const = 0;
 
 	virtual int GetPredictionTime() = 0;
 	virtual int GetPredictionTick() = 0;

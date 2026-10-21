@@ -5,6 +5,8 @@
 #include "config.h"
 #include "huffman.h"
 
+#include <algorithm>
+
 #include <base/bytes.h>
 #include <base/dbg.h>
 #include <base/io.h>
@@ -101,6 +103,8 @@ bool CPacketChunkUnpacker::UnpackNextChunk(CNetChunk *pChunk)
 
 				// in sequence
 				m_pConnection->m_Ack = Header.m_Sequence;
+				m_pConnection->m_RecvVitalChunks++;
+				m_pConnection->m_LastCountedLossAck = -1;
 			}
 			else
 			{
@@ -108,9 +112,24 @@ bool CPacketChunkUnpacker::UnpackNextChunk(CNetChunk *pChunk)
 				if(CNetBase::IsSeqInBackroom(Header.m_Sequence, m_pConnection->m_Ack))
 					continue;
 
+				// Out of sequence: estimate how many vital chunks are missing.
+				// Only count once per gap, otherwise every later chunk that
+				// overtakes the gap would inflate the estimate.
+				const int Expected = (m_pConnection->m_Ack + 1) % NET_MAX_SEQUENCE;
+				if(m_pConnection->m_LastCountedLossAck != (int)m_pConnection->m_Ack)
+				{
+					int Missing = (Header.m_Sequence - Expected + NET_MAX_SEQUENCE) % NET_MAX_SEQUENCE;
+					if(Missing <= 0)
+						Missing = 1;
+					// Avoid absurd estimates if a peer sends a far-future sequence.
+					Missing = std::min(Missing, 1024);
+					m_pConnection->m_LostVitalChunks += Missing;
+					m_pConnection->m_LastCountedLossAck = (int)m_pConnection->m_Ack;
+				}
+
 				// out of sequence, request resend
 				if(g_Config.m_Debug)
-					dbg_msg("conn", "asking for resend %d %d", Header.m_Sequence, (m_pConnection->m_Ack + 1) % NET_MAX_SEQUENCE);
+					dbg_msg("conn", "asking for resend %d %d", Header.m_Sequence, Expected);
 				m_pConnection->SignalResend();
 				continue; // take the next chunk in the packet
 			}

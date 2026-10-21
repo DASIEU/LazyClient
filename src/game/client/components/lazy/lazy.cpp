@@ -48,8 +48,9 @@ constexpr int AUTO_MARGIN_DEADZONE = 1;
 constexpr int AUTO_MARGIN_STEP_DOWN = 5;
 constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
-constexpr float ZERO_GRAV_HOLD_RADIUS = 64.0f; // two tiles
+constexpr float ZERO_GRAV_TILE_SIZE = 32.0f;
 constexpr float ZERO_GRAV_HOLD_MAX_HSPEED = 60.0f;
+constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
 constexpr float BESTCLIENT_LIST_REFRESH_SECONDS = 60.0f;
@@ -112,6 +113,7 @@ void CLazyClient::OnReset()
 	m_ZeroGravHistoryNext = 0;
 	m_ZeroGravTarget = -1;
 	ResetAutoMarginState();
+	ResetTelemetry();
 }
 
 void CLazyClient::OnStateChange(int NewState, int OldState)
@@ -136,6 +138,7 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_ZeroGravHistoryCount = 0;
 	m_ZeroGravHistoryNext = 0;
 	m_ZeroGravTarget = -1;
+	ResetTelemetry();
 }
 
 void CLazyClient::ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const
@@ -805,6 +808,23 @@ void CLazyClient::OnNewSnapshot()
 {
 	UpdateClientTypes();
 
+	if(g_Config.m_LcTelemetry && Client()->State() == IClient::STATE_ONLINE && GameClient()->m_Snap.m_pLocalInfo)
+	{
+		const float Ping = (float)std::max(0, GameClient()->m_Snap.m_pLocalInfo->m_Latency);
+		if(m_TelemetryLastPing >= 0.0f)
+		{
+			const float Delta = std::abs(Ping - m_TelemetryLastPing);
+			m_TelemetryJitter += (Delta - m_TelemetryJitter) * 0.05f;
+		}
+		m_TelemetryLastPing = Ping;
+		m_TelemetryPing = Ping;
+		m_TelemetrySnapshots++;
+	}
+	else
+	{
+		m_TelemetryLastPing = -1.0f;
+	}
+
 	if(Client()->State() != IClient::STATE_ONLINE || !GameClient()->m_Snap.m_pLocalInfo)
 	{
 		ResetAutoMarginState();
@@ -1051,6 +1071,40 @@ bool CLazyClient::PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos)
 	return false;
 }
 
+int CLazyClient::FindZeroGravityTarget() const
+{
+	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
+	if(!Snap.m_SpecInfo.m_Active)
+		return Snap.m_LocalClientId;
+	if(Snap.m_SpecInfo.m_SpectatorId != SPEC_FREEVIEW)
+		return Snap.m_SpecInfo.m_SpectatorId;
+
+	// In freeview, predict for the visible tee closest to the camera center.
+	const vec2 Center = GameClient()->m_Camera.m_Center;
+	float VisibleWidth, VisibleHeight;
+	Graphics()->CalcScreenParams(Graphics()->ScreenAspect(), GameClient()->m_Camera.m_Zoom, &VisibleWidth, &VisibleHeight);
+	const float Margin = 64.0f;
+	int BestId = -1;
+	float BestDistance = 0.0f;
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+	{
+		if(!Snap.m_aCharacters[ClientId].m_Active)
+			continue;
+		const CNetObj_Character &Character = Snap.m_aCharacters[ClientId].m_Cur;
+		const vec2 Pos(Character.m_X, Character.m_Y);
+		if(std::abs(Pos.x - Center.x) > VisibleWidth / 2.0f + Margin ||
+			std::abs(Pos.y - Center.y) > VisibleHeight / 2.0f + Margin)
+			continue;
+		const float Distance = distance(Pos, Center);
+		if(BestId == -1 || Distance < BestDistance)
+		{
+			BestId = ClientId;
+			BestDistance = Distance;
+		}
+	}
+	return BestId;
+}
+
 void CLazyClient::UpdateZeroGravityPredictor()
 {
 	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
@@ -1064,7 +1118,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		return;
 	}
 
-	const int TargetId = Snap.m_SpecInfo.m_Active ? Snap.m_SpecInfo.m_SpectatorId : Snap.m_LocalClientId;
+	const int TargetId = FindZeroGravityTarget();
 	if(TargetId < 0 || TargetId >= MAX_CLIENTS || !Snap.m_aCharacters[TargetId].m_Active)
 	{
 		m_ZeroGravWarning = false;
@@ -1153,17 +1207,18 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravHistoryNext = (m_ZeroGravHistoryNext + 1) % ZERO_GRAV_HISTORY_SIZE;
 	m_ZeroGravHistoryCount = std::min(m_ZeroGravHistoryCount + 1, ZERO_GRAV_HISTORY_SIZE);
 
-	// Only start predicting when the tee has stayed in a roughly two-tile
-	// area for the last two seconds, which filters out fast map traversal.
+	// Only start predicting when the tee has stayed inside the configured
+	// hold area for the last two seconds, which filters out fast map traversal.
 	// Keep the whole history close to the current position so that leaving a
 	// previously stable hold clears the warning immediately.
 	bool StayedInArea = m_ZeroGravHistoryCount >= ZERO_GRAV_HISTORY_SIZE;
 	if(StayedInArea)
 	{
+		const float HoldRadius = (float)g_Config.m_LcZeroGravHoldTiles * ZERO_GRAV_TILE_SIZE;
 		for(const vec2 &Pos : m_aZeroGravHistory)
 		{
-			if(std::abs(Pos.x - Core.m_Pos.x) > ZERO_GRAV_HOLD_RADIUS ||
-				std::abs(Pos.y - Core.m_Pos.y) > ZERO_GRAV_HOLD_RADIUS)
+			if(std::abs(Pos.x - Core.m_Pos.x) > HoldRadius ||
+				std::abs(Pos.y - Core.m_Pos.y) > HoldRadius)
 			{
 				StayedInArea = false;
 				break;
@@ -1231,8 +1286,14 @@ void CLazyClient::RenderZeroGravityWarning()
 	const float Width = 300.0f * Graphics()->ScreenAspect();
 	Graphics()->MapScreenToSize(Width, 300.0f);
 
-	char aCountdown[64];
-	str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
+	char aCountdown[96];
+	const bool Freeview = GameClient()->m_Snap.m_SpecInfo.m_Active &&
+		GameClient()->m_Snap.m_SpecInfo.m_SpectatorId == SPEC_FREEVIEW &&
+		m_ZeroGravTarget >= 0 && m_ZeroGravTarget < MAX_CLIENTS;
+	if(Freeview)
+		str_format(aCountdown, sizeof(aCountdown), Localize("%s: Freeze in %.1fs"), GameClient()->m_aClients[m_ZeroGravTarget].m_aName, m_ZeroGravSeconds);
+	else
+		str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
 
 	const float CountdownSize = 10.5f;
 	const float CountdownWidth = TextRender()->TextWidth(CountdownSize, aCountdown);
@@ -1248,9 +1309,187 @@ void CLazyClient::RenderZeroGravityWarning()
 	Graphics()->MapScreen(OldScreen);
 }
 
+void CLazyClient::ResetTelemetry()
+{
+	m_TelemetryFrameCount = 0;
+	m_TelemetryFrameNext = 0;
+	m_TelemetryStatsTimer = 0.0f;
+	m_TelemetryFpsAvg = 0.0f;
+	m_TelemetryFps1Pct = 0.0f;
+	m_TelemetryFps01Pct = 0.0f;
+	m_TelemetryPing = 0.0f;
+	m_TelemetryJitter = 0.0f;
+	m_TelemetryLastPing = -1.0f;
+	m_TelemetryPacketLoss = 0.0f;
+	m_TelemetrySnapshots = 0;
+	m_TelemetrySnapshotRate = 0.0f;
+	m_TelemetryPrevRecvVital = 0;
+	m_TelemetryPrevLostVital = 0;
+}
+
+void CLazyClient::UpdateTelemetry()
+{
+	if(!g_Config.m_LcTelemetry)
+	{
+		ResetTelemetry();
+		return;
+	}
+
+	const float FrameTime = Client()->RenderFrameTime();
+	const bool RecordStats = Client()->State() == IClient::STATE_ONLINE && !GameClient()->m_Menus.IsActive();
+	if(RecordStats && FrameTime > 0.0f && FrameTime < 1.0f)
+	{
+		m_aTelemetryFrameTimes[m_TelemetryFrameNext] = FrameTime;
+		m_TelemetryFrameNext = (m_TelemetryFrameNext + 1) % TELEMETRY_FRAME_SAMPLES;
+		m_TelemetryFrameCount = std::min(m_TelemetryFrameCount + 1, TELEMETRY_FRAME_SAMPLES);
+	}
+
+	m_TelemetryStatsTimer -= RecordStats ? std::clamp(FrameTime, 0.0f, 1.0f) : 0.0f;
+	if(m_TelemetryStatsTimer > 0.0f)
+		return;
+	m_TelemetryStatsTimer += TELEMETRY_STATS_INTERVAL;
+	if(m_TelemetryStatsTimer < 0.0f)
+		m_TelemetryStatsTimer = 0.0f;
+
+	if(m_TelemetryFrameCount > 0)
+	{
+		float TotalFrameTime = 0.0f;
+		for(int i = 0; i < m_TelemetryFrameCount; i++)
+		{
+			m_aTelemetrySorted[i] = m_aTelemetryFrameTimes[i];
+			TotalFrameTime += m_aTelemetryFrameTimes[i];
+		}
+		std::sort(m_aTelemetrySorted, m_aTelemetrySorted + m_TelemetryFrameCount);
+
+		m_TelemetryFpsAvg = TotalFrameTime > 0.0f ? m_TelemetryFrameCount / TotalFrameTime : 0.0f;
+		const int Index1Pct = std::min(m_TelemetryFrameCount - 1, (int)(m_TelemetryFrameCount * 0.99f));
+		const int Index01Pct = std::min(m_TelemetryFrameCount - 1, (int)(m_TelemetryFrameCount * 0.999f));
+		m_TelemetryFps1Pct = 1.0f / std::max(0.0001f, m_aTelemetrySorted[Index1Pct]);
+		m_TelemetryFps01Pct = 1.0f / std::max(0.0001f, m_aTelemetrySorted[Index01Pct]);
+	}
+
+	if(GameClient()->m_Snap.m_pLocalInfo)
+		m_TelemetryPing = (float)std::max(0, GameClient()->m_Snap.m_pLocalInfo->m_Latency);
+
+	const SClientNetStats Stats = Client()->GetNetStats(g_Config.m_ClDummy);
+	if(Stats.m_RecvVitalChunks < m_TelemetryPrevRecvVital || Stats.m_LostVitalChunks < m_TelemetryPrevLostVital)
+	{
+		m_TelemetryPacketLoss = 0.0f;
+	}
+	else
+	{
+		const uint64_t Received = Stats.m_RecvVitalChunks - m_TelemetryPrevRecvVital;
+		const uint64_t Lost = Stats.m_LostVitalChunks - m_TelemetryPrevLostVital;
+		m_TelemetryPacketLoss = Received + Lost > 0 ? 100.0f * (float)Lost / (float)(Received + Lost) : 0.0f;
+	}
+	m_TelemetryPrevRecvVital = Stats.m_RecvVitalChunks;
+	m_TelemetryPrevLostVital = Stats.m_LostVitalChunks;
+
+	m_TelemetrySnapshotRate = (float)m_TelemetrySnapshots;
+	m_TelemetrySnapshots = 0;
+}
+
+void CLazyClient::RenderTelemetry()
+{
+	if(!g_Config.m_LcTelemetry || Client()->State() != IClient::STATE_ONLINE ||
+		GameClient()->m_Menus.IsActive())
+		return;
+
+	char aLines[12][96];
+	int NumLines = 0;
+	auto AddLine = [&](const char *pLine) {
+		if(NumLines < (int)(sizeof(aLines) / sizeof(aLines[0])))
+			str_copy(aLines[NumLines++], pLine, sizeof(aLines[0]));
+	};
+
+	char aBuf[96];
+	const float AverageFrameTime = std::max(0.0001f, Client()->FrameTimeAverage());
+	if(g_Config.m_LcTelemetryFps)
+	{
+		str_format(aBuf, sizeof(aBuf), "FPS: %d", round_to_int(1.0f / AverageFrameTime));
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetryFpsAvg)
+	{
+		str_format(aBuf, sizeof(aBuf), "Avg FPS: %d", round_to_int(m_TelemetryFpsAvg));
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetryFps1Pct)
+	{
+		str_format(aBuf, sizeof(aBuf), "1%% low: %d", round_to_int(m_TelemetryFps1Pct));
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetryFps01Pct)
+	{
+		str_format(aBuf, sizeof(aBuf), "0.1%% low: %d", round_to_int(m_TelemetryFps01Pct));
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetryFrametime)
+	{
+		str_format(aBuf, sizeof(aBuf), "Frame: %.2f ms", AverageFrameTime * 1000.0f);
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetryPing)
+	{
+		str_format(aBuf, sizeof(aBuf), "Ping: %d ms", round_to_int(m_TelemetryPing));
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetryJitter)
+	{
+		str_format(aBuf, sizeof(aBuf), "Jitter: %.1f ms", m_TelemetryJitter);
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetryLoss)
+	{
+		str_format(aBuf, sizeof(aBuf), "Loss: %.1f%%", m_TelemetryPacketLoss);
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetryPrediction)
+	{
+		str_format(aBuf, sizeof(aBuf), "Prediction: %d ms", std::max(0, Client()->GetPredictionTime()));
+		AddLine(aBuf);
+	}
+	if(g_Config.m_LcTelemetrySnaps)
+	{
+		str_format(aBuf, sizeof(aBuf), "Snaps: %d/s", round_to_int(m_TelemetrySnapshotRate));
+		AddLine(aBuf);
+	}
+
+	if(NumLines == 0)
+		return;
+
+	const CScreenRect OldScreen = Graphics()->GetScreen();
+	const float Width = 300.0f * Graphics()->ScreenAspect();
+	Graphics()->MapScreenToSize(Width, 300.0f);
+
+	const float FontSize = 9.5f;
+	const float LineHeight = 11.0f;
+	float MaxTextWidth = 0.0f;
+	for(int i = 0; i < NumLines; i++)
+		MaxTextWidth = std::max(MaxTextWidth, TextRender()->TextWidth(FontSize, aLines[i]));
+
+	const float BoxWidth = MaxTextWidth + 12.0f;
+	const float BoxHeight = NumLines * LineHeight + 8.0f;
+	CUIRect Box = {Width - BoxWidth - 6.0f, 34.0f, BoxWidth, BoxHeight};
+	Box.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.72f), IGraphics::CORNER_ALL, 3.0f);
+	Box.DrawOutline(ColorRGBA(0.45f, 0.65f, 0.85f, 0.35f));
+
+	TextRender()->TextColor(ColorRGBA(0.9f, 0.95f, 1.0f, 0.95f));
+	float y = Box.y + 4.0f;
+	for(int i = 0; i < NumLines; i++)
+	{
+		TextRender()->Text(Box.x + 6.0f, y, FontSize, aLines[i]);
+		y += LineHeight;
+	}
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+	Graphics()->MapScreen(OldScreen);
+}
+
 void CLazyClient::OnRender()
 {
 	RenderZeroGravityWarning();
+	RenderTelemetry();
 }
 
 void CLazyClient::OnUpdate()
@@ -1284,4 +1523,5 @@ void CLazyClient::OnUpdate()
 	UpdateAntiping();
 	UpdateAspectConfirm();
 	UpdateZeroGravityPredictor();
+	UpdateTelemetry();
 }
