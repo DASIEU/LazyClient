@@ -48,6 +48,7 @@ constexpr int AUTO_MARGIN_DEADZONE = 1;
 constexpr int AUTO_MARGIN_STEP_DOWN = 5;
 constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
+constexpr float ZERO_GRAV_HOLD_RADIUS = 64.0f; // two tiles
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
 constexpr float BESTCLIENT_LIST_REFRESH_SECONDS = 60.0f;
@@ -106,6 +107,8 @@ void CLazyClient::OnReset()
 	ResetBestClientList();
 	m_ZeroGravWarning = false;
 	m_ZeroGravCheckTimer = 0.0f;
+	m_ZeroGravHistoryCount = 0;
+	m_ZeroGravHistoryNext = 0;
 	ResetAutoMarginState();
 }
 
@@ -128,6 +131,8 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	ResetBestClientList();
 	m_ZeroGravWarning = false;
 	m_ZeroGravCheckTimer = 0.0f;
+	m_ZeroGravHistoryCount = 0;
+	m_ZeroGravHistoryNext = 0;
 }
 
 void CLazyClient::ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const
@@ -1050,6 +1055,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	{
 		m_ZeroGravWarning = false;
 		m_ZeroGravCheckTimer = 0.0f;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
 		return;
 	}
 
@@ -1062,6 +1069,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	{
 		m_ZeroGravWarning = false;
 		m_ZeroGravCheckTimer = 0.0f;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
 		return;
 	}
 
@@ -1078,6 +1087,35 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		HookDelta.x * Core.m_Input.m_Direction < 0.0f &&
 		std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
 		!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
+
+	m_aZeroGravHistory[m_ZeroGravHistoryNext] = Core.m_Pos;
+	m_ZeroGravHistoryNext = (m_ZeroGravHistoryNext + 1) % ZERO_GRAV_HISTORY_SIZE;
+	m_ZeroGravHistoryCount = std::min(m_ZeroGravHistoryCount + 1, ZERO_GRAV_HISTORY_SIZE);
+
+	// Only start predicting when the tee has stayed in a roughly two-tile
+	// area for the last two seconds, which filters out fast map traversal.
+	bool StayedInArea = m_ZeroGravHistoryCount >= ZERO_GRAV_HISTORY_SIZE;
+	if(StayedInArea)
+	{
+		vec2 Center = vec2(0.0f, 0.0f);
+		for(const vec2 &Pos : m_aZeroGravHistory)
+			Center += Pos;
+		Center /= (float)ZERO_GRAV_HISTORY_SIZE;
+		for(const vec2 &Pos : m_aZeroGravHistory)
+		{
+			if(distance(Pos, Center) > ZERO_GRAV_HOLD_RADIUS)
+			{
+				StayedInArea = false;
+				break;
+			}
+		}
+	}
+
+	if(!ZeroGravityHold || !StayedInArea)
+	{
+		m_ZeroGravWarning = false;
+		return;
+	}
 
 	const int TickSpeed = std::max(1, Client()->GameTickSpeed());
 	const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
@@ -1133,28 +1171,17 @@ void CLazyClient::RenderZeroGravityWarning()
 	Graphics()->MapScreenToSize(Width, 300.0f);
 
 	char aCountdown[64];
-	if(m_ZeroGravSeconds < 0.2f)
-		str_copy(aCountdown, Localize("Freeze now"));
-	else
-		str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
+	str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
 
-	const float CountdownSize = 11.5f;
-	const float HintSize = 8.0f;
+	const float CountdownSize = 10.5f;
 	const float CountdownWidth = TextRender()->TextWidth(CountdownSize, aCountdown);
-	const float BoxWidth = std::max(CountdownWidth + 18.0f, 124.0f);
-	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 34.0f, BoxWidth, 32.0f};
-	Box.Draw(ColorRGBA(0.55f, 0.04f, 0.03f, 0.88f), IGraphics::CORNER_ALL, 4.0f);
-	Box.DrawOutline(ColorRGBA(1.0f, 0.35f, 0.25f, 1.0f));
+	const float BoxWidth = std::max(CountdownWidth + 14.0f, 96.0f);
+	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 32.0f, BoxWidth, 22.0f};
+	Box.Draw(ColorRGBA(0.55f, 0.04f, 0.03f, 0.86f), IGraphics::CORNER_ALL, 3.0f);
+	Box.DrawOutline(ColorRGBA(1.0f, 0.35f, 0.25f, 0.9f));
 
-	CUIRect CountdownRect = Box;
-	CountdownRect.HSplitTop(18.0f, &CountdownRect, nullptr);
 	TextRender()->TextColor(ColorRGBA(1.0f, 0.92f, 0.88f, 1.0f));
-	Ui()->DoLabel(&CountdownRect, aCountdown, CountdownSize, TEXTALIGN_MC);
-
-	CUIRect HintRect = Box;
-	HintRect.HSplitTop(17.0f, nullptr, &HintRect);
-	TextRender()->TextColor(ColorRGBA(1.0f, 0.72f, 0.62f, 1.0f));
-	Ui()->DoLabel(&HintRect, Localize("Unhook or rehook"), HintSize, TEXTALIGN_MC);
+	Ui()->DoLabel(&Box, aCountdown, CountdownSize, TEXTALIGN_MC);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 	Graphics()->MapScreen(OldScreen);

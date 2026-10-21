@@ -123,9 +123,13 @@ private:
 	std::unordered_map<std::string, std::unordered_set<std::string>> m_BestClientPlayers;
 
 	// Hooked freeze predictor
+	static constexpr int ZERO_GRAV_HISTORY_SIZE = 40;
 	float m_ZeroGravCheckTimer = 0.0f;
 	bool m_ZeroGravWarning = false;
 	float m_ZeroGravSeconds = 0.0f;
+	vec2 m_aZeroGravHistory[ZERO_GRAV_HISTORY_SIZE] = {};
+	int m_ZeroGravHistoryCount = 0;
+	int m_ZeroGravHistoryNext = 0;
 
 	void ResetAutoMarginState();
 	void UpdateAutoMargin();
