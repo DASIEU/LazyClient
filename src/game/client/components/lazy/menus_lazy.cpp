@@ -394,17 +394,17 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	}
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Zero Gravity Predictor"), Ui());
+	LazySectionTitle(&MainView, Localize("Hooked Freeze Predictor"), Ui());
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcZeroGravPredict, Localize("Predict freeze tiles"), &g_Config.m_LcZeroGravPredict, &MainView, LazyLineSize);
 	if(g_Config.m_LcZeroGravPredict)
 	{
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 5, &CUi::ms_LinearScrollbarScale, 0, "s");
-		LazyInfoLabel(&MainView, Localize("While hooked in zero gravity, a red countdown at the top of the screen warns you before you hit freeze."), Ui(), TextRender());
+		LazyInfoLabel(&MainView, Localize("While hooked to a wall, simulates the tee's movement and shows a red countdown before the current trajectory reaches freeze, horizontally or vertically."), Ui(), TextRender());
 	}
 	else
 	{
-		LazyInfoLabel(&MainView, Localize("No freeze warning is shown while hooked in zero gravity."), Ui(), TextRender());
+		LazyInfoLabel(&MainView, Localize("No hooked freeze warning is shown."), Ui(), TextRender());
 	}
 
 	s_ScrollRegion.End();

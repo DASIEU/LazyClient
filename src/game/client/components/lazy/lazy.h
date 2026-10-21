@@ -122,7 +122,7 @@ private:
 	bool m_BestClientListLoaded = false;
 	std::unordered_map<std::string, std::unordered_set<std::string>> m_BestClientPlayers;
 
-	// Zero gravity freeze predictor
+	// Hooked freeze predictor
 	float m_ZeroGravCheckTimer = 0.0f;
 	bool m_ZeroGravWarning = false;
 	float m_ZeroGravSeconds = 0.0f;

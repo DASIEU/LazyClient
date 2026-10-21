@@ -2189,6 +2189,21 @@ foreach(datafile ${DATA})
   file(MAKE_DIRECTORY ${DESTINATION})
   file(COPY ${datafile} DESTINATION ${DESTINATION})
 endforeach()
+
+# Register the LazyClient branding assets as configure dependencies so a
+# build-tree client does not keep using stale images after they are changed.
+set(LAZYCLIENT_DATA_FILES
+  lazy/banner.png
+  lazy/lazyclient.png
+  lazy/clients/bestclient.png
+  lazy/clients/rushie.png
+)
+foreach(datafile ${LAZYCLIENT_DATA_FILES})
+  get_filename_component(DESTINATION "${CMAKE_BINARY_DIR}/data/${datafile}" DIRECTORY)
+  file(MAKE_DIRECTORY "${DESTINATION}")
+  configure_file("${PROJECT_SOURCE_DIR}/data/${datafile}" "${CMAKE_BINARY_DIR}/data/${datafile}" COPYONLY)
+endforeach()
+
 set(COPY_FILES
   # tidy-alphabetical-start
   ${CRASHDUMP_COPY_FILES}

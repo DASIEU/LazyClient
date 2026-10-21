@@ -1057,7 +1057,6 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	const CNetObj_Character *pLocalCharacter = GameClient()->m_Snap.m_pLocalCharacter;
 	const bool SnapshotHooked = pLocalCharacter->m_HookState == HOOK_GRABBED;
 	if((Core.m_HookState != HOOK_GRABBED && !SnapshotHooked) || Core.HookedPlayer() != -1 ||
-		std::abs(Core.m_Tuning.m_Gravity) > 0.01f ||
 		Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
 		Core.m_Super || Core.m_Invincible)
 	{
