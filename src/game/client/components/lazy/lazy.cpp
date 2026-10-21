@@ -2,12 +2,16 @@
 
 #include "lazy_ccid.h"
 
+#include <base/log.h>
 #include <base/math.h>
+#include <base/net.h>
 #include <base/time.h>
 
 #include <engine/client.h>
 #include <engine/graphics.h>
+#include <engine/http.h>
 #include <engine/shared/config.h>
+#include <engine/shared/json.h>
 #include <engine/textrender.h>
 
 #include <generated/client_data.h>
@@ -23,6 +27,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -43,6 +49,11 @@ constexpr int AUTO_MARGIN_STEP_DOWN = 5;
 constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 
+constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
+constexpr float BESTCLIENT_LIST_REFRESH_SECONDS = 60.0f;
+constexpr float BESTCLIENT_LIST_RETRY_SECONDS = 10.0f;
+constexpr int64_t BESTCLIENT_LIST_MAX_RESPONSE_SIZE = 4 * 1024 * 1024;
+
 bool IsHeavyWeapon(int Weapon)
 {
 	return Weapon == WEAPON_SHOTGUN || Weapon == WEAPON_GRENADE || Weapon == WEAPON_LASER || Weapon == WEAPON_NINJA;
@@ -51,6 +62,17 @@ bool IsHeavyWeapon(int Weapon)
 bool IsFreezeTile(int Tile)
 {
 	return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
+}
+
+bool SameServerAddress(const char *pAddress, const NETADDR &CurrentAddress)
+{
+	NETADDR ParsedAddress;
+	if(net_addr_from_str(&ParsedAddress, pAddress) == 0)
+		return net_addr_comp(&ParsedAddress, &CurrentAddress) == 0;
+
+	char aCurrentAddress[NETADDR_MAXSTRSIZE];
+	net_addr_str(&CurrentAddress, aCurrentAddress, sizeof(aCurrentAddress), true);
+	return str_comp_nocase(pAddress, aCurrentAddress) == 0;
 }
 
 float MarginFromPing(float Ping)
@@ -81,6 +103,7 @@ void CLazyClient::OnReset()
 	std::fill(std::begin(m_aClientTypes), std::end(m_aClientTypes), LC_CLIENT_NONE);
 	m_ClientLogosInitialized = false;
 	m_WasClientLogosEnabled = false;
+	ResetBestClientList();
 	m_ZeroGravWarning = false;
 	m_ZeroGravCheckTimer = 0.0f;
 	ResetAutoMarginState();
@@ -102,6 +125,7 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_GunKeyHeld = false;
 	m_AntipingSmoothedPing = -1.0f;
 	std::fill(std::begin(m_aClientTypes), std::end(m_aClientTypes), LC_CLIENT_NONE);
+	ResetBestClientList();
 	m_ZeroGravWarning = false;
 	m_ZeroGravCheckTimer = 0.0f;
 }
@@ -159,6 +183,20 @@ void CLazyClient::UpdateClientTypes()
 	if((State != IClient::STATE_ONLINE && State != IClient::STATE_DEMOPLAYBACK) || !g_Config.m_LcClientLogos)
 		return;
 
+	const std::unordered_set<std::string> *pBestClientNames = nullptr;
+	if(State == IClient::STATE_ONLINE && g_Config.m_LcBestClientPublicList && m_BestClientListLoaded)
+	{
+		const NETADDR CurrentAddress = Client()->ServerAddress();
+		for(const auto &Entry : m_BestClientPlayers)
+		{
+			if(SameServerAddress(Entry.first.c_str(), CurrentAddress))
+			{
+				pBestClientNames = &Entry.second;
+				break;
+			}
+		}
+	}
+
 	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 	{
 		const CGameClient::CClientData &Client = GameClient()->m_aClients[ClientId];
@@ -189,6 +227,12 @@ void CLazyClient::UpdateClientTypes()
 				Type = LC_CLIENT_LAZYCLIENT;
 				break;
 			}
+		}
+
+		if(Type == LC_CLIENT_NONE && pBestClientNames != nullptr && Client.m_aName[0] != '\0' &&
+			pBestClientNames->find(Client.m_aName) != pBestClientNames->end())
+		{
+			Type = LC_CLIENT_BESTCLIENT;
 		}
 
 		if(State == IClient::STATE_ONLINE &&
@@ -222,6 +266,135 @@ void CLazyClient::UpdateClientLogoState()
 		if(Client()->DummyConnected())
 			GameClient()->SendDummyInfo(false);
 	}
+}
+
+void CLazyClient::ResetBestClientList()
+{
+	if(m_pBestClientListTask)
+	{
+		m_pBestClientListTask->Abort();
+		m_pBestClientListTask = nullptr;
+	}
+	m_BestClientListRefreshTimer = 0.0f;
+	m_BestClientListLoaded = false;
+	m_BestClientPlayers.clear();
+}
+
+void CLazyClient::FinishBestClientList()
+{
+	if(!m_pBestClientListTask || m_pBestClientListTask->State() != EHttpState::DONE)
+		return;
+
+	json_value *pJson = m_pBestClientListTask->ResultJson();
+	if(pJson == nullptr || pJson->type != json_array)
+	{
+		if(pJson != nullptr)
+			json_value_free(pJson);
+		log_debug("lazy", "BestClient list has an unexpected format");
+		return;
+	}
+
+	std::unordered_map<std::string, std::unordered_set<std::string>> NewPlayers;
+	const int NumServers = json_array_length(pJson);
+	for(int ServerIndex = 0; ServerIndex < NumServers; ++ServerIndex)
+	{
+		const json_value *pServer = json_array_get(pJson, ServerIndex);
+		if(pServer == nullptr || pServer->type != json_object)
+			continue;
+
+		const json_value *pAddress = json_object_get(pServer, "server_address");
+		const json_value *pPlayers = json_object_get(pServer, "players");
+		if(pAddress == nullptr || pAddress->type != json_string || pPlayers == nullptr || pPlayers->type != json_array)
+			continue;
+
+		std::unordered_set<std::string> Names;
+		const int NumPlayers = json_array_length(pPlayers);
+		for(int PlayerIndex = 0; PlayerIndex < NumPlayers; ++PlayerIndex)
+		{
+			const json_value *pPlayer = json_array_get(pPlayers, PlayerIndex);
+			if(pPlayer == nullptr || pPlayer->type != json_object)
+				continue;
+
+			const json_value *pName = json_object_get(pPlayer, "name");
+			if(pName == nullptr || pName->type != json_string || pName->u.string.length == 0)
+				continue;
+
+			Names.emplace(pName->u.string.ptr, pName->u.string.length);
+		}
+
+		auto Entry = NewPlayers.try_emplace(std::string(pAddress->u.string.ptr, pAddress->u.string.length));
+		Entry.first->second.insert(Names.begin(), Names.end());
+	}
+	json_value_free(pJson);
+
+	m_BestClientPlayers = std::move(NewPlayers);
+	m_BestClientListLoaded = true;
+	log_debug("lazy", "loaded %d servers from the BestClient public list", (int)m_BestClientPlayers.size());
+	UpdateClientTypes();
+}
+
+void CLazyClient::UpdateBestClientList()
+{
+	const bool Wanted = g_Config.m_LcClientLogos && g_Config.m_LcBestClientPublicList;
+	if(!Wanted)
+	{
+		if(m_pBestClientListTask)
+		{
+			m_pBestClientListTask->Abort();
+			m_pBestClientListTask = nullptr;
+		}
+		if(m_BestClientListLoaded || !m_BestClientPlayers.empty())
+		{
+			m_BestClientListLoaded = false;
+			m_BestClientPlayers.clear();
+			UpdateClientTypes();
+		}
+		m_BestClientListRefreshTimer = 0.0f;
+		return;
+	}
+
+	if(Client()->State() != IClient::STATE_ONLINE)
+	{
+		if(m_pBestClientListTask)
+		{
+			m_pBestClientListTask->Abort();
+			m_pBestClientListTask = nullptr;
+		}
+		return;
+	}
+
+	if(m_pBestClientListTask)
+	{
+		if(m_pBestClientListTask->State() == EHttpState::DONE)
+		{
+			FinishBestClientList();
+			m_pBestClientListTask = nullptr;
+		}
+		else if(m_pBestClientListTask->Done())
+		{
+			log_debug("lazy", "BestClient public list request failed");
+			m_pBestClientListTask = nullptr;
+			m_BestClientListRefreshTimer = BESTCLIENT_LIST_RETRY_SECONDS;
+		}
+		else
+		{
+			return;
+		}
+	}
+
+	m_BestClientListRefreshTimer -= Client()->RenderFrameTime();
+	if(m_BestClientListRefreshTimer > 0.0f)
+		return;
+	m_BestClientListRefreshTimer = BESTCLIENT_LIST_REFRESH_SECONDS;
+
+	m_pBestClientListTask = HttpGet(BESTCLIENT_USERS_URL);
+	if(!m_pBestClientListTask)
+		return;
+	m_pBestClientListTask->Timeout(CTimeout{10000, 15000, 500, 10});
+	m_pBestClientListTask->MaxResponseSize(BESTCLIENT_LIST_MAX_RESPONSE_SIZE);
+	m_pBestClientListTask->IpResolve(IPRESOLVE::V4);
+	m_pBestClientListTask->VerifyPeer(false);
+	Http()->Run(m_pBestClientListTask);
 }
 
 float CLazyClient::InputOffsetTicks() const
@@ -881,8 +1054,10 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	}
 
 	const CCharacterCore &Core = GameClient()->m_PredictedChar;
-	if(Core.m_HookState != HOOK_GRABBED || Core.HookedPlayer() != -1 ||
-		std::abs(Core.m_Tuning.m_Gravity) > 0.001f ||
+	const CNetObj_Character *pLocalCharacter = GameClient()->m_Snap.m_pLocalCharacter;
+	const bool SnapshotHooked = pLocalCharacter->m_HookState == HOOK_GRABBED;
+	if((Core.m_HookState != HOOK_GRABBED && !SnapshotHooked) || Core.HookedPlayer() != -1 ||
+		std::abs(Core.m_Tuning.m_Gravity) > 0.01f ||
 		Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
 		Core.m_Super || Core.m_Invincible)
 	{
@@ -902,6 +1077,15 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	CCharacterCore Sim = Core;
 	Sim.SetCoreWorld(nullptr, Collision(), nullptr);
 	Sim.m_Input.m_Hook = 1;
+	if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
+	{
+		// The predicted core can be a tick behind the snapshot. Keep using
+		// the snapshot's hook position so the simulation stays attached.
+		Sim.m_HookState = HOOK_GRABBED;
+		Sim.m_HookPos = vec2(pLocalCharacter->m_HookX, pLocalCharacter->m_HookY);
+		Sim.m_HookTick = 0;
+		Sim.SetHookedPlayer(-1);
+	}
 
 	vec2 PrevPos = Sim.m_Pos;
 	for(int Tick = 1; Tick <= MaxTicks; Tick++)
@@ -933,19 +1117,29 @@ void CLazyClient::RenderZeroGravityWarning()
 	const float Width = 300.0f * Graphics()->ScreenAspect();
 	Graphics()->MapScreenToSize(Width, 300.0f);
 
-	char aBuf[64];
+	char aCountdown[64];
 	if(m_ZeroGravSeconds < 0.2f)
-		str_copy(aBuf, Localize("Freeze now"));
+		str_copy(aCountdown, Localize("Freeze now"));
 	else
-		str_format(aBuf, sizeof(aBuf), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
+		str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
 
-	const float FontSize = 12.0f;
-	const float TextWidth = TextRender()->TextWidth(FontSize, aBuf);
-	CUIRect Box = {Width / 2.0f - TextWidth / 2.0f - 8.0f, 38.0f, TextWidth + 16.0f, FontSize + 8.0f};
-	Box.Draw(ColorRGBA(0.05f, 0.05f, 0.05f, 0.7f), IGraphics::CORNER_ALL, 3.0f);
+	const float CountdownSize = 15.0f;
+	const float HintSize = 11.0f;
+	const float CountdownWidth = TextRender()->TextWidth(CountdownSize, aCountdown);
+	const float BoxWidth = std::max(CountdownWidth + 24.0f, 156.0f);
+	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 44.0f, BoxWidth, 44.0f};
+	Box.Draw(ColorRGBA(0.55f, 0.04f, 0.03f, 0.88f), IGraphics::CORNER_ALL, 5.0f);
+	Box.DrawOutline(ColorRGBA(1.0f, 0.35f, 0.25f, 1.0f));
 
-	TextRender()->TextColor(ColorRGBA(1.0f, 0.25f, 0.2f, 1.0f));
-	Ui()->DoLabel(&Box, aBuf, FontSize, TEXTALIGN_MC);
+	CUIRect CountdownRect = Box;
+	CountdownRect.HSplitTop(25.0f, &CountdownRect, nullptr);
+	TextRender()->TextColor(ColorRGBA(1.0f, 0.92f, 0.88f, 1.0f));
+	Ui()->DoLabel(&CountdownRect, aCountdown, CountdownSize, TEXTALIGN_MC);
+
+	CUIRect HintRect = Box;
+	HintRect.HSplitTop(23.0f, nullptr, &HintRect);
+	TextRender()->TextColor(ColorRGBA(1.0f, 0.72f, 0.62f, 1.0f));
+	Ui()->DoLabel(&HintRect, Localize("Unhook or rehook"), HintSize, TEXTALIGN_MC);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 	Graphics()->MapScreen(OldScreen);
@@ -982,6 +1176,7 @@ void CLazyClient::OnUpdate()
 	}
 
 	UpdateClientLogoState();
+	UpdateBestClientList();
 	UpdateAutoMargin();
 	UpdateAntiping();
 	UpdateAspectConfirm();

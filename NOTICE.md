@@ -54,7 +54,12 @@ libraries, fonts, skins, maps, and other assets are preserved in
 ## Client indicator assets
 
 The client indicator icons are used only to show which compatible client a
-player is using. They do not contact any external service.
+player is using. LazyClient tags its own skin locally. BestClient does not
+broadcast a local tag, so LazyClient can optionally fetch BestClient's public
+player list from `https://150.241.70.188:8779/users.json` to match players on
+the current server. That request is used only for the BestClient icon, is not
+an account or presence system for LazyClient, and can be disabled with
+`lc_bestclient_public_list`.
 
 - `data/lazy/clients/rushie.png` is from **RushieClient**,
   <https://github.com/RushieClient/RushieClient-ddnet>, licensed under
@@ -70,8 +75,9 @@ convention used by RushieClient and other compatible clients.
 LazyClient code, branding, and the gores-focused settings layer are
 Copyright (C) 2026 DASI.
 
-The LazyClient wordmark and banner in `data/lazy/banner.png` and
-`docs/assets/lazyclient-banner.png` were created for this project.
+The LazyClient Lz wordmark, client icon, and banner in `data/lazy/lazyclient.png`,
+`data/lazy/banner.png`, and `docs/assets/lazyclient-banner.png` were created for
+this project.
 
 ## No endorsement
 

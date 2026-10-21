@@ -165,7 +165,6 @@ void CGameClient::OnConsoleInit()
 					      &m_PlayerIndicator, // TClient
 					      &m_Mod, // TClient
 					      &m_CustomCommunities, // TClient
-					      &m_Lazy, // LazyClient
 					      &m_Hud,
 					      &m_Spectator,
 					      &m_Emoticon,
@@ -173,6 +172,7 @@ void CGameClient::OnConsoleInit()
 					      &m_BindWheel, // TClient
 					      &m_WarList, // TClient
 					      &m_StatusBar, // TClient
+					      &m_Lazy, // LazyClient (above the HUD so the freeze warning is visible)
 					      &m_InfoMessages,
 					      &m_Chat,
 					      &m_Broadcast,

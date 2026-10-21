@@ -64,6 +64,9 @@ public:
 	void SkipByFileTime(bool SkipByFileTime) { m_SkipByFileTime = SkipByFileTime; }
 	void IpResolve(IPRESOLVE IpResolve) { m_IpResolve = IpResolve; }
 	void FailOnErrorStatus(bool FailOnErrorStatus) { m_FailOnErrorStatus = FailOnErrorStatus; }
+	// Disable TLS certificate verification. Only use this for a hardcoded
+	// endpoint whose self-signed certificate cannot be validated.
+	void VerifyPeer(bool VerifyPeer) { m_VerifyPeer = VerifyPeer; }
 	// Download to memory only. Get the result via `Result*`.
 	void WriteToMemory();
 	// Download to filesystem and memory.
@@ -152,6 +155,7 @@ protected:
 	bool m_SkipByFileTime = true;
 	IPRESOLVE m_IpResolve = IPRESOLVE::WHATEVER;
 	bool m_FailOnErrorStatus = true;
+	bool m_VerifyPeer = true;
 	bool m_ValidateBeforeOverwrite = false;
 	std::optional<SHA256_DIGEST> m_ExpectedSha256 = std::nullopt;
 	int64_t m_IfModifiedSince = -1;

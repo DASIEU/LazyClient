@@ -368,6 +368,11 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	LazySectionTitle(&MainView, Localize("Client Logos"), Ui());
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcClientLogos, Localize("Show client logos"), &g_Config.m_LcClientLogos, &MainView, LazyLineSize);
 	LazyInfoLabel(&MainView, Localize("Shows a small logo before player names. LazyClient also tags its own skin so compatible clients can show it."), Ui(), TextRender());
+	if(g_Config.m_LcClientLogos)
+	{
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcBestClientPublicList, Localize("Use BestClient public list (network)"), &g_Config.m_LcBestClientPublicList, &MainView, LazyLineSize);
+		LazyInfoLabel(&MainView, Localize("Fetches BestClient's public player list to show its logo. Disable this to stay fully local."), Ui(), TextRender());
+	}
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
 	LazySectionTitle(&MainView, Localize("Scoreboard"), Ui());
@@ -395,7 +400,7 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	{
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 5, &CUi::ms_LinearScrollbarScale, 0, "s");
-		LazyInfoLabel(&MainView, Localize("While hooked in zero gravity, predicts the next freeze and warns you before you hit it."), Ui(), TextRender());
+		LazyInfoLabel(&MainView, Localize("While hooked in zero gravity, a red countdown at the top of the screen warns you before you hit freeze."), Ui(), TextRender());
 	}
 	else
 	{

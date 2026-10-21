@@ -6,8 +6,8 @@
 // The alpha bytes are not used for rendering, so the visible tee colors stay
 // the same. Only clients that know the convention read the extra byte.
 //
-// BestClient does not expose a local client tag. Its icon is reserved for a
-// future local-only mapping and is not detected through the public list.
+// BestClient does not expose a local client tag. Its icon is matched against
+// BestClient's optional public player list instead.
 
 enum ELazyClientType
 {

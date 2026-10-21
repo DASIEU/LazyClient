@@ -7,7 +7,9 @@ the scoreboard.
   licensed under CC-BY-SA 3.0.
 - `bestclient.png` is from [BestClient](https://github.com/BestProjectTeam/BestClient),
   licensed under CC-BY-SA 3.0.
-- `../lazyclient.png` is the LazyClient cat mark.
+- `../lazyclient.png` is the LazyClient Lz mark.
 
-The icons are used as indicators only. LazyClient does not contact either
-client's presence service.
+The icons are used as indicators only. BestClient has no local skin tag, so
+LazyClient can optionally fetch BestClient's public player list to match names
+on the current server. That lookup can be disabled with
+`lc_bestclient_public_list`.

@@ -10,7 +10,13 @@
 
 #include <game/client/component.h>
 
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+
 class CCollision;
+class IHttpRequest;
 
 class CLazyClient : public CComponent
 {
@@ -111,6 +117,10 @@ private:
 	int m_aClientTypes[MAX_CLIENTS] = {};
 	bool m_ClientLogosInitialized = false;
 	bool m_WasClientLogosEnabled = false;
+	std::shared_ptr<IHttpRequest> m_pBestClientListTask;
+	float m_BestClientListRefreshTimer = 0.0f;
+	bool m_BestClientListLoaded = false;
+	std::unordered_map<std::string, std::unordered_set<std::string>> m_BestClientPlayers;
 
 	// Zero gravity freeze predictor
 	float m_ZeroGravCheckTimer = 0.0f;
@@ -123,6 +133,9 @@ private:
 	void UpdateAspectConfirm();
 	void UpdateClientTypes();
 	void UpdateClientLogoState();
+	void UpdateBestClientList();
+	void FinishBestClientList();
+	void ResetBestClientList();
 	void UpdateZeroGravityPredictor();
 	bool PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos) const;
 	void RenderZeroGravityWarning();
