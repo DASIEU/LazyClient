@@ -400,7 +400,7 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	{
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 5, &CUi::ms_LinearScrollbarScale, 0, "s");
-		LazyInfoLabel(&MainView, Localize("While hooked to a wall, simulates the tee's movement and shows a red countdown before the current trajectory reaches freeze, horizontally or vertically."), Ui(), TextRender());
+		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook, simulates the tee and warns before that trajectory reaches freeze. The warning appears once the predicted time is within this limit."), Ui(), TextRender());
 	}
 	else
 	{

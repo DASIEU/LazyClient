@@ -46,5 +46,5 @@ MACRO_CONFIG_INT(LcBestClientPublicList, lc_bestclient_public_list, 1, 0, 1, CFG
 MACRO_CONFIG_INT(LcFriendHeartScoreboard, lc_friend_heart_scoreboard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a heart before friends in the scoreboard")
 MACRO_CONFIG_INT(LcBetterVotes, lc_better_votes, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show vote percentages, the pass threshold and remaining yes votes")
 MACRO_CONFIG_INT(LcVotePassPercentage, lc_vote_pass_percentage, 50, 1, 99, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vote yes percentage required to pass (match the server setting)")
-MACRO_CONFIG_INT(LcZeroGravPredict, lc_zerograv_predict, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict freeze tiles while hooked to a wall")
-MACRO_CONFIG_INT(LcZeroGravPredictTime, lc_zerograv_predict_time, 3, 1, 5, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Hooked freeze warning time in seconds")
+MACRO_CONFIG_INT(LcZeroGravPredict, lc_zerograv_predict, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict freeze tiles during a zero-gravity wall hold")
+MACRO_CONFIG_INT(LcZeroGravPredictTime, lc_zerograv_predict_time, 3, 1, 5, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity freeze warning time in seconds")

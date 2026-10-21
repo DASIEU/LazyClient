@@ -1070,6 +1070,15 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		return;
 	m_ZeroGravCheckTimer = 0.05f;
 
+	const vec2 HookPos = Core.m_HookState == HOOK_GRABBED ? Core.m_HookPos : vec2(pLocalCharacter->m_HookX, pLocalCharacter->m_HookY);
+	const vec2 HookDelta = HookPos - Core.m_Pos;
+	// The gores "zero gravity" hold is a wall hook with the opposing
+	// movement key held, so the hook drag and air control cancel out.
+	const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
+		HookDelta.x * Core.m_Input.m_Direction < 0.0f &&
+		std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
+		!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
+
 	const int TickSpeed = std::max(1, Client()->GameTickSpeed());
 	const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
 
@@ -1086,6 +1095,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		Sim.SetHookedPlayer(-1);
 	}
 
+	float HitSeconds = -1.0f;
 	vec2 PrevPos = Sim.m_Pos;
 	for(int Tick = 1; Tick <= MaxTicks; Tick++)
 	{
@@ -1095,14 +1105,20 @@ void CLazyClient::UpdateZeroGravityPredictor()
 
 		if(PathHitsFreeze(Collision(), PrevPos, Sim.m_Pos))
 		{
-			m_ZeroGravWarning = true;
-			m_ZeroGravSeconds = Tick / (float)TickSpeed;
-			return;
+			HitSeconds = Tick / (float)TickSpeed;
+			break;
 		}
 		PrevPos = Sim.m_Pos;
 	}
 
-	m_ZeroGravWarning = false;
+	if(!ZeroGravityHold || HitSeconds < 0.0f)
+	{
+		m_ZeroGravWarning = false;
+		return;
+	}
+
+	m_ZeroGravWarning = true;
+	m_ZeroGravSeconds = HitSeconds;
 }
 
 void CLazyClient::RenderZeroGravityWarning()
@@ -1122,21 +1138,21 @@ void CLazyClient::RenderZeroGravityWarning()
 	else
 		str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
 
-	const float CountdownSize = 15.0f;
-	const float HintSize = 11.0f;
+	const float CountdownSize = 11.5f;
+	const float HintSize = 8.0f;
 	const float CountdownWidth = TextRender()->TextWidth(CountdownSize, aCountdown);
-	const float BoxWidth = std::max(CountdownWidth + 24.0f, 156.0f);
-	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 44.0f, BoxWidth, 44.0f};
-	Box.Draw(ColorRGBA(0.55f, 0.04f, 0.03f, 0.88f), IGraphics::CORNER_ALL, 5.0f);
+	const float BoxWidth = std::max(CountdownWidth + 18.0f, 124.0f);
+	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 34.0f, BoxWidth, 32.0f};
+	Box.Draw(ColorRGBA(0.55f, 0.04f, 0.03f, 0.88f), IGraphics::CORNER_ALL, 4.0f);
 	Box.DrawOutline(ColorRGBA(1.0f, 0.35f, 0.25f, 1.0f));
 
 	CUIRect CountdownRect = Box;
-	CountdownRect.HSplitTop(25.0f, &CountdownRect, nullptr);
+	CountdownRect.HSplitTop(18.0f, &CountdownRect, nullptr);
 	TextRender()->TextColor(ColorRGBA(1.0f, 0.92f, 0.88f, 1.0f));
 	Ui()->DoLabel(&CountdownRect, aCountdown, CountdownSize, TEXTALIGN_MC);
 
 	CUIRect HintRect = Box;
-	HintRect.HSplitTop(23.0f, nullptr, &HintRect);
+	HintRect.HSplitTop(17.0f, nullptr, &HintRect);
 	TextRender()->TextColor(ColorRGBA(1.0f, 0.72f, 0.62f, 1.0f));
 	Ui()->DoLabel(&HintRect, Localize("Unhook or rehook"), HintSize, TEXTALIGN_MC);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
