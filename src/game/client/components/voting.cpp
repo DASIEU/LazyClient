@@ -15,6 +15,8 @@
 #include <game/client/gameclient.h>
 #include <game/localization.h>
 
+#include <algorithm>
+
 void CVoting::ConCallvote(IConsole::IResult *pResult, void *pUserData)
 {
 	CVoting *pSelf = (CVoting *)pUserData;
@@ -353,7 +355,8 @@ void CVoting::Render()
 		return;
 	}
 
-	CUIRect View = {0.0f, 60.0f, 120.0f, 38.0f};
+	const bool BetterVotes = g_Config.m_LcBetterVotes != 0;
+	CUIRect View = {0.0f, 60.0f, 120.0f, BetterVotes ? 48.0f : 38.0f};
 	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), IGraphics::CORNER_R, 3.0f);
 	View.Margin(3.0f, &View);
 
@@ -386,8 +389,23 @@ void CVoting::Render()
 	Ui()->DoLabel(&Row, aBuf, 6.0f, TEXTALIGN_ML, Props);
 
 	View.HSplitTop(3.0f, nullptr, &View);
-	View.HSplitTop(4.0f, &Row, &View);
+	View.HSplitTop(BetterVotes ? 6.0f : 4.0f, &Row, &View);
 	RenderBars(Row);
+
+	if(BetterVotes)
+	{
+		View.HSplitTop(3.0f, nullptr, &View);
+		View.HSplitTop(6.0f, &Row, &View);
+
+		char aThreshold[128];
+		const int RemainingYes = VoteRemainingYes();
+		if(RemainingYes > 0)
+			str_format(aThreshold, sizeof(aThreshold), Localize("%d%% needed, %d more yes"), g_Config.m_LcVotePassPercentage, RemainingYes);
+		else
+			str_format(aThreshold, sizeof(aThreshold), Localize("%d%% needed, passing"), g_Config.m_LcVotePassPercentage);
+		Props.m_MaxWidth = Row.w;
+		Ui()->DoLabel(&Row, aThreshold, 6.0f, TEXTALIGN_MC, Props);
+	}
 
 	View.HSplitTop(3.0f, nullptr, &View);
 	View.HSplitTop(6.0f, &Row, &View);
@@ -407,8 +425,36 @@ void CVoting::Render()
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 }
 
+int CVoting::VoteYesPercentage() const
+{
+	if(m_Total <= 0)
+		return 0;
+	return (m_Yes * 100 + m_Total / 2) / m_Total;
+}
+
+int CVoting::VoteNoPercentage() const
+{
+	if(m_Total <= 0)
+		return 0;
+	return (m_No * 100 + m_Total / 2) / m_Total;
+}
+
+int CVoting::VoteNeededYes() const
+{
+	if(m_Total <= 0)
+		return 0;
+	// The server passes a vote early when yes * 100 > total * percentage.
+	return m_Total * g_Config.m_LcVotePassPercentage / 100 + 1;
+}
+
+int CVoting::VoteRemainingYes() const
+{
+	return std::max(0, VoteNeededYes() - m_Yes);
+}
+
 void CVoting::RenderBars(CUIRect Bars) const
 {
+	const CUIRect FullBars = Bars;
 	Bars.Draw(ColorRGBA(0.8f, 0.8f, 0.8f, 0.5f), IGraphics::CORNER_ALL, Bars.h / 2.0f);
 
 	CUIRect Splitter;
@@ -430,5 +476,23 @@ void CVoting::RenderBars(CUIRect Bars) const
 			Bars.VSplitRight(Bars.w * m_No / m_Total, nullptr, &NoArea);
 			NoArea.Draw(ColorRGBA(0.9f, 0.2f, 0.2f, 0.85f), IGraphics::CORNER_ALL, NoArea.h / 2.0f);
 		}
+	}
+
+	if(g_Config.m_LcBetterVotes && m_Total > 0 && FullBars.h >= 5.0f)
+	{
+		char aYes[16], aNo[16];
+		str_format(aYes, sizeof(aYes), "%d%%", VoteYesPercentage());
+		str_format(aNo, sizeof(aNo), "%d%%", VoteNoPercentage());
+
+		CUIRect YesLabel = FullBars;
+		CUIRect NoLabel = FullBars;
+		YesLabel.w = FullBars.w / 2.0f;
+		NoLabel.x = FullBars.x + FullBars.w / 2.0f;
+		NoLabel.w = FullBars.w / 2.0f;
+
+		TextRender()->TextColor(ColorRGBA(1.0f, 1.0f, 1.0f, 0.95f));
+		Ui()->DoLabel(&YesLabel, aYes, std::min(5.0f, FullBars.h * 0.9f), TEXTALIGN_MC);
+		Ui()->DoLabel(&NoLabel, aNo, std::min(5.0f, FullBars.h * 0.9f), TEXTALIGN_MC);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
 	}
 }

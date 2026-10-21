@@ -264,6 +264,9 @@ container.images.Add(image_game)
 container.images.Add(image_particles)
 container.images.Add(Image("cursor", "gui_cursor.png"))
 container.images.Add(Image("banner", "lazy/banner.png"))  # LazyClient
+container.images.Add(Image("lazyclient", "lazy/lazyclient.png"))  # LazyClient
+container.images.Add(Image("rushie", "lazy/clients/rushie.png"))  # LazyClient
+container.images.Add(Image("bestclient", "lazy/clients/bestclient.png"))  # LazyClient
 container.images.Add(image_emoticons)
 container.images.Add(Image("background_noise", "background_noise.png"))
 container.images.Add(image_speedup_arrow)

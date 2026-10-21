@@ -84,6 +84,7 @@ class CScoreboard : public CComponent
 		CCachedText m_Name;
 		CCachedText m_MuteMark;
 		CCachedText m_ReadyMark;
+		CCachedText m_FriendMark;
 		CCachedText m_Clan;
 		CCachedText m_Ping;
 	};

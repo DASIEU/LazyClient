@@ -5,8 +5,12 @@
 
 #include <engine/client/enums.h>
 #include <engine/console.h>
+#include <engine/graphics.h>
+#include <engine/shared/protocol.h>
 
 #include <game/client/component.h>
+
+class CCollision;
 
 class CLazyClient : public CComponent
 {
@@ -18,6 +22,13 @@ public:
 	void OnStateChange(int NewState, int OldState) override;
 	void OnNewSnapshot() override;
 	void OnUpdate() override;
+	void OnRender() override;
+
+	// Client identification
+	void ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const;
+	int ClientType(int ClientId) const;
+	IGraphics::CTextureHandle ClientIcon(int Type) const;
+	void RenderClientIcon(int Type, vec2 Pos, float Size, float Alpha) const;
 
 	// Input modes
 	float InputOffsetTicks() const;
@@ -96,10 +107,25 @@ private:
 	int m_AspectPrevWidth = 0;
 	int m_AspectPrevHeight = 0;
 
+	// Client identification
+	int m_aClientTypes[MAX_CLIENTS] = {};
+	bool m_ClientLogosInitialized = false;
+	bool m_WasClientLogosEnabled = false;
+
+	// Zero gravity freeze predictor
+	float m_ZeroGravCheckTimer = 0.0f;
+	bool m_ZeroGravWarning = false;
+	float m_ZeroGravSeconds = 0.0f;
+
 	void ResetAutoMarginState();
 	void UpdateAutoMargin();
 	void ApplyAspect(int Width, int Height);
 	void UpdateAspectConfirm();
+	void UpdateClientTypes();
+	void UpdateClientLogoState();
+	void UpdateZeroGravityPredictor();
+	bool PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos) const;
+	void RenderZeroGravityWarning();
 };
 
 #endif

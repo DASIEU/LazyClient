@@ -1753,6 +1753,9 @@ set(EXPECTED_DATA
   languages/turkish.txt
   languages/ukrainian.txt
   lazy/banner.png
+  lazy/clients/bestclient.png
+  lazy/clients/rushie.png
+  lazy/lazyclient.png
   mapres/basic_freeze.png
   mapres/bg_cloud1.png
   mapres/bg_cloud2.png
@@ -2817,6 +2820,7 @@ if(CLIENT)
     components/key_binder.h
     components/lazy/lazy.cpp
     components/lazy/lazy.h
+    components/lazy/lazy_ccid.h
     components/lazy/menus_lazy.cpp
     components/local_server.cpp
     components/local_server.h

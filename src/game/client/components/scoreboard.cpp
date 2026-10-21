@@ -17,6 +17,8 @@
 
 #include <game/client/animstate.h>
 #include <game/client/components/countryflags.h>
+#include <game/client/components/lazy/lazy.h>
+#include <game/client/components/lazy/lazy_ccid.h>
 #include <game/client/components/motd.h>
 #include <game/client/components/statboard.h>
 #include <game/client/gameclient.h>
@@ -125,6 +127,7 @@ void CScoreboard::ResetTexts()
 		Player.m_Name.Reset(TextRender());
 		Player.m_MuteMark.Reset(TextRender());
 		Player.m_ReadyMark.Reset(TextRender());
+		Player.m_FriendMark.Reset(TextRender());
 		Player.m_Clan.Reset(TextRender());
 		Player.m_Ping.Reset(TextRender());
 	}
@@ -819,6 +822,24 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				}
 
 				float NameTextOffset = NameOffset;
+
+				const int ClientType = pInfo->m_ClientId >= 0 ? GameClient()->m_Lazy.ClientType(pInfo->m_ClientId) : LC_CLIENT_NONE;
+				if(ClientType != LC_CLIENT_NONE && GameClient()->m_Lazy.ClientIcon(ClientType).IsValid())
+				{
+					const float IconSize = std::min(FontSize * 1.15f, Row.h * 0.9f);
+					GameClient()->m_Lazy.RenderClientIcon(ClientType, vec2(NameTextOffset, Row.y + (Row.h - IconSize) / 2.0f), IconSize, TextColor.a);
+					NameTextOffset += IconSize + 2.0f;
+				}
+
+				if(g_Config.m_LcFriendHeartScoreboard && pInfo->m_ClientId >= 0 && ClientData.m_Friend)
+				{
+					TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+					Player.m_FriendMark.Update(TextRender(), FontIcon::HEART, FontSize);
+					TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+					Player.m_FriendMark.Render(TextRender(), vec2(NameTextOffset, TextY), ColorRGBA(1.0f, 0.2f, 0.2f, TextColor.a));
+					NameTextOffset += Player.m_FriendMark.Width() + 1.0f;
+				}
+
 				const bool Muted = pInfo->m_ClientId >= 0 && (GameClient()->m_aClients[pInfo->m_ClientId].m_Foe || GameClient()->m_aClients[pInfo->m_ClientId].m_ChatIgnore);
 				if(Muted)
 				{

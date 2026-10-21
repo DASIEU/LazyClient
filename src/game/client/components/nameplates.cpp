@@ -11,6 +11,8 @@
 #include <generated/client_data.h>
 
 #include <game/client/animstate.h>
+#include <game/client/components/lazy/lazy.h>
+#include <game/client/components/lazy/lazy_ccid.h>
 #include <game/client/gameclient.h>
 #include <game/client/prediction/entities/character.h>
 
@@ -36,6 +38,9 @@ public:
 	bool m_ShowClientId;
 	int m_ClientId;
 	float m_FontSizeClientId;
+	bool m_ShowClientLogo;
+	int m_ClientType;
+	float m_FontSizeClientLogo;
 	bool m_ClientIdSeparateLine;
 	float m_FontSize;
 	bool m_ShowClan;
@@ -336,6 +341,33 @@ public:
 		CNamePlatePartText(This)
 	{
 		m_Color = ColorRGBA(1.0f, 0.0f, 0.0f);
+	}
+};
+
+class CNamePlatePartClientLogo : public CNamePlatePartIcon
+{
+public:
+	CNamePlatePartClientLogo(CGameClient &This) :
+		CNamePlatePartIcon(This)
+	{
+		m_Padding = vec2(2.0f, 0.0f);
+	}
+
+	void Update(CGameClient &This, const CNamePlateData &Data) override
+	{
+		m_Visible = Data.m_ShowClientLogo && Data.m_ShowName && Data.m_ClientType != LC_CLIENT_NONE;
+		if(!m_Visible)
+			return;
+
+		m_Texture = This.m_Lazy.ClientIcon(Data.m_ClientType);
+		if(!m_Texture.IsValid())
+		{
+			m_Visible = false;
+			return;
+		}
+
+		m_Size = vec2(Data.m_FontSizeClientLogo, Data.m_FontSizeClientLogo);
+		m_Color = ColorRGBA(1.0f, 1.0f, 1.0f, Data.m_Color.a);
 	}
 };
 
@@ -725,6 +757,7 @@ private:
 		AddPart<CNamePlatePartCountry>(This); // TClient
 		AddPart<CNamePlatePartPing>(This); // TClient
 		AddPart<CNamePlatePartIgnoreMark>(This); // TClient
+		AddPart<CNamePlatePartClientLogo>(This); // LazyClient
 		AddPart<CNamePlatePartFriendMark>(This);
 		AddPart<CNamePlatePartClientId>(This, false);
 		AddPart<CNamePlatePartName>(This);
@@ -865,6 +898,9 @@ void CNamePlates::RenderNamePlateGame(vec2 Position, const CNetObj_PlayerInfo *p
 	Data.m_ShowFriendMark = Data.m_ShowName && g_Config.m_ClNamePlatesFriendMark && GameClient()->m_aClients[pPlayerInfo->m_ClientId].m_Friend;
 	Data.m_ShowClientId = Data.m_ShowName && (g_Config.m_Debug || g_Config.m_ClNamePlatesIds);
 	Data.m_FontSize = 18.0f + 20.0f * g_Config.m_ClNamePlatesSize / 100.0f;
+	Data.m_ShowClientLogo = g_Config.m_LcClientLogos != 0;
+	Data.m_ClientType = GameClient()->m_Lazy.ClientType(pPlayerInfo->m_ClientId);
+	Data.m_FontSizeClientLogo = Data.m_FontSize;
 
 	Data.m_ClientId = pPlayerInfo->m_ClientId;
 	Data.m_ClientIdSeparateLine = g_Config.m_ClNamePlatesIdsSeparateLine;
@@ -1013,6 +1049,9 @@ void CNamePlates::RenderNamePlatePreview(vec2 Position, int Dummy)
 	Data.m_ShowFriendMark = Data.m_ShowName && g_Config.m_ClNamePlatesFriendMark;
 
 	Data.m_ShowClientId = Data.m_ShowName && (g_Config.m_Debug || g_Config.m_ClNamePlatesIds);
+	Data.m_ShowClientLogo = g_Config.m_LcClientLogos != 0;
+	Data.m_ClientType = LC_CLIENT_LAZYCLIENT;
+	Data.m_FontSizeClientLogo = FontSize;
 	Data.m_ClientId = Dummy;
 	Data.m_ClientIdSeparateLine = g_Config.m_ClNamePlatesIdsSeparateLine;
 	Data.m_FontSizeClientId = Data.m_ClientIdSeparateLine ? (18.0f + 20.0f * g_Config.m_ClNamePlatesIdsSize / 100.0f) : Data.m_FontSize;

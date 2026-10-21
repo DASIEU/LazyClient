@@ -39,3 +39,11 @@ MACRO_CONFIG_INT(LcAutoMargin, lc_auto_margin, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG
 // Aspect ratio
 MACRO_CONFIG_INT(LcAspectWidth, lc_aspect_width, 0, 0, 10000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Aspect ratio width (0 = off, e.g. 16)")
 MACRO_CONFIG_INT(LcAspectHeight, lc_aspect_height, 0, 0, 10000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Aspect ratio height (0 = off, e.g. 9)")
+
+// Visuals
+MACRO_CONFIG_INT(LcClientLogos, lc_client_logos, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show client logos in nameplates and the scoreboard")
+MACRO_CONFIG_INT(LcFriendHeartScoreboard, lc_friend_heart_scoreboard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a heart before friends in the scoreboard")
+MACRO_CONFIG_INT(LcBetterVotes, lc_better_votes, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show vote percentages, the pass threshold and remaining yes votes")
+MACRO_CONFIG_INT(LcVotePassPercentage, lc_vote_pass_percentage, 50, 1, 99, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vote yes percentage required to pass (match the server setting)")
+MACRO_CONFIG_INT(LcZeroGravPredict, lc_zerograv_predict, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict freeze tiles while hooked in zero gravity")
+MACRO_CONFIG_INT(LcZeroGravPredictTime, lc_zerograv_predict_time, 3, 1, 5, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero gravity freeze warning time in seconds")

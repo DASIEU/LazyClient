@@ -20,6 +20,7 @@
 #include "components/hud.h"
 #include "components/infomessages.h"
 #include "components/items.h"
+#include "components/lazy/lazy_ccid.h"
 #include "components/mapimages.h"
 #include "components/maplayers.h"
 #include "components/mapsounds.h"
@@ -882,8 +883,8 @@ void CGameClient::OnRender()
 					m_aClients[m_aLocalIds[0]].m_Country != g_Config.m_PlayerCountry ||
 					str_comp(m_aClients[m_aLocalIds[0]].m_aSkinName, g_Config.m_ClPlayerSkin) ||
 					m_aClients[m_aLocalIds[0]].m_UseCustomColor != g_Config.m_ClPlayerUseCustomColor ||
-					m_aClients[m_aLocalIds[0]].m_ColorBody != (int)g_Config.m_ClPlayerColorBody ||
-					m_aClients[m_aLocalIds[0]].m_ColorFeet != (int)g_Config.m_ClPlayerColorFeet)
+					LazyCCIDStrip(m_aClients[m_aLocalIds[0]].m_ColorBody) != LazyCCIDStrip((int)g_Config.m_ClPlayerColorBody) ||
+					LazyCCIDStrip(m_aClients[m_aLocalIds[0]].m_ColorFeet) != LazyCCIDStrip((int)g_Config.m_ClPlayerColorFeet))
 					SendInfo(false);
 				else
 					m_aCheckInfo[0] = -1;
@@ -914,8 +915,8 @@ void CGameClient::OnRender()
 						m_aClients[m_aLocalIds[1]].m_Country != g_Config.m_ClDummyCountry ||
 						str_comp(m_aClients[m_aLocalIds[1]].m_aSkinName, g_Config.m_ClDummySkin) ||
 						m_aClients[m_aLocalIds[1]].m_UseCustomColor != g_Config.m_ClDummyUseCustomColor ||
-						m_aClients[m_aLocalIds[1]].m_ColorBody != (int)g_Config.m_ClDummyColorBody ||
-						m_aClients[m_aLocalIds[1]].m_ColorFeet != (int)g_Config.m_ClDummyColorFeet)
+						LazyCCIDStrip(m_aClients[m_aLocalIds[1]].m_ColorBody) != LazyCCIDStrip((int)g_Config.m_ClDummyColorBody) ||
+						LazyCCIDStrip(m_aClients[m_aLocalIds[1]].m_ColorFeet) != LazyCCIDStrip((int)g_Config.m_ClDummyColorFeet))
 						SendDummyInfo(false);
 					else
 						m_aCheckInfo[1] = -1;
@@ -3665,6 +3666,7 @@ void CGameClient::SendInfo(bool Start)
 		Msg.m_UseCustomColor = g_Config.m_ClPlayerUseCustomColor;
 		Msg.m_ColorBody = g_Config.m_ClPlayerColorBody;
 		Msg.m_ColorFeet = g_Config.m_ClPlayerColorFeet;
+		m_Lazy.ApplyClientTypeToColor(Msg.m_ColorBody, Msg.m_ColorFeet);
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(IClient::CONN_MAIN, &Packer, MSGFLAG_VITAL | MSGFLAG_FLUSH);
@@ -3680,6 +3682,7 @@ void CGameClient::SendInfo(bool Start)
 		Msg.m_UseCustomColor = g_Config.m_ClPlayerUseCustomColor;
 		Msg.m_ColorBody = g_Config.m_ClPlayerColorBody;
 		Msg.m_ColorFeet = g_Config.m_ClPlayerColorFeet;
+		m_Lazy.ApplyClientTypeToColor(Msg.m_ColorBody, Msg.m_ColorFeet);
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(IClient::CONN_MAIN, &Packer, MSGFLAG_VITAL);
@@ -3707,6 +3710,7 @@ void CGameClient::SendDummyInfo(bool Start)
 		Msg.m_UseCustomColor = g_Config.m_ClDummyUseCustomColor;
 		Msg.m_ColorBody = g_Config.m_ClDummyColorBody;
 		Msg.m_ColorFeet = g_Config.m_ClDummyColorFeet;
+		m_Lazy.ApplyClientTypeToColor(Msg.m_ColorBody, Msg.m_ColorFeet);
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(IClient::CONN_DUMMY, &Packer, MSGFLAG_VITAL);
@@ -3722,6 +3726,7 @@ void CGameClient::SendDummyInfo(bool Start)
 		Msg.m_UseCustomColor = g_Config.m_ClDummyUseCustomColor;
 		Msg.m_ColorBody = g_Config.m_ClDummyColorBody;
 		Msg.m_ColorFeet = g_Config.m_ClDummyColorFeet;
+		m_Lazy.ApplyClientTypeToColor(Msg.m_ColorBody, Msg.m_ColorFeet);
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(IClient::CONN_DUMMY, &Packer, MSGFLAG_VITAL);

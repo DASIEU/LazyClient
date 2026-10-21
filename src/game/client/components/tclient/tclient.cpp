@@ -518,6 +518,7 @@ void CTClient::DoFinishCheck()
 		Msg.m_UseCustomColor = Conn == 0 ? g_Config.m_ClPlayerUseCustomColor : g_Config.m_ClDummyUseCustomColor;
 		Msg.m_ColorBody = Conn == 0 ? g_Config.m_ClPlayerColorBody : g_Config.m_ClDummyColorBody;
 		Msg.m_ColorFeet = Conn == 0 ? g_Config.m_ClPlayerColorFeet : g_Config.m_ClDummyColorFeet;
+		GameClient()->m_Lazy.ApplyClientTypeToColor(Msg.m_ColorBody, Msg.m_ColorFeet);
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
 		Client()->SendMsg(Conn, &Packer, MSGFLAG_VITAL);
@@ -762,7 +763,8 @@ static void StripStr(const char *pIn, char *pOut, const char *pEnd)
 
 void CTClient::RenderMiniVoteHud()
 {
-	CUIRect View = {0.0f, 60.0f, 70.0f, 35.0f};
+	const bool BetterVotes = g_Config.m_LcBetterVotes != 0;
+	CUIRect View = {0.0f, 60.0f, 70.0f, BetterVotes ? 41.0f : 35.0f};
 	View.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.4f), IGraphics::CORNER_R, 3.0f);
 	View.Margin(3.0f, &View);
 
@@ -801,6 +803,20 @@ void CTClient::RenderMiniVoteHud()
 	View.HSplitTop(3.0f, nullptr, &View);
 	View.HSplitTop(3.0f, &Row, &View);
 	GameClient()->m_Voting.RenderBars(Row);
+
+	if(BetterVotes)
+	{
+		View.HSplitTop(2.0f, nullptr, &View);
+		View.HSplitTop(3.0f, &Row, &View);
+		char aThreshold[64];
+		const int RemainingYes = GameClient()->m_Voting.VoteRemainingYes();
+		if(RemainingYes > 0)
+			str_format(aThreshold, sizeof(aThreshold), "%d%% / +%d", g_Config.m_LcVotePassPercentage, RemainingYes);
+		else
+			str_format(aThreshold, sizeof(aThreshold), "%d%%", g_Config.m_LcVotePassPercentage);
+		Props.m_MaxWidth = Row.w;
+		Ui()->DoLabel(&Row, aThreshold, 2.5f, TEXTALIGN_MC, Props);
+	}
 
 	// F3 / F4
 	View.HSplitTop(3.0f, nullptr, &View);

@@ -360,14 +360,47 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 
 void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 {
-	CUIRect Label;
+	CUIRect Button;
 	static CScrollRegion s_ScrollRegion;
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
-	LazySectionTitle(&MainView, Localize("Visuals"), Ui());
-	MainView.HSplitTop(20.0f, &Label, &MainView);
-	Ui()->DoLabel(&Label, Localize("No options yet."), 14.0f, TEXTALIGN_ML);
+	LazySectionTitle(&MainView, Localize("Client Logos"), Ui());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcClientLogos, Localize("Show client logos"), &g_Config.m_LcClientLogos, &MainView, LazyLineSize);
+	LazyInfoLabel(&MainView, Localize("Shows a small logo before player names. LazyClient also tags its own skin so compatible clients can show it."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Scoreboard"), Ui());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcFriendHeartScoreboard, Localize("Friend heart"), &g_Config.m_LcFriendHeartScoreboard, &MainView, LazyLineSize);
+	LazyInfoLabel(&MainView, Localize("Shows a heart before friends in the scoreboard."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Votes"), Ui());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcBetterVotes, Localize("Better vote display"), &g_Config.m_LcBetterVotes, &MainView, LazyLineSize);
+	if(g_Config.m_LcBetterVotes)
+	{
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcVotePassPercentage, &g_Config.m_LcVotePassPercentage, &Button, Localize("Required yes percentage"), 1, 99, &CUi::ms_LinearScrollbarScale, 0, "%");
+		LazyInfoLabel(&MainView, Localize("Match this to the server's sv_vote_yes_percentage setting. The vote list shows the remaining yes votes."), Ui(), TextRender());
+	}
+	else
+	{
+		LazyInfoLabel(&MainView, Localize("Vote percentages, the pass threshold and remaining yes votes are hidden."), Ui(), TextRender());
+	}
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Zero Gravity Predictor"), Ui());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcZeroGravPredict, Localize("Predict freeze tiles"), &g_Config.m_LcZeroGravPredict, &MainView, LazyLineSize);
+	if(g_Config.m_LcZeroGravPredict)
+	{
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 5, &CUi::ms_LinearScrollbarScale, 0, "s");
+		LazyInfoLabel(&MainView, Localize("While hooked in zero gravity, predicts the next freeze and warns you before you hit it."), Ui(), TextRender());
+	}
+	else
+	{
+		LazyInfoLabel(&MainView, Localize("No freeze warning is shown while hooked in zero gravity."), Ui(), TextRender());
+	}
 
 	s_ScrollRegion.End();
 }

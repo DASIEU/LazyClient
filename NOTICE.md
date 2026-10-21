@@ -13,6 +13,8 @@ software.
   <https://ddnet.org/>
 - **TClient** — Copyright (C) Tater and contributors.
   <https://github.com/TaterClient/TClient>
+- **RushieClient** — contributors of the RushieClient project.
+  <https://github.com/RushieClient/RushieClient-ddnet>
 - **BestClient** — Copyright (C) 2026 BestProject Team.
   <https://github.com/BestProjectTeam/BestClient>
 
@@ -49,6 +51,20 @@ The original zlib license text and the licenses for bundled third-party
 libraries, fonts, skins, maps, and other assets are preserved in
 [`license.txt`](license.txt) and in the individual asset directories.
 
+## Client indicator assets
+
+The client indicator icons are used only to show which compatible client a
+player is using. They do not contact any external service.
+
+- `data/lazy/clients/rushie.png` is from **RushieClient**,
+  <https://github.com/RushieClient/RushieClient-ddnet>, licensed under
+  CC-BY-SA 3.0.
+- `data/lazy/clients/bestclient.png` is from **BestClient**,
+  <https://github.com/BestProjectTeam/BestClient>, licensed under CC-BY-SA 3.0.
+
+The skin-color client tag follows the DDNet custom-client identification
+convention used by RushieClient and other compatible clients.
+
 ## LazyClient changes
 
 LazyClient code, branding, and the gores-focused settings layer are
@@ -59,9 +75,10 @@ The LazyClient wordmark and banner in `data/lazy/banner.png` and
 
 ## No endorsement
 
-LazyClient is not affiliated with or endorsed by DDNet, TClient, King of Gores,
-FoxNet, or any server operator. Server rules may be stricter than LazyClient's
-feature set; follow the rules of the servers you play on.
+LazyClient is not affiliated with or endorsed by DDNet, TClient, RushieClient,
+BestClient, King of Gores, FoxNet, or any server operator. Server rules may be
+stricter than LazyClient's feature set; follow the rules of the servers you
+play on.
 
 ## Fair play
 

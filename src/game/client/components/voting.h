@@ -60,6 +60,10 @@ public:
 
 	int SecondsLeft() const;
 	bool IsVoting() const { return m_Closetime != 0; }
+	int VoteYesPercentage() const;
+	int VoteNoPercentage() const;
+	int VoteNeededYes() const;
+	int VoteRemainingYes() const;
 	int TakenChoice() const { return m_Voted; }
 	const char *VoteDescription() const { return m_aDescription; }
 	const char *VoteReason() const { return m_aReason; }

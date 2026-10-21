@@ -1,20 +1,29 @@
 #include "lazy.h"
 
+#include "lazy_ccid.h"
+
 #include <base/math.h>
 #include <base/time.h>
 
 #include <engine/client.h>
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
+#include <engine/textrender.h>
 
+#include <generated/client_data.h>
 #include <generated/protocol.h>
 
 #include <game/client/components/binds.h>
 #include <game/client/components/controls.h>
 #include <game/client/gameclient.h>
+#include <game/collision.h>
+#include <game/gamecore.h>
+#include <game/localization.h>
+#include <game/mapitems.h>
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace
 {
@@ -37,6 +46,11 @@ constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 bool IsHeavyWeapon(int Weapon)
 {
 	return Weapon == WEAPON_SHOTGUN || Weapon == WEAPON_GRENADE || Weapon == WEAPON_LASER || Weapon == WEAPON_NINJA;
+}
+
+bool IsFreezeTile(int Tile)
+{
+	return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
 }
 
 float MarginFromPing(float Ping)
@@ -64,6 +78,11 @@ void CLazyClient::OnReset()
 	m_GoresForcedWeapon = 0;
 	m_GunKeyHeld = false;
 	m_AntipingSmoothedPing = -1.0f;
+	std::fill(std::begin(m_aClientTypes), std::end(m_aClientTypes), LC_CLIENT_NONE);
+	m_ClientLogosInitialized = false;
+	m_WasClientLogosEnabled = false;
+	m_ZeroGravWarning = false;
+	m_ZeroGravCheckTimer = 0.0f;
 	ResetAutoMarginState();
 }
 
@@ -82,6 +101,127 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_GoresForcedWeapon = 0;
 	m_GunKeyHeld = false;
 	m_AntipingSmoothedPing = -1.0f;
+	std::fill(std::begin(m_aClientTypes), std::end(m_aClientTypes), LC_CLIENT_NONE);
+	m_ZeroGravWarning = false;
+	m_ZeroGravCheckTimer = 0.0f;
+}
+
+void CLazyClient::ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const
+{
+	if(!g_Config.m_LcClientLogos)
+		return;
+	ColorBody = LazyCCIDInsert(ColorBody, LC_CCID_BODY_LAZYCLIENT);
+	ColorFeet = LazyCCIDInsert(ColorFeet, LC_CCID_FEET_LAZYCLIENT);
+}
+
+int CLazyClient::ClientType(int ClientId) const
+{
+	if(!g_Config.m_LcClientLogos || ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return LC_CLIENT_NONE;
+	return m_aClientTypes[ClientId];
+}
+
+IGraphics::CTextureHandle CLazyClient::ClientIcon(int Type) const
+{
+	switch(Type)
+	{
+	case LC_CLIENT_LAZYCLIENT:
+		return g_pData->m_aImages[IMAGE_LAZYCLIENT].m_Id;
+	case LC_CLIENT_RUSHIE:
+		return g_pData->m_aImages[IMAGE_RUSHIE].m_Id;
+	case LC_CLIENT_BESTCLIENT:
+		return g_pData->m_aImages[IMAGE_BESTCLIENT].m_Id;
+	default:
+		return IGraphics::CTextureHandle();
+	}
+}
+
+void CLazyClient::RenderClientIcon(int Type, vec2 Pos, float Size, float Alpha) const
+{
+	const IGraphics::CTextureHandle Texture = ClientIcon(Type);
+	if(!Texture.IsValid() || Size <= 0.0f)
+		return;
+
+	Graphics()->TextureSet(Texture);
+	Graphics()->QuadsBegin();
+	Graphics()->SetColor(1.0f, 1.0f, 1.0f, Alpha);
+	const IGraphics::CQuadItem QuadItem(Pos.x, Pos.y, Size, Size);
+	Graphics()->QuadsDrawTL(&QuadItem, 1);
+	Graphics()->QuadsEnd();
+	Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+void CLazyClient::UpdateClientTypes()
+{
+	std::fill(std::begin(m_aClientTypes), std::end(m_aClientTypes), LC_CLIENT_NONE);
+
+	const int State = Client()->State();
+	if((State != IClient::STATE_ONLINE && State != IClient::STATE_DEMOPLAYBACK) || !g_Config.m_LcClientLogos)
+		return;
+
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+	{
+		const CGameClient::CClientData &Client = GameClient()->m_aClients[ClientId];
+		int Type = LC_CLIENT_NONE;
+
+		const int Body = LazyCCIDBody(Client.m_ColorBody);
+		const int Feet = LazyCCIDFeet(Client.m_ColorFeet);
+		if(Feet == LC_CCID_FEET_NONE)
+		{
+			switch(Body)
+			{
+			case LC_CCID_BODY_KAIZO:
+				Type = LC_CLIENT_KAIZO;
+				break;
+			case LC_CCID_BODY_DUCK:
+				Type = LC_CLIENT_DUCK;
+				break;
+			case LC_CCID_BODY_CHILLERBOT:
+				Type = LC_CLIENT_CHILLERBOT;
+				break;
+			case LC_CCID_BODY_RUSHIE:
+				Type = LC_CLIENT_RUSHIE;
+				break;
+			case LC_CCID_BODY_ASCEND:
+				Type = LC_CLIENT_ASCEND;
+				break;
+			case LC_CCID_BODY_LAZYCLIENT:
+				Type = LC_CLIENT_LAZYCLIENT;
+				break;
+			}
+		}
+
+		if(State == IClient::STATE_ONLINE &&
+			(ClientId == GameClient()->m_aLocalIds[0] || ClientId == GameClient()->m_aLocalIds[1]))
+		{
+			// The server may not have echoed our custom color yet, and 0.7
+			// servers do not use the skin color convention.
+			Type = LC_CLIENT_LAZYCLIENT;
+		}
+
+		m_aClientTypes[ClientId] = Type;
+	}
+}
+
+void CLazyClient::UpdateClientLogoState()
+{
+	const bool Enabled = g_Config.m_LcClientLogos != 0;
+	if(!m_ClientLogosInitialized)
+	{
+		m_ClientLogosInitialized = true;
+		m_WasClientLogosEnabled = Enabled;
+		return;
+	}
+	if(Enabled == m_WasClientLogosEnabled)
+		return;
+
+	m_WasClientLogosEnabled = Enabled;
+	if(Client()->State() == IClient::STATE_ONLINE)
+	{
+		GameClient()->SendInfo(false);
+		if(Client()->DummyConnected())
+			GameClient()->SendDummyInfo(false);
+	}
 }
 
 float CLazyClient::InputOffsetTicks() const
@@ -482,6 +622,8 @@ void CLazyClient::ResetAutoMarginState()
 
 void CLazyClient::OnNewSnapshot()
 {
+	UpdateClientTypes();
+
 	if(Client()->State() != IClient::STATE_ONLINE || !GameClient()->m_Snap.m_pLocalInfo)
 	{
 		ResetAutoMarginState();
@@ -712,6 +854,108 @@ void CLazyClient::RevertAspect()
 	ApplyAspect(m_AspectPrevWidth, m_AspectPrevHeight);
 }
 
+bool CLazyClient::PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos) const
+{
+	if(!pCollision)
+		return false;
+
+	const std::vector<int> vIndices = pCollision->GetMapIndices(PrevPos, Pos);
+	for(const int Index : vIndices)
+	{
+		if(!pCollision->TileExists(Index))
+			continue;
+		if(IsFreezeTile(pCollision->GetTileIndex(Index)) || IsFreezeTile(pCollision->GetFrontTileIndex(Index)))
+			return true;
+	}
+	return false;
+}
+
+void CLazyClient::UpdateZeroGravityPredictor()
+{
+	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE ||
+		!GameClient()->m_Snap.m_pLocalCharacter || GameClient()->m_Snap.m_SpecInfo.m_Active)
+	{
+		m_ZeroGravWarning = false;
+		m_ZeroGravCheckTimer = 0.0f;
+		return;
+	}
+
+	const CCharacterCore &Core = GameClient()->m_PredictedChar;
+	if(Core.m_HookState != HOOK_GRABBED || Core.HookedPlayer() != -1 ||
+		std::abs(Core.m_Tuning.m_Gravity) > 0.001f ||
+		Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
+		Core.m_Super || Core.m_Invincible)
+	{
+		m_ZeroGravWarning = false;
+		m_ZeroGravCheckTimer = 0.0f;
+		return;
+	}
+
+	m_ZeroGravCheckTimer -= Client()->RenderFrameTime();
+	if(m_ZeroGravCheckTimer > 0.0f)
+		return;
+	m_ZeroGravCheckTimer = 0.05f;
+
+	const int TickSpeed = std::max(1, Client()->GameTickSpeed());
+	const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
+
+	CCharacterCore Sim = Core;
+	Sim.SetCoreWorld(nullptr, Collision(), nullptr);
+	Sim.m_Input.m_Hook = 1;
+
+	vec2 PrevPos = Sim.m_Pos;
+	for(int Tick = 1; Tick <= MaxTicks; Tick++)
+	{
+		Sim.Tick(true, false);
+		Sim.Move();
+		Sim.Quantize();
+
+		if(PathHitsFreeze(Collision(), PrevPos, Sim.m_Pos))
+		{
+			m_ZeroGravWarning = true;
+			m_ZeroGravSeconds = Tick / (float)TickSpeed;
+			return;
+		}
+		PrevPos = Sim.m_Pos;
+	}
+
+	m_ZeroGravWarning = false;
+}
+
+void CLazyClient::RenderZeroGravityWarning()
+{
+	if(!g_Config.m_LcZeroGravPredict || !m_ZeroGravWarning ||
+		Client()->State() != IClient::STATE_ONLINE ||
+		GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive())
+		return;
+
+	const CScreenRect OldScreen = Graphics()->GetScreen();
+	const float Width = 300.0f * Graphics()->ScreenAspect();
+	Graphics()->MapScreenToSize(Width, 300.0f);
+
+	char aBuf[64];
+	if(m_ZeroGravSeconds < 0.2f)
+		str_copy(aBuf, Localize("Freeze now"));
+	else
+		str_format(aBuf, sizeof(aBuf), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
+
+	const float FontSize = 12.0f;
+	const float TextWidth = TextRender()->TextWidth(FontSize, aBuf);
+	CUIRect Box = {Width / 2.0f - TextWidth / 2.0f - 8.0f, 38.0f, TextWidth + 16.0f, FontSize + 8.0f};
+	Box.Draw(ColorRGBA(0.05f, 0.05f, 0.05f, 0.7f), IGraphics::CORNER_ALL, 3.0f);
+
+	TextRender()->TextColor(ColorRGBA(1.0f, 0.25f, 0.2f, 1.0f));
+	Ui()->DoLabel(&Box, aBuf, FontSize, TEXTALIGN_MC);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+	Graphics()->MapScreen(OldScreen);
+}
+
+void CLazyClient::OnRender()
+{
+	RenderZeroGravityWarning();
+}
+
 void CLazyClient::OnUpdate()
 {
 	const bool GoresEnabled = g_Config.m_LcGoresMode != 0;
@@ -737,7 +981,9 @@ void CLazyClient::OnUpdate()
 		m_GoresWasEnabled = false;
 	}
 
+	UpdateClientLogoState();
 	UpdateAutoMargin();
 	UpdateAntiping();
 	UpdateAspectConfirm();
+	UpdateZeroGravityPredictor();
 }
