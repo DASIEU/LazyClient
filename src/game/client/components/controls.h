@@ -34,6 +34,9 @@ public:
 	int m_aAmmoCount[NUM_WEAPONS];
 
 	int64_t m_LastSendTime;
+	// LazyClient: set by input helpers that need this tick's input sent even
+	// if no other field changed (e.g. the staged gores weapon switch).
+	bool m_ForceSend = false;
 	CNetObj_PlayerInput m_aInputData[NUM_DUMMIES];
 	CNetObj_PlayerInput m_aLastData[NUM_DUMMIES];
 	int m_aInputDirectionLeft[NUM_DUMMIES];

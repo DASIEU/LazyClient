@@ -15,11 +15,12 @@ LazyClient is designed for servers like **King of Gores** and **FoxNet**: the pr
 
 Most clients are either a general DDNet client with gores settings buried somewhere, or a collection of scripts held together by a config file. LazyClient keeps the TClient base and adds a focused gores layer:
 
-- **Input modes** — off, fast, best, saiko, and cloud modes with their own amount and smoothing settings.
-- **Gores mode** — hold the gun, fire to hammer, then switch back after a configurable delay; ignore heavy weapons; dedicated gun-fire key.
-- **Snap tap** — prioritize the last pressed movement direction with configurable delay and release smoothing.
+- **Input modes** — off, fast, best, saiko, and cloud modes with their own amount and smoothing settings, plus a one-click reset.
+- **Gores mode** — holds the gun; left click switches to the hammer, hits, then switches back after a configurable delay (gun → hammer → hit → gun); ignore heavy weapons; dedicated gun-fire key.
+- **Antiping** — off, on, or automatic with a configurable ping threshold.
+- **Snap tap** — prioritize the last pressed movement direction with a configurable switch delay.
 - **Automatic prediction margin** — raise the antiping margin when ping or jitter gets high.
-- **Custom aspect ratio** — fit the game to a chosen ratio with a 5-second confirm/revert prompt.
+- **Aspect ratio** — enter a width and height instead of using a slider; the game stretches to fill the window, with a 5 second keep/revert prompt.
 - **Local-first** — no accounts, no KoG API, no telemetry, and no server-side requirements.
 - **Config compatible** — reads your existing DDNet and TClient settings and keeps them intact.
 
@@ -122,7 +123,7 @@ You can open the config files directly from **Settings → LazyClient → Miscel
 
 **Settings → LazyClient** contains:
 
-- **Game** — input modes (fast, best, saiko, cloud), gores mode, automatic prediction margin, snap tap, and custom aspect ratio.
+- **Game** — input modes (fast, best, saiko, cloud), gores mode, antiping modes, automatic prediction margin, snap tap, and aspect ratio.
 - **Visuals** — reserved for future LazyClient-only visual options.
 - **Chat triggers** — reserved for future LazyClient-only chat options.
 - **Miscellaneous** — config file shortcuts and release links.

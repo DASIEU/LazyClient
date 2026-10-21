@@ -22,7 +22,7 @@ MACRO_CONFIG_INT(LcCloudInputAmount, lc_cloud_input_amount, 40, 0, 500, CFGFLAG_
 
 // Gores mode
 MACRO_CONFIG_INT(LcGoresMode, lc_gores_mode, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Gores mode: hold the gun, fire switches to the hammer")
-MACRO_CONFIG_INT(LcGoresDisableIfWeapons, lc_gores_disable_if_weapons, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Disable gores mode while holding shotgun, grenade, laser or ninja")
+MACRO_CONFIG_INT(LcGoresIgnoreHeavy, lc_gores_ignore_heavy, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ignore shotgun, grenade, laser and ninja (always fire gun and hammer)")
 MACRO_CONFIG_INT(LcGoresSwitchDelay, lc_gores_switch_delay, 40, 0, 500, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Delay in milliseconds before switching back from hammer to gun")
 MACRO_CONFIG_STR(LcGoresGunKey, lc_gores_gun_key, 32, "w", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Key that fires the gun in gores mode without using the hammer")
 MACRO_CONFIG_STR(LcGoresGunKeyPrev, lc_gores_gun_key_prev, 128, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Previous bind for the gores gun key (internal)")
@@ -30,10 +30,12 @@ MACRO_CONFIG_STR(LcGoresGunKeyPrev, lc_gores_gun_key_prev, 128, "", CFGFLAG_CLIE
 // Snap tap
 MACRO_CONFIG_INT(LcSnapTap, lc_snap_tap, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Snap tap: prioritize the last pressed movement direction")
 MACRO_CONFIG_INT(LcSnapTapDelay, lc_snap_tap_delay, 0, 0, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Snap tap direction switch delay in milliseconds")
-MACRO_CONFIG_INT(LcSnapTapSmoothness, lc_snap_tap_smoothness, 0, 0, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Snap tap release smoothing in milliseconds (keeps the last direction briefly)")
 
 // Antiping
+MACRO_CONFIG_INT(LcAntipingMode, lc_antiping_mode, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Antiping mode (0 = off, 1 = on, 2 = auto based on ping)")
+MACRO_CONFIG_INT(LcAntipingAutoPing, lc_antiping_auto_ping, 60, 1, 1000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ping threshold in milliseconds at which antiping turns on in auto mode")
 MACRO_CONFIG_INT(LcAutoMargin, lc_auto_margin, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically adjust the antiping prediction margin based on ping and jitter")
 
-// Custom aspect ratio
-MACRO_CONFIG_INT(LcCustomAspect, lc_custom_aspect, 0, 0, 400, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Custom aspect ratio x100 (0 = off, 125 = 5:4, 133 = 4:3, 150 = 3:2, 177 = 16:9)")
+// Aspect ratio
+MACRO_CONFIG_INT(LcAspectWidth, lc_aspect_width, 0, 0, 10000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Aspect ratio width (0 = off, e.g. 16)")
+MACRO_CONFIG_INT(LcAspectHeight, lc_aspect_height, 0, 0, 10000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Aspect ratio height (0 = off, e.g. 9)")

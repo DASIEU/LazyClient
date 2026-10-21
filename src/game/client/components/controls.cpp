@@ -75,6 +75,13 @@ void CControls::ConKeyInputState(IConsole::IResult *pResult, void *pUserData)
 		return;
 
 	*pState->m_apVariables[g_Config.m_ClDummy] = pResult->GetInteger(0);
+
+	// LazyClient: record snap-tap presses at the event, not on the next tick.
+	int *pVariable = pState->m_apVariables[g_Config.m_ClDummy];
+	if(pVariable == &pState->m_pControls->m_aInputDirectionLeft[g_Config.m_ClDummy])
+		pState->m_pControls->GameClient()->m_Lazy.OnMovementKey(true, pResult->GetInteger(0) != 0);
+	else if(pVariable == &pState->m_pControls->m_aInputDirectionRight[g_Config.m_ClDummy])
+		pState->m_pControls->GameClient()->m_Lazy.OnMovementKey(false, pResult->GetInteger(0) != 0);
 }
 
 void CControls::ConKeyInputCounter(IConsole::IResult *pResult, void *pUserData)
@@ -85,13 +92,14 @@ void CControls::ConKeyInputCounter(IConsole::IResult *pResult, void *pUserData)
 		return;
 
 	int *pVariable = pState->m_apVariables[g_Config.m_ClDummy];
-	if(((*pVariable) & 1) != pResult->GetInteger(0))
+	const bool Changed = ((*pVariable) & 1) != pResult->GetInteger(0);
+	if(Changed)
 		(*pVariable)++;
 	*pVariable &= INPUT_STATE_MASK;
 
 	// LazyClient
 	if(pVariable == &pState->m_pControls->m_aInputData[g_Config.m_ClDummy].m_Fire)
-		pState->m_pControls->GameClient()->m_Lazy.OnFireInput(pResult->GetInteger(0));
+		pState->m_pControls->GameClient()->m_Lazy.OnFireInput(pResult->GetInteger(0), Changed);
 }
 
 struct CInputSet
@@ -107,6 +115,9 @@ void CControls::ConKeyInputSet(IConsole::IResult *pResult, void *pUserData)
 	if(pResult->GetInteger(0))
 	{
 		*pSet->m_apVariables[g_Config.m_ClDummy] = pSet->m_Value;
+
+		// LazyClient gores mode: respect manual weapon selection.
+		pSet->m_pControls->GameClient()->m_Lazy.OnWeaponSelectInput();
 	}
 }
 
@@ -115,6 +126,10 @@ void CControls::ConKeyInputNextPrevWeapon(IConsole::IResult *pResult, void *pUse
 	CInputSet *pSet = (CInputSet *)pUserData;
 	ConKeyInputCounter(pResult, pSet);
 	pSet->m_pControls->m_aInputData[g_Config.m_ClDummy].m_WantedWeapon = 0;
+
+	// LazyClient gores mode: respect manual weapon selection.
+	if(pResult->GetInteger(0))
+		pSet->m_pControls->GameClient()->m_Lazy.OnWeaponSelectInput();
 }
 
 void CControls::OnConsoleInit()
@@ -292,7 +307,7 @@ int CControls::SnapInput(int *pData)
 		// set direction
 		const bool LeftPressed = m_aInputDirectionLeft[g_Config.m_ClDummy] != 0;
 		const bool RightPressed = m_aInputDirectionRight[g_Config.m_ClDummy] != 0;
-		m_aInputData[g_Config.m_ClDummy].m_Direction = GameClient()->m_Lazy.ResolveMovementDirection(g_Config.m_ClDummy, LeftPressed, RightPressed, true);
+		m_aInputData[g_Config.m_ClDummy].m_Direction = GameClient()->m_Lazy.ResolveMovementDirection(g_Config.m_ClDummy, LeftPressed, RightPressed);
 
 		// dummy copy moves
 		if(g_Config.m_ClDummyCopyMoves)
@@ -362,11 +377,13 @@ int CControls::SnapInput(int *pData)
 	}
 
 	// copy and return size
+	Send = Send || m_ForceSend;
 	m_aLastData[g_Config.m_ClDummy] = m_aInputData[g_Config.m_ClDummy];
 
 	if(!Send)
 		return 0;
 
+	m_ForceSend = false;
 	m_LastSendTime = time_get();
 	mem_copy(pData, &m_aInputData[g_Config.m_ClDummy], sizeof(m_aInputData[0]));
 	return sizeof(m_aInputData[0]);
@@ -526,7 +543,7 @@ bool CControls::CheckNewInput()
 		{
 			const bool LeftPressed = m_aInputDirectionLeft[Dummy] != 0;
 			const bool RightPressed = m_aInputDirectionRight[Dummy] != 0;
-			TestInput.m_Direction = GameClient()->m_Lazy.ResolveMovementDirection(Dummy, LeftPressed, RightPressed, false);
+			TestInput.m_Direction = GameClient()->m_Lazy.ResolveMovementDirection(Dummy, LeftPressed, RightPressed);
 		}
 
 		if(m_aFastInput[Dummy].m_Direction != TestInput.m_Direction)

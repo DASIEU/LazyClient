@@ -14,6 +14,9 @@
 #include <game/localization.h>
 #include <game/version.h>
 
+#include <algorithm>
+#include <numeric>
+
 enum
 {
 	LAZY_TAB_GAME = 0,
@@ -171,16 +174,33 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcInputOthers, Localize("Apply to other tees"), &g_Config.m_LcInputOthers, &Left, LazyLineSize);
 	}
 
+	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
+	Left.HSplitTop(LazyLineSize, &Button, &Left);
+	static CButtonContainer s_ResetInputModeButton;
+	if(DoButton_Menu(&s_ResetInputModeButton, Localize("Reset input mode settings"), 0, &Button))
+	{
+		ConfigManager()->Reset("lc_input_mode");
+		ConfigManager()->Reset("lc_input_others");
+		ConfigManager()->Reset("lc_fast_input_amount");
+		ConfigManager()->Reset("lc_best_input_amount");
+		ConfigManager()->Reset("lc_best_input_smoothing");
+		ConfigManager()->Reset("lc_best_input_latency_comp");
+		ConfigManager()->Reset("lc_saiko_input_amount");
+		ConfigManager()->Reset("lc_cloud_input_amount");
+		ConfigManager()->Reset("tc_fast_input");
+		ConfigManager()->Reset("tc_fast_input_others");
+	}
+
 	// ---------------------------------------------------------------- Gores mode
 	Left.HSplitTop(LazyMargin * 1.5f, nullptr, &Left);
 	LazySectionTitle(&Left, Localize("Gores Mode"), Ui());
-	LazyInfoLabel(&Left, Localize("Holds the gun. Firing switches to the hammer and back after the delay."), Ui(), TextRender());
+	LazyInfoLabel(&Left, Localize("Holds the gun. Left click switches to the hammer, hits, then switches back after the delay."), Ui(), TextRender());
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcGoresMode, Localize("Enable gores mode"), &g_Config.m_LcGoresMode, &Left, LazyLineSize);
 
 	if(g_Config.m_LcGoresMode)
 	{
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcGoresDisableIfWeapons, Localize("Ignore shotgun, grenade, laser and ninja"), &g_Config.m_LcGoresDisableIfWeapons, &Left, LazyLineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcGoresIgnoreHeavy, Localize("Ignore shotgun, grenade, laser and ninja"), &g_Config.m_LcGoresIgnoreHeavy, &Left, LazyLineSize);
 		Left.HSplitTop(LazyLineSize, &Button, &Left);
 		Ui()->DoScrollbarOption(&g_Config.m_LcGoresSwitchDelay, &g_Config.m_LcGoresSwitchDelay, &Button, Localize("Switch back delay"), 0, 500, &CUi::ms_LinearScrollbarScale, 0, "ms");
 		Left.HSplitTop(LazyLineSize, &Button, &Left);
@@ -195,6 +215,51 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 
 	// ---------------------------------------------------------------- Right column
 	LazySectionTitle(&Right, Localize("Antiping"), Ui());
+
+	Right.HSplitTop(LazyLineSize, &Tabs, &Right);
+	static const char *s_apAntipingModes[] = {"Off", "On", "Auto"};
+	static CButtonContainer s_aAntipingModeButtons[3] = {};
+	const float AntipingModeWidth = Tabs.w / 3.0f;
+	for(int Mode = 0; Mode < 3; ++Mode)
+	{
+		CUIRect Tab;
+		Tabs.VSplitLeft(AntipingModeWidth, &Tab, &Tabs);
+		const int Corners = Mode == 0 ? IGraphics::CORNER_L : Mode == 2 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE;
+		if(DoButton_MenuTab(&s_aAntipingModeButtons[Mode], Localize(s_apAntipingModes[Mode]), g_Config.m_LcAntipingMode == Mode, &Tab, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
+			g_Config.m_LcAntipingMode = Mode;
+	}
+
+	if(g_Config.m_LcAntipingMode == 2)
+	{
+		Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
+		Right.HSplitTop(LazyLineSize, &Button, &Right);
+		CUIRect Label, EditBox;
+		Button.VSplitLeft(130.0f, &Label, &Button);
+		Button.VSplitLeft(80.0f, &EditBox, nullptr);
+		Ui()->DoLabel(&Label, Localize("Ping threshold"), 14.0f, TEXTALIGN_ML);
+
+		static CLineInputNumber s_AntipingPing(60);
+		if(!s_AntipingPing.IsActive() && s_AntipingPing.GetInteger() != g_Config.m_LcAntipingAutoPing)
+			s_AntipingPing.SetInteger(g_Config.m_LcAntipingAutoPing);
+		Ui()->DoEditBox(&s_AntipingPing, &EditBox, 12.0f);
+		if(!s_AntipingPing.IsEmpty())
+		{
+			const int Value = std::clamp(s_AntipingPing.GetInteger(), 1, 1000);
+			if(Value != g_Config.m_LcAntipingAutoPing)
+				g_Config.m_LcAntipingAutoPing = Value;
+		}
+		LazyInfoLabel(&Right, Localize("Turns antiping on when ping is at or above this value, and off when it is below."), Ui(), TextRender());
+	}
+	else if(g_Config.m_LcAntipingMode == 0)
+	{
+		LazyInfoLabel(&Right, Localize("Antiping is turned off."), Ui(), TextRender());
+	}
+	else
+	{
+		LazyInfoLabel(&Right, Localize("Antiping is always on."), Ui(), TextRender());
+	}
+
+	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcAutoMargin, Localize("Automatic prediction margin"), &g_Config.m_LcAutoMargin, &Right, LazyLineSize);
 	LazyInfoLabel(&Right, Localize("Raises the prediction margin when ping or jitter gets high."), Ui(), TextRender());
 
@@ -205,23 +270,72 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	{
 		Right.HSplitTop(LazyLineSize, &Button, &Right);
 		Ui()->DoScrollbarOption(&g_Config.m_LcSnapTapDelay, &g_Config.m_LcSnapTapDelay, &Button, Localize("Switch delay"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "ms");
-		Right.HSplitTop(LazyLineSize, &Button, &Right);
-		Ui()->DoScrollbarOption(&g_Config.m_LcSnapTapSmoothness, &g_Config.m_LcSnapTapSmoothness, &Button, Localize("Release smoothing"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "ms");
 	}
 
 	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
-	LazySectionTitle(&Right, Localize("Custom Aspect Ratio"), Ui());
-	Right.HSplitTop(LazyLineSize, &Button, &Right);
-	Ui()->DoScrollbarOption(&g_Config.m_LcCustomAspect, &g_Config.m_LcCustomAspect, &Button, Localize("Aspect ratio x100"), 0, 400, &CUi::ms_LinearScrollbarScale, 0, "");
-	if(g_Config.m_LcCustomAspect > 0)
+	LazySectionTitle(&Right, Localize("Aspect Ratio"), Ui());
+	LazyInfoLabel(&Right, Localize("Stretches the game to fill the window at the chosen ratio. Reverts after 5 seconds unless confirmed."), Ui(), TextRender());
+	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
+
+	static CLineInputNumber s_AspectWidth(16);
+	static CLineInputNumber s_AspectHeight(9);
+	static int s_LastAspectWidth = -1;
+	static int s_LastAspectHeight = -1;
+	if(!s_AspectWidth.IsActive() && !s_AspectHeight.IsActive() &&
+		(g_Config.m_LcAspectWidth != s_LastAspectWidth || g_Config.m_LcAspectHeight != s_LastAspectHeight))
 	{
-		char aRatio[64];
-		str_format(aRatio, sizeof(aRatio), Localize("Current: %.2f:1"), g_Config.m_LcCustomAspect / 100.0f);
+		s_AspectWidth.SetInteger(g_Config.m_LcAspectWidth);
+		s_AspectHeight.SetInteger(g_Config.m_LcAspectHeight);
+		s_LastAspectWidth = g_Config.m_LcAspectWidth;
+		s_LastAspectHeight = g_Config.m_LcAspectHeight;
+	}
+
+	Right.HSplitTop(LazyLineSize, &Button, &Right);
+	CUIRect WidthLabel, WidthBox, HeightLabel, HeightBox;
+	Button.VSplitLeft(55.0f, &WidthLabel, &Button);
+	Button.VSplitLeft(65.0f, &WidthBox, &Button);
+	Button.VSplitLeft(10.0f, nullptr, &Button);
+	Button.VSplitLeft(55.0f, &HeightLabel, &Button);
+	Button.VSplitLeft(65.0f, &HeightBox, &Button);
+	Ui()->DoLabel(&WidthLabel, Localize("Width"), 14.0f, TEXTALIGN_ML);
+	Ui()->DoLabel(&HeightLabel, Localize("Height"), 14.0f, TEXTALIGN_ML);
+	Ui()->DoEditBox(&s_AspectWidth, &WidthBox, 12.0f);
+	Ui()->DoEditBox(&s_AspectHeight, &HeightBox, 12.0f);
+
+	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
+	CUIRect ApplyButton, OffButton;
+	Right.HSplitTop(LazyLineSize * 1.5f, &ApplyButton, &Right);
+	ApplyButton.VSplitMid(&ApplyButton, &OffButton, 5.0f);
+	static CButtonContainer s_ApplyAspectButton, s_OffAspectButton;
+	if(DoButton_Menu(&s_ApplyAspectButton, Localize("Apply"), 0, &ApplyButton))
+	{
+		const int W = s_AspectWidth.GetInteger();
+		const int H = s_AspectHeight.GetInteger();
+		if(W > 0 && H > 0)
+		{
+			g_Config.m_LcAspectWidth = std::clamp(W, 1, 10000);
+			g_Config.m_LcAspectHeight = std::clamp(H, 1, 10000);
+		}
+	}
+	if(DoButton_Menu(&s_OffAspectButton, Localize("Off"), 0, &OffButton))
+	{
+		g_Config.m_LcAspectWidth = 0;
+		g_Config.m_LcAspectHeight = 0;
+	}
+
+	if(g_Config.m_LcAspectWidth > 0 && g_Config.m_LcAspectHeight > 0)
+	{
+		const int Gcd = std::gcd(g_Config.m_LcAspectWidth, g_Config.m_LcAspectHeight);
+		char aRatio[128];
+		if(Gcd > 0)
+			str_format(aRatio, sizeof(aRatio), Localize("Current: %d:%d (%.3f)"), g_Config.m_LcAspectWidth / Gcd, g_Config.m_LcAspectHeight / Gcd, (float)g_Config.m_LcAspectWidth / (float)g_Config.m_LcAspectHeight);
+		else
+			str_format(aRatio, sizeof(aRatio), Localize("Current: %d:%d"), g_Config.m_LcAspectWidth, g_Config.m_LcAspectHeight);
 		LazyInfoLabel(&Right, aRatio, Ui(), TextRender());
 	}
 	else
 	{
-		LazyInfoLabel(&Right, Localize("0 = off. 125 = 5:4, 133 = 4:3, 150 = 3:2, 177 = 16:9."), Ui(), TextRender());
+		LazyInfoLabel(&Right, Localize("Off. Enter two positive numbers, for example 16 and 9."), Ui(), TextRender());
 	}
 
 	if(GameClient()->m_Lazy.AspectConfirmActive())

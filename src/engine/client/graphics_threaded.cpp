@@ -2229,9 +2229,6 @@ int CGraphics_Threaded::IssueInit()
 // TClient
 bool g_GraphicsForcedAspect = true;
 
-// LazyClient
-float g_GraphicsCustomAspect = 0.0f;
-
 void CGraphics_Threaded::SetForcedAspect(bool Force)
 {
 	if(!IsBackendInitialized())
@@ -2256,19 +2253,15 @@ void CGraphics_Threaded::SetCustomAspect(float Aspect)
 {
 	if(!IsBackendInitialized())
 		return;
-	if(g_GraphicsCustomAspect == Aspect)
+	if(Aspect > 0.0f)
+		Aspect = std::clamp(Aspect, 0.1f, 10.0f);
+	if(m_ScreenAspectOverride == Aspect)
 		return;
 
-	g_GraphicsCustomAspect = Aspect;
-	AdjustViewport(false);
-	UpdateViewport(m_ViewportX, 0, m_ScreenWidth, m_ScreenHeight, false);
-
-	// kick the command buffer and wait
-	KickCommandBuffer();
-	WaitForIdle();
-
-	for(auto &ResizeListener : m_vResizeListeners)
-		ResizeListener();
+	// The viewport always covers the whole drawable area. The custom aspect
+	// only changes the projection/UI aspect, so the game is stretched to fill
+	// the window instead of being letterboxed with background color bars.
+	m_ScreenAspectOverride = Aspect;
 }
 
 void CGraphics_Threaded::AdjustViewport(bool SendViewportChangeToBackend)
@@ -2284,21 +2277,7 @@ void CGraphics_Threaded::AdjustViewport(bool SendViewportChangeToBackend)
 
 	// adjust the viewport to only allow certain aspect ratios
 	// keep this in sync with backend_vulkan GetSwapImageSize's check
-	if(g_GraphicsCustomAspect > 0.0f)
-	{
-		// LazyClient: fit the drawable area to the requested aspect ratio
-		int FitWidth = AvailableWidth;
-		int FitHeight = AvailableHeight;
-		if((float)AvailableWidth / (float)AvailableHeight > g_GraphicsCustomAspect)
-			FitWidth = (int)(AvailableHeight * g_GraphicsCustomAspect + 0.5f);
-		else
-			FitHeight = (int)(AvailableWidth / g_GraphicsCustomAspect + 0.5f);
-		m_ScreenWidth = std::clamp(FitWidth, 1, AvailableWidth);
-		m_ScreenHeight = std::clamp(FitHeight, 1, AvailableHeight);
-		m_ViewportX = InsetLeft + (AvailableWidth - m_ScreenWidth) / 2;
-		m_IsForcedViewport = true;
-	}
-	else if(m_ScreenHeight > 4 * m_ScreenWidth / 5 && g_GraphicsForcedAspect)
+	if(m_ScreenHeight > 4 * m_ScreenWidth / 5 && g_GraphicsForcedAspect)
 	{
 		m_IsForcedViewport = true;
 		m_ScreenHeight = 4 * m_ScreenWidth / 5;

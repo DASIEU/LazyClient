@@ -32,6 +32,12 @@ constexpr float AUTO_MARGIN_JITTER_EXIT = 2.0f;
 constexpr int AUTO_MARGIN_DEADZONE = 1;
 constexpr int AUTO_MARGIN_STEP_DOWN = 5;
 constexpr int ASPECT_CONFIRM_SECONDS = 5;
+constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
+
+bool IsHeavyWeapon(int Weapon)
+{
+	return Weapon == WEAPON_SHOTGUN || Weapon == WEAPON_GRENADE || Weapon == WEAPON_LASER || Weapon == WEAPON_NINJA;
+}
 
 float MarginFromPing(float Ping)
 {
@@ -50,8 +56,14 @@ void CLazyClient::OnReset()
 	ResetSnapTap(1);
 	m_GoresHeavyWeapon = false;
 	m_GoresAttacking = false;
+	m_GoresFireHeld = false;
+	m_GoresInjectedFire = false;
+	m_GoresAttackStage = 0;
 	m_GoresAttackEnd = 0;
+	m_GoresWeaponSelectUntil = 0;
+	m_GoresForcedWeapon = 0;
 	m_GunKeyHeld = false;
+	m_AntipingSmoothedPing = -1.0f;
 	ResetAutoMarginState();
 }
 
@@ -62,7 +74,14 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	ResetAutoMarginState();
 	m_GoresHeavyWeapon = false;
 	m_GoresAttacking = false;
+	m_GoresFireHeld = false;
+	m_GoresInjectedFire = false;
+	m_GoresAttackStage = 0;
+	m_GoresAttackEnd = 0;
+	m_GoresWeaponSelectUntil = 0;
+	m_GoresForcedWeapon = 0;
 	m_GunKeyHeld = false;
+	m_AntipingSmoothedPing = -1.0f;
 }
 
 float CLazyClient::InputOffsetTicks() const
@@ -104,42 +123,24 @@ void CLazyClient::ResetSnapTap(int Dummy)
 	m_aSnapApplied[Dummy] = 0;
 	m_aSnapLastPressed[Dummy] = 0;
 	m_aSnapLastPressedTime[Dummy] = 0;
-	m_aSnapPrevLeft[Dummy] = false;
-	m_aSnapPrevRight[Dummy] = false;
 }
 
-int CLazyClient::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed, bool UpdateState)
+void CLazyClient::OnMovementKey(bool Left, bool Pressed)
 {
-	if(UpdateState)
-	{
-		const int64_t Now = time_get();
-		const bool AnyPressedBefore = m_aSnapPrevLeft[Dummy] || m_aSnapPrevRight[Dummy];
-		if(LeftPressed && !m_aSnapPrevLeft[Dummy])
-		{
-			m_aSnapLastPressed[Dummy] = -1;
-			m_aSnapLastPressedTime[Dummy] = Now;
-		}
-		if(RightPressed && !m_aSnapPrevRight[Dummy])
-		{
-			m_aSnapLastPressed[Dummy] = 1;
-			m_aSnapLastPressedTime[Dummy] = Now;
-		}
-		m_aSnapPrevLeft[Dummy] = LeftPressed;
-		m_aSnapPrevRight[Dummy] = RightPressed;
-		if(!LeftPressed && !RightPressed && AnyPressedBefore)
-			m_aSnapLastPressedTime[Dummy] = Now;
-	}
+	if(!Pressed || !g_Config.m_LcSnapTap)
+		return;
 
+	const int Dummy = g_Config.m_ClDummy;
+	m_aSnapLastPressed[Dummy] = Left ? -1 : 1;
+	m_aSnapLastPressedTime[Dummy] = time_get();
+}
+
+int CLazyClient::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed)
+{
 	if(LeftPressed == RightPressed)
 	{
 		if(!LeftPressed)
 		{
-			if(g_Config.m_LcSnapTap && m_aSnapApplied[Dummy] != 0 && g_Config.m_LcSnapTapSmoothness > 0)
-			{
-				const int64_t Grace = (time_freq() * (int64_t)g_Config.m_LcSnapTapSmoothness) / 1000;
-				if(time_get() - m_aSnapLastPressedTime[Dummy] < Grace)
-					return m_aSnapApplied[Dummy];
-			}
 			m_aSnapApplied[Dummy] = 0;
 			return 0;
 		}
@@ -158,7 +159,7 @@ int CLazyClient::ResolveMovementDirection(int Dummy, bool LeftPressed, bool Righ
 		else if(m_aSnapApplied[Dummy] != CandidateDirection)
 		{
 			const int64_t Delay = (time_freq() * (int64_t)g_Config.m_LcSnapTapDelay) / 1000;
-			if(time_get() - m_aSnapLastPressedTime[Dummy] >= Delay)
+			if(Delay <= 0 || time_get() - m_aSnapLastPressedTime[Dummy] >= Delay)
 				m_aSnapApplied[Dummy] = CandidateDirection;
 		}
 
@@ -175,7 +176,11 @@ void CLazyClient::ConGunFire(IConsole::IResult *pResult, void *pUserData)
 	const bool Pressed = pResult->GetInteger(0) != 0;
 	pThis->m_GunKeyHeld = Pressed;
 	if(Pressed)
+	{
 		pThis->m_GoresAttacking = false;
+		pThis->m_GoresInjectedFire = false;
+		pThis->m_GoresAttackStage = 0;
+	}
 
 	CControls &Controls = pThis->GameClient()->m_Controls;
 	int *pFire = &Controls.m_aInputData[g_Config.m_ClDummy].m_Fire;
@@ -251,46 +256,214 @@ void CLazyClient::UpdateGoresMode()
 {
 	CControls &Controls = GameClient()->m_Controls;
 	const int Dummy = g_Config.m_ClDummy;
+	int *pWanted = &Controls.m_aInputData[Dummy].m_WantedWeapon;
+	int *pFire = &Controls.m_aInputData[Dummy].m_Fire;
 
 	if(!g_Config.m_LcGoresMode || !GameClient()->m_Snap.m_pLocalCharacter)
 	{
 		m_GoresHeavyWeapon = false;
 		m_GoresAttacking = false;
+		m_GoresFireHeld = false;
+		m_GoresInjectedFire = false;
+		m_GoresAttackStage = 0;
+		m_GoresAttackEnd = 0;
+		m_GoresForcedWeapon = 0;
 		return;
 	}
 
-	const int CurWeapon = GameClient()->m_Snap.m_pLocalCharacter->m_Weapon;
-	m_GoresHeavyWeapon = CurWeapon == WEAPON_SHOTGUN || CurWeapon == WEAPON_GRENADE ||
-			     CurWeapon == WEAPON_LASER || CurWeapon == WEAPON_NINJA;
-	if(g_Config.m_LcGoresDisableIfWeapons && m_GoresHeavyWeapon)
+	// Respect any weapon the player selects, including pickups and
+	// next/previous weapon binds. Gores mode pauses briefly so that the
+	// selection is not immediately overwritten by the held gun.
+	if(*pWanted != 0 && *pWanted != m_GoresForcedWeapon)
 	{
+		m_GoresForcedWeapon = *pWanted;
+		m_GoresHeavyWeapon = IsHeavyWeapon(*pWanted - 1);
 		m_GoresAttacking = false;
+		m_GoresInjectedFire = false;
+		m_GoresAttackStage = 0;
+		m_GoresWeaponSelectUntil = time_get() + (time_freq() * GORES_WEAPON_SELECT_GRACE_MS) / 1000;
 		return;
 	}
+	if(time_get() < m_GoresWeaponSelectUntil)
+		return;
 
-	if(m_GoresAttacking && time_get() >= m_GoresAttackEnd)
-		m_GoresAttacking = false;
-
+	// The dedicated gun key always forces the gun, even while a heavy
+	// weapon is held and the ignore option is enabled.
 	if(m_GunKeyHeld)
 	{
-		Controls.m_aInputData[Dummy].m_WantedWeapon = WEAPON_GUN + 1;
+		m_GoresAttacking = false;
+		m_GoresInjectedFire = false;
+		m_GoresAttackStage = 0;
+		m_GoresAttackEnd = 0;
+		m_GoresHeavyWeapon = false;
+		*pWanted = WEAPON_GUN + 1;
+		m_GoresForcedWeapon = *pWanted;
 		return;
 	}
 
-	Controls.m_aInputData[Dummy].m_WantedWeapon = m_GoresAttacking ? WEAPON_HAMMER + 1 : WEAPON_GUN + 1;
+	const int CurWeapon = GameClient()->m_PredictedChar.m_ActiveWeapon;
+	m_GoresHeavyWeapon = IsHeavyWeapon(CurWeapon);
+	if(!g_Config.m_LcGoresIgnoreHeavy && m_GoresHeavyWeapon)
+	{
+		m_GoresAttacking = false;
+		m_GoresInjectedFire = false;
+		m_GoresAttackStage = 0;
+		m_GoresAttackEnd = 0;
+		m_GoresForcedWeapon = 0;
+		return;
+	}
+
+	// Do not block the player's fire input forever if the hammer never becomes
+	// active (for example after a prediction mismatch or a frozen character).
+	if((m_GoresAttackStage == 1 || m_GoresAttackStage == 2) && m_GoresAttackEnd > 0 && time_get() >= m_GoresAttackEnd)
+	{
+		m_GoresAttacking = false;
+		m_GoresInjectedFire = false;
+		m_GoresAttackStage = 0;
+		m_GoresAttackEnd = 0;
+		*pWanted = WEAPON_GUN + 1;
+		m_GoresForcedWeapon = *pWanted;
+		Controls.m_ForceSend = true;
+		return;
+	}
+
+	if(m_GoresAttackStage > 0)
+	{
+		if(m_GoresAttackStage == 4)
+		{
+			// Release the synthesized click if the player already let go.
+			if(m_GoresInjectedFire && !m_GoresFireHeld && (*pFire & 1) != 0)
+			{
+				(*pFire)++;
+				*pFire &= INPUT_STATE_MASK;
+				m_GoresInjectedFire = false;
+			}
+
+			if(time_get() >= m_GoresAttackEnd)
+			{
+				// Never carry the synthesized press into the gun.
+				if((*pFire & 1) != 0)
+				{
+					(*pFire)++;
+					*pFire &= INPUT_STATE_MASK;
+				}
+				m_GoresInjectedFire = false;
+				m_GoresAttackStage = 0;
+				m_GoresAttacking = false;
+				*pWanted = WEAPON_GUN + 1;
+				m_GoresForcedWeapon = *pWanted;
+				Controls.m_ForceSend = true;
+				return;
+			}
+		}
+		else if(m_GoresAttackStage == 3)
+		{
+			// The hammer is selected; fire one tick later so the hammer is
+			// visible before the hit and the server has processed the switch.
+			if((*pFire & 1) == 0)
+			{
+				(*pFire)++;
+				*pFire &= INPUT_STATE_MASK;
+			}
+			m_GoresInjectedFire = true;
+			m_GoresAttackEnd = time_get() + (time_freq() * g_Config.m_LcGoresSwitchDelay) / 1000;
+			m_GoresAttackStage = 4;
+		}
+		else if(m_GoresAttackStage == 2 && GameClient()->m_PredictedChar.m_ActiveWeapon == WEAPON_HAMMER)
+		{
+			// The hammer is active for at least one tick. Fire on the next
+			// input to guarantee GUN -> HAMMER -> HIT -> GUN.
+			m_GoresAttackStage = 3;
+		}
+		else
+		{
+			// Request the hammer and keep the input flowing until the switch
+			// completes. This also waits out the gun's reload timer.
+			m_GoresAttackStage = 2;
+		}
+
+		*pWanted = WEAPON_HAMMER + 1;
+		m_GoresForcedWeapon = *pWanted;
+		Controls.m_ForceSend = true;
+		return;
+	}
+
+	*pWanted = WEAPON_GUN + 1;
+	m_GoresForcedWeapon = *pWanted;
 }
 
-void CLazyClient::OnFireInput(int Pressed)
+void CLazyClient::OnWeaponSelectInput()
 {
 	if(!g_Config.m_LcGoresMode)
 		return;
-	if(g_Config.m_LcGoresDisableIfWeapons && m_GoresHeavyWeapon)
+	m_GoresAttacking = false;
+	m_GoresInjectedFire = false;
+	m_GoresAttackStage = 0;
+	m_GoresAttackEnd = 0;
+	m_GoresWeaponSelectUntil = time_get() + (time_freq() * GORES_WEAPON_SELECT_GRACE_MS) / 1000;
+}
+
+void CLazyClient::OnFireInput(int Pressed, bool Changed)
+{
+	if(!g_Config.m_LcGoresMode)
 		return;
+
+	// Track the physical button even while gores mode is paused, so a staged
+	// attack can release its synthesized click correctly.
+	m_GoresFireHeld = Pressed != 0;
+
+	if(m_GunKeyHeld)
+		return;
+	if(time_get() < m_GoresWeaponSelectUntil)
+		return;
+	if(!g_Config.m_LcGoresIgnoreHeavy && m_GoresHeavyWeapon)
+		return;
+
+	if(!Changed)
+	{
+		// The press was suppressed, so its matching release does not change
+		// the counter either. Still cancel a click that ended before the
+		// hammer was requested.
+		if(!Pressed && m_GoresAttackStage == 1)
+		{
+			m_GoresAttacking = false;
+			m_GoresAttackStage = 0;
+			m_GoresAttackEnd = 0;
+		}
+		return;
+	}
+
+	CControls &Controls = GameClient()->m_Controls;
+	int *pFire = &Controls.m_aInputData[g_Config.m_ClDummy].m_Fire;
 
 	if(Pressed)
 	{
 		m_GoresAttacking = true;
-		m_GoresAttackEnd = time_get() + (time_freq() * g_Config.m_LcGoresSwitchDelay) / 1000;
+		m_GoresAttackStage = 1;
+		m_GoresInjectedFire = false;
+		// Deadline for selecting the hammer. Overwritten with the switch-back
+		// delay once the hit is injected.
+		m_GoresAttackEnd = time_get() + time_freq() / 2;
+
+		// Do not let the gun fire before the hammer has been selected. The
+		// counter was just incremented by the press, so undo that increment.
+		// Moving to the next even value would still count as a press, because
+		// CountInput counts every crossed odd state.
+		if((*pFire & 1) != 0)
+			(*pFire)--;
+		*pFire &= INPUT_STATE_MASK;
+		Controls.m_ForceSend = true;
+	}
+	else
+	{
+		// Cancel only if the hammer switch has not been requested yet.
+		// A click that lasted at least one tick still completes.
+		if(m_GoresAttackStage == 1)
+		{
+			m_GoresAttacking = false;
+			m_GoresAttackStage = 0;
+			m_GoresAttackEnd = 0;
+		}
 	}
 }
 
@@ -416,44 +589,100 @@ void CLazyClient::UpdateAutoMargin()
 		g_Config.m_ClPredictionMargin = CurrentMargin;
 }
 
-void CLazyClient::ApplyAspect(int Value)
+void CLazyClient::UpdateAntiping()
 {
-	m_AspectApplied = Value;
-	Graphics()->SetCustomAspect(Value > 0 ? Value / 100.0f : 0.0f);
+	if(Client()->State() != IClient::STATE_ONLINE)
+	{
+		m_AntipingSmoothedPing = -1.0f;
+		return;
+	}
+
+	int Ping = -1;
+	if(GameClient()->m_Snap.m_pLocalInfo)
+		Ping = std::max(0, GameClient()->m_Snap.m_pLocalInfo->m_Latency);
+	else if(m_LatestPing >= 0.0f)
+		Ping = (int)m_LatestPing;
+
+	if(Ping >= 0)
+	{
+		if(m_AntipingSmoothedPing < 0.0f)
+			m_AntipingSmoothedPing = (float)Ping;
+		else
+			m_AntipingSmoothedPing += ((float)Ping - m_AntipingSmoothedPing) * 0.25f;
+	}
+
+	bool Enable;
+	switch(g_Config.m_LcAntipingMode)
+	{
+	case 0:
+		Enable = false;
+		break;
+	case 2:
+		Enable = m_AntipingSmoothedPing < 0.0f || m_AntipingSmoothedPing >= (float)g_Config.m_LcAntipingAutoPing;
+		break;
+	default:
+		Enable = true;
+		break;
+	}
+
+	if(g_Config.m_ClAntiPing != (Enable ? 1 : 0))
+		g_Config.m_ClAntiPing = Enable ? 1 : 0;
+}
+
+void CLazyClient::ApplyAspect(int Width, int Height)
+{
+	Graphics()->SetCustomAspect(Width > 0 && Height > 0 ? (float)Width / (float)Height : 0.0f);
 }
 
 void CLazyClient::UpdateAspectConfirm()
 {
+	const int Width = g_Config.m_LcAspectWidth;
+	const int Height = g_Config.m_LcAspectHeight;
+	const bool Active = Width > 0 && Height > 0;
+
 	if(!m_AspectSeeded)
 	{
 		m_AspectSeeded = true;
-		m_AspectLast = g_Config.m_LcCustomAspect;
-		m_AspectPrev = m_AspectLast;
-		ApplyAspect(m_AspectLast);
+		m_AspectLastWidth = Width;
+		m_AspectLastHeight = Height;
+		m_AspectPrevWidth = Width;
+		m_AspectPrevHeight = Height;
+		ApplyAspect(Width, Height);
 		return;
 	}
 
-	const int Current = g_Config.m_LcCustomAspect;
-	if(Current != m_AspectLast)
+	if(Width != m_AspectLastWidth || Height != m_AspectLastHeight)
 	{
-		if(Current > 0)
+		if(Active)
 		{
 			if(!m_AspectConfirm)
-				m_AspectPrev = m_AspectLast;
+			{
+				m_AspectPrevWidth = m_AspectLastWidth;
+				m_AspectPrevHeight = m_AspectLastHeight;
+			}
 			m_AspectConfirm = true;
 			m_AspectDeadline = time_get() + time_freq() * ASPECT_CONFIRM_SECONDS;
 		}
 		else
 		{
 			m_AspectConfirm = false;
-			m_AspectPrev = 0;
+			m_AspectPrevWidth = 0;
+			m_AspectPrevHeight = 0;
 		}
-		m_AspectLast = Current;
-		ApplyAspect(Current);
+		m_AspectLastWidth = Width;
+		m_AspectLastHeight = Height;
+		ApplyAspect(Width, Height);
 	}
 
 	if(m_AspectConfirm && time_get() >= m_AspectDeadline)
+	{
 		RevertAspect();
+		return;
+	}
+
+	// Keep the projection in sync. This also retries the initial apply if the
+	// graphics backend was not ready yet on the first update.
+	ApplyAspect(Width, Height);
 }
 
 int CLazyClient::AspectSecondsLeft() const
@@ -467,16 +696,20 @@ int CLazyClient::AspectSecondsLeft() const
 void CLazyClient::KeepAspect()
 {
 	m_AspectConfirm = false;
-	m_AspectPrev = g_Config.m_LcCustomAspect;
-	m_AspectLast = m_AspectPrev;
+	m_AspectPrevWidth = g_Config.m_LcAspectWidth;
+	m_AspectPrevHeight = g_Config.m_LcAspectHeight;
+	m_AspectLastWidth = m_AspectPrevWidth;
+	m_AspectLastHeight = m_AspectPrevHeight;
 }
 
 void CLazyClient::RevertAspect()
 {
-	g_Config.m_LcCustomAspect = m_AspectPrev;
-	m_AspectLast = m_AspectPrev;
+	g_Config.m_LcAspectWidth = m_AspectPrevWidth;
+	g_Config.m_LcAspectHeight = m_AspectPrevHeight;
+	m_AspectLastWidth = m_AspectPrevWidth;
+	m_AspectLastHeight = m_AspectPrevHeight;
 	m_AspectConfirm = false;
-	ApplyAspect(m_AspectPrev);
+	ApplyAspect(m_AspectPrevWidth, m_AspectPrevHeight);
 }
 
 void CLazyClient::OnUpdate()
@@ -505,5 +738,6 @@ void CLazyClient::OnUpdate()
 	}
 
 	UpdateAutoMargin();
+	UpdateAntiping();
 	UpdateAspectConfirm();
 }
