@@ -49,6 +49,7 @@ constexpr int AUTO_MARGIN_STEP_DOWN = 5;
 constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 constexpr float ZERO_GRAV_HOLD_RADIUS = 64.0f; // two tiles
+constexpr float ZERO_GRAV_HOLD_MAX_HSPEED = 60.0f;
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
 constexpr float BESTCLIENT_LIST_REFRESH_SECONDS = 60.0f;
@@ -109,6 +110,7 @@ void CLazyClient::OnReset()
 	m_ZeroGravCheckTimer = 0.0f;
 	m_ZeroGravHistoryCount = 0;
 	m_ZeroGravHistoryNext = 0;
+	m_ZeroGravTarget = -1;
 	ResetAutoMarginState();
 }
 
@@ -133,6 +135,7 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_ZeroGravCheckTimer = 0.0f;
 	m_ZeroGravHistoryCount = 0;
 	m_ZeroGravHistoryNext = 0;
+	m_ZeroGravTarget = -1;
 }
 
 void CLazyClient::ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const
@@ -1050,19 +1053,68 @@ bool CLazyClient::PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos)
 
 void CLazyClient::UpdateZeroGravityPredictor()
 {
-	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE ||
-		!GameClient()->m_Snap.m_pLocalCharacter || GameClient()->m_Snap.m_SpecInfo.m_Active)
+	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
+	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE)
 	{
 		m_ZeroGravWarning = false;
 		m_ZeroGravCheckTimer = 0.0f;
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravTarget = -1;
 		return;
 	}
 
-	const CCharacterCore &Core = GameClient()->m_PredictedChar;
-	const CNetObj_Character *pLocalCharacter = GameClient()->m_Snap.m_pLocalCharacter;
-	const bool SnapshotHooked = pLocalCharacter->m_HookState == HOOK_GRABBED;
+	const int TargetId = Snap.m_SpecInfo.m_Active ? Snap.m_SpecInfo.m_SpectatorId : Snap.m_LocalClientId;
+	if(TargetId < 0 || TargetId >= MAX_CLIENTS || !Snap.m_aCharacters[TargetId].m_Active)
+	{
+		m_ZeroGravWarning = false;
+		m_ZeroGravCheckTimer = 0.0f;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravTarget = -1;
+		return;
+	}
+
+	if(TargetId != m_ZeroGravTarget)
+	{
+		m_ZeroGravTarget = TargetId;
+		m_ZeroGravWarning = false;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
+	}
+
+	const bool TargetIsLocal = !Snap.m_SpecInfo.m_Active && TargetId == Snap.m_LocalClientId;
+	CCharacterCore Core;
+	const CNetObj_Character *pCharacter = nullptr;
+	if(TargetIsLocal)
+	{
+		Core = GameClient()->m_PredictedChar;
+		pCharacter = Snap.m_pLocalCharacter;
+	}
+	else
+	{
+		const CGameClient::CSnapState::CCharacterInfo &CharInfo = Snap.m_aCharacters[TargetId];
+		Core.Reset();
+		Core.SetCoreWorld(nullptr, Collision(), nullptr);
+		Core.Read(&CharInfo.m_Cur);
+		if(CharInfo.m_HasExtendedData)
+			Core.ReadDDNet(&CharInfo.m_ExtendedData);
+		Core.m_Tuning = GameClient()->m_aTuning[g_Config.m_ClDummy];
+		Core.m_Input.m_Direction = Core.m_Direction;
+		pCharacter = &CharInfo.m_Cur;
+	}
+
+	if(!pCharacter)
+	{
+		m_ZeroGravWarning = false;
+		m_ZeroGravCheckTimer = 0.0f;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravTarget = -1;
+		return;
+	}
+
+	const bool SnapshotHooked = pCharacter->m_HookState == HOOK_GRABBED;
 	if((Core.m_HookState != HOOK_GRABBED && !SnapshotHooked) || Core.HookedPlayer() != -1 ||
 		Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
 		Core.m_Super || Core.m_Invincible)
@@ -1079,14 +1131,23 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		return;
 	m_ZeroGravCheckTimer = 0.05f;
 
-	const vec2 HookPos = Core.m_HookState == HOOK_GRABBED ? Core.m_HookPos : vec2(pLocalCharacter->m_HookX, pLocalCharacter->m_HookY);
+	const vec2 HookPos = Core.m_HookState == HOOK_GRABBED ? Core.m_HookPos : vec2(pCharacter->m_HookX, pCharacter->m_HookY);
 	const vec2 HookDelta = HookPos - Core.m_Pos;
 	// The gores "zero gravity" hold is a wall hook with the opposing
 	// movement key held, so the hook drag and air control cancel out.
 	const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
-		HookDelta.x * Core.m_Input.m_Direction < 0.0f &&
+		HookDelta.x * Core.m_Direction < 0.0f &&
 		std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
+		std::abs(Core.m_Vel.x) < ZERO_GRAV_HOLD_MAX_HSPEED &&
 		!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
+
+	if(!ZeroGravityHold)
+	{
+		m_ZeroGravWarning = false;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
+		return;
+	}
 
 	m_aZeroGravHistory[m_ZeroGravHistoryNext] = Core.m_Pos;
 	m_ZeroGravHistoryNext = (m_ZeroGravHistoryNext + 1) % ZERO_GRAV_HISTORY_SIZE;
@@ -1094,16 +1155,15 @@ void CLazyClient::UpdateZeroGravityPredictor()
 
 	// Only start predicting when the tee has stayed in a roughly two-tile
 	// area for the last two seconds, which filters out fast map traversal.
+	// Keep the whole history close to the current position so that leaving a
+	// previously stable hold clears the warning immediately.
 	bool StayedInArea = m_ZeroGravHistoryCount >= ZERO_GRAV_HISTORY_SIZE;
 	if(StayedInArea)
 	{
-		vec2 Center = vec2(0.0f, 0.0f);
-		for(const vec2 &Pos : m_aZeroGravHistory)
-			Center += Pos;
-		Center /= (float)ZERO_GRAV_HISTORY_SIZE;
 		for(const vec2 &Pos : m_aZeroGravHistory)
 		{
-			if(distance(Pos, Center) > ZERO_GRAV_HOLD_RADIUS)
+			if(std::abs(Pos.x - Core.m_Pos.x) > ZERO_GRAV_HOLD_RADIUS ||
+				std::abs(Pos.y - Core.m_Pos.y) > ZERO_GRAV_HOLD_RADIUS)
 			{
 				StayedInArea = false;
 				break;
@@ -1111,7 +1171,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		}
 	}
 
-	if(!ZeroGravityHold || !StayedInArea)
+	if(!StayedInArea)
 	{
 		m_ZeroGravWarning = false;
 		return;
@@ -1123,12 +1183,13 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	CCharacterCore Sim = Core;
 	Sim.SetCoreWorld(nullptr, Collision(), nullptr);
 	Sim.m_Input.m_Hook = 1;
+	Sim.m_Input.m_Direction = Core.m_Direction;
 	if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
 	{
 		// The predicted core can be a tick behind the snapshot. Keep using
 		// the snapshot's hook position so the simulation stays attached.
 		Sim.m_HookState = HOOK_GRABBED;
-		Sim.m_HookPos = vec2(pLocalCharacter->m_HookX, pLocalCharacter->m_HookY);
+		Sim.m_HookPos = vec2(pCharacter->m_HookX, pCharacter->m_HookY);
 		Sim.m_HookTick = 0;
 		Sim.SetHookedPlayer(-1);
 	}

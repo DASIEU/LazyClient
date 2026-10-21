@@ -130,6 +130,7 @@ private:
 	vec2 m_aZeroGravHistory[ZERO_GRAV_HISTORY_SIZE] = {};
 	int m_ZeroGravHistoryCount = 0;
 	int m_ZeroGravHistoryNext = 0;
+	int m_ZeroGravTarget = -1;
 
 	void ResetAutoMarginState();
 	void UpdateAutoMargin();

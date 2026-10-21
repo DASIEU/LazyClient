@@ -400,7 +400,7 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	{
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 5, &CUi::ms_LinearScrollbarScale, 0, "s");
-		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook, after staying within about two tiles for two seconds. A small countdown appears when the trajectory reaches freeze within the warning time."), Ui(), TextRender());
+		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook, after staying within about two tiles for two seconds. A small countdown appears when the trajectory reaches freeze within the warning time. Works for your tee and for a spectated player."), Ui(), TextRender());
 	}
 	else
 	{
