@@ -1206,7 +1206,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	// movement key held, so the hook drag and air control cancel out.
 	const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
 		HookDelta.x * Core.m_Direction < 0.0f &&
-		std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
+		std::abs(HookDelta.x) > 8.0f &&
 		!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 
 	if(!ZeroGravityHold)
