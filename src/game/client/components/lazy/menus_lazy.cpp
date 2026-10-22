@@ -411,7 +411,7 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	if(g_Config.m_LcZeroGravPredict)
 	{
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
-		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 5, &CUi::ms_LinearScrollbarScale, 0, "s");
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 10, &CUi::ms_LinearScrollbarScale, 0, "s");
 
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravHoldTiles, &g_Config.m_LcZeroGravHoldTiles, &Button, Localize("Hold area radius"), 1, 16, &CUi::ms_LinearScrollbarScale, 0, " tiles");
