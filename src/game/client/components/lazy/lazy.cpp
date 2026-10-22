@@ -1347,8 +1347,8 @@ void CLazyClient::ActivateForcedZeroGravity()
 						Core.m_Super || Core.m_Invincible) &&
 					!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 	const float Now = Client()->LocalTime();
-	if(!Valid && CurrentlyHooked && CurrentStatusValid && Input.m_Direction != 0 && m_ZeroGravForcedCandidateValid &&
-		Now - m_ZeroGravForcedCandidateTime <= ZERO_GRAV_FORCED_CANDIDATE_AGE)
+	if(!Valid && CurrentlyHooked && CurrentStatusValid && Input.m_Direction != 0 && Input.m_Hook != 0 &&
+		m_ZeroGravForcedCandidateValid && Now - m_ZeroGravForcedCandidateTime <= ZERO_GRAV_FORCED_CANDIDATE_AGE)
 	{
 		// The bind can be pressed during a sway phase where the instantaneous
 		// gate fails. Use the most recent valid hold instead of dropping the
