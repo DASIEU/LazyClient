@@ -1201,6 +1201,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravCheckTimer -= Client()->RenderFrameTime();
 	if(m_ZeroGravCheckTimer > 0.0f)
 		return;
+	const float CheckInterval = std::clamp(0.05f - m_ZeroGravCheckTimer, 0.05f, 0.25f);
 	m_ZeroGravCheckTimer = 0.05f;
 
 	const vec2 HookPos = Core.m_HookState == HOOK_GRABBED ? Core.m_HookPos : vec2(pCharacter->m_HookX, pCharacter->m_HookY);
@@ -1325,7 +1326,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	// zero (or after a short run of checks without any predicted freeze).
 	const bool WasLatched = m_ZeroGravWarning;
 	if(WasLatched)
-		m_ZeroGravSeconds = std::max(0.0f, m_ZeroGravSeconds - 0.05f);
+		m_ZeroGravSeconds = std::max(0.0f, m_ZeroGravSeconds - CheckInterval);
 
 	if(HitSeconds >= 0.0f)
 	{
