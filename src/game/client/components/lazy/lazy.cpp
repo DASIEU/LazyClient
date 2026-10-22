@@ -1378,6 +1378,9 @@ void CLazyClient::ActivateForcedZeroGravity()
 	m_ZeroGravForcedHookPos = HookPos;
 	m_ZeroGravForcedSeconds = Seconds;
 
+	m_ZeroGravForcedStatusUntil = Client()->LocalTime() + 3.0f;
+	GameClient()->m_Chat.Echo("LazyClient: zero-gravity predictor ON");
+
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_WAIT_SECOND;
 	m_ZeroGravForcedStartTime = Client()->LocalTime();
 	ResetForcedZeroGravityInputState();
@@ -1393,6 +1396,7 @@ void CLazyClient::DeactivateForcedZeroGravity()
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_OFF;
 	m_ZeroGravForcedStartTime = 0.0f;
 	m_ZeroGravForcedInputGraceUntil = 0.0f;
+	m_ZeroGravForcedStatusUntil = 0.0f;
 	std::fill(std::begin(m_aZeroGravForcedKeysDown), std::end(m_aZeroGravForcedKeysDown), false);
 	m_ZeroGravForcedSeconds = -1.0f;
 	m_ZeroGravForcedSnapshotHooked = false;
@@ -1808,6 +1812,33 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravWarningHideTimer = 0.0f;
 }
 
+void CLazyClient::RenderZeroGravityForcedStatus()
+{
+	if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_OFF ||
+		Client()->LocalTime() >= m_ZeroGravForcedStatusUntil ||
+		Client()->State() != IClient::STATE_ONLINE ||
+		GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive())
+		return;
+
+	const CScreenRect OldScreen = Graphics()->GetScreen();
+	const float Width = 300.0f * Graphics()->ScreenAspect();
+	Graphics()->MapScreenToSize(Width, 300.0f);
+
+	const char *pText = Localize("Zero gravity predictor ON");
+	const float FontSize = 10.5f;
+	const float TextWidth = TextRender()->TextWidth(FontSize, pText);
+	const float BoxWidth = std::max(TextWidth + 14.0f, 120.0f);
+	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 32.0f, BoxWidth, 22.0f};
+	Box.Draw(ColorRGBA(0.04f, 0.35f, 0.16f, 0.86f), IGraphics::CORNER_ALL, 3.0f);
+	Box.DrawOutline(ColorRGBA(0.45f, 1.0f, 0.65f, 0.9f));
+
+	TextRender()->TextColor(ColorRGBA(0.92f, 1.0f, 0.95f, 1.0f));
+	Ui()->DoLabel(&Box, pText, FontSize, TEXTALIGN_MC);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+	Graphics()->MapScreen(OldScreen);
+}
+
 void CLazyClient::RenderZeroGravityWarning()
 {
 	if(!g_Config.m_LcZeroGravPredict || !m_ZeroGravWarning ||
@@ -1828,10 +1859,12 @@ void CLazyClient::RenderZeroGravityWarning()
 	else
 		str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
 
+	const bool StatusVisible = m_ZeroGravForcedState != ZERO_GRAV_FORCED_OFF &&
+		Client()->LocalTime() < m_ZeroGravForcedStatusUntil;
 	const float CountdownSize = 10.5f;
 	const float CountdownWidth = TextRender()->TextWidth(CountdownSize, aCountdown);
 	const float BoxWidth = std::max(CountdownWidth + 14.0f, 96.0f);
-	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 32.0f, BoxWidth, 22.0f};
+	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, StatusVisible ? 58.0f : 32.0f, BoxWidth, 22.0f};
 	Box.Draw(ColorRGBA(0.55f, 0.04f, 0.03f, 0.86f), IGraphics::CORNER_ALL, 3.0f);
 	Box.DrawOutline(ColorRGBA(1.0f, 0.35f, 0.25f, 0.9f));
 
@@ -2051,6 +2084,7 @@ void CLazyClient::RenderTelemetry()
 
 void CLazyClient::OnRender()
 {
+	RenderZeroGravityForcedStatus();
 	RenderZeroGravityWarning();
 	RenderTelemetry();
 }
