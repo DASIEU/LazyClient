@@ -1824,16 +1824,20 @@ void CLazyClient::RenderZeroGravityForcedStatus()
 	const float Width = 300.0f * Graphics()->ScreenAspect();
 	Graphics()->MapScreenToSize(Width, 300.0f);
 
-	const char *pText = Localize("Zero gravity predictor ON");
+	char aStatus[96];
+	if(m_ZeroGravForcedSeconds >= 0.0f)
+		str_format(aStatus, sizeof(aStatus), "%s (%.1fs)", Localize("Zero gravity predictor ON"), m_ZeroGravForcedSeconds);
+	else
+		str_format(aStatus, sizeof(aStatus), "%s (no freeze)", Localize("Zero gravity predictor ON"));
 	const float FontSize = 10.5f;
-	const float TextWidth = TextRender()->TextWidth(FontSize, pText);
+	const float TextWidth = TextRender()->TextWidth(FontSize, aStatus);
 	const float BoxWidth = std::max(TextWidth + 14.0f, 120.0f);
 	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 32.0f, BoxWidth, 22.0f};
 	Box.Draw(ColorRGBA(0.04f, 0.35f, 0.16f, 0.86f), IGraphics::CORNER_ALL, 3.0f);
 	Box.DrawOutline(ColorRGBA(0.45f, 1.0f, 0.65f, 0.9f));
 
 	TextRender()->TextColor(ColorRGBA(0.92f, 1.0f, 0.95f, 1.0f));
-	Ui()->DoLabel(&Box, pText, FontSize, TEXTALIGN_MC);
+	Ui()->DoLabel(&Box, aStatus, FontSize, TEXTALIGN_MC);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 	Graphics()->MapScreen(OldScreen);
