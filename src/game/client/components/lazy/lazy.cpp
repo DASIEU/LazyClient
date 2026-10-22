@@ -1342,8 +1342,12 @@ void CLazyClient::ActivateForcedZeroGravity()
 
 	bool Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
 	const bool CurrentlyHooked = Core.m_HookState == HOOK_GRABBED || SnapshotHooked;
+	const bool CurrentStatusValid = Core.HookedPlayer() == -1 &&
+					!(Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
+						Core.m_Super || Core.m_Invincible) &&
+					!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 	const float Now = Client()->LocalTime();
-	if(!Valid && CurrentlyHooked && Input.m_Direction != 0 && m_ZeroGravForcedCandidateValid &&
+	if(!Valid && CurrentlyHooked && CurrentStatusValid && Input.m_Direction != 0 && m_ZeroGravForcedCandidateValid &&
 		Now - m_ZeroGravForcedCandidateTime <= ZERO_GRAV_FORCED_CANDIDATE_AGE)
 	{
 		// The bind can be pressed during a sway phase where the instantaneous
