@@ -5,6 +5,7 @@
 #include <base/log.h>
 #include <base/math.h>
 #include <base/net.h>
+#include <base/str.h>
 #include <base/time.h>
 
 #include <engine/client.h>
@@ -54,6 +55,10 @@ constexpr float ZERO_GRAV_HOOK_MOVE_DISTANCE = 16.0f;
 constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
 constexpr int ZERO_GRAV_SPEEDRUN_FAST_CHECKS = 3;
 constexpr int ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS = 5;
+constexpr float ZERO_GRAV_FORCED_SPEC_DELAY = 0.50f;
+constexpr int ZERO_GRAV_FORCED_OFF = 0;
+constexpr int ZERO_GRAV_FORCED_WAIT_SECOND = 1;
+constexpr int ZERO_GRAV_FORCED_ACTIVE = 2;
 constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
@@ -91,6 +96,7 @@ float MarginFromPing(float Ping)
 void CLazyClient::OnConsoleInit()
 {
 	Console()->Register("+lc_gun", "", CFGFLAG_CLIENT, ConGunFire, this, "Fire the gun in gores mode without using the hammer");
+	Console()->Register("+lc_zerograv_forced", "", CFGFLAG_CLIENT, ConZeroGravForced, this, "Toggle forced zero-gravity freeze prediction");
 }
 
 void CLazyClient::OnReset()
@@ -111,6 +117,7 @@ void CLazyClient::OnReset()
 	m_ClientLogosInitialized = false;
 	m_WasClientLogosEnabled = false;
 	ResetBestClientList();
+	DeactivateForcedZeroGravity();
 	m_ZeroGravWarning = false;
 	m_ZeroGravCheckTimer = 0.0f;
 	m_ZeroGravHistoryCount = 0;
@@ -142,6 +149,7 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_AntipingSmoothedPing = -1.0f;
 	std::fill(std::begin(m_aClientTypes), std::end(m_aClientTypes), LC_CLIENT_NONE);
 	ResetBestClientList();
+	DeactivateForcedZeroGravity();
 	m_ZeroGravWarning = false;
 	m_ZeroGravCheckTimer = 0.0f;
 	m_ZeroGravHistoryCount = 0;
@@ -588,6 +596,73 @@ void CLazyClient::RestoreStaleGunKeyBind()
 	if(str_comp(GameClient()->m_Binds.Get(Key, KeyModifier::NONE), "+lc_gun") == 0)
 		GameClient()->m_Binds.Bind(Key, g_Config.m_LcGoresGunKeyPrev);
 	g_Config.m_LcGoresGunKeyPrev[0] = '\0';
+}
+
+void CLazyClient::BindZeroGravKey()
+{
+	BindZeroGravKeyForced();
+}
+
+void CLazyClient::BindZeroGravKeyForced()
+{
+	if(g_Config.m_LcZeroGravForcedKey[0] == '\0')
+	{
+		if(m_ZeroGravKeyBound)
+			RestoreZeroGravKey();
+		return;
+	}
+
+	const int Key = Input()->FindKeyByName(g_Config.m_LcZeroGravForcedKey);
+	if(Key == KEY_UNKNOWN)
+		return;
+
+	if(m_ZeroGravKeyBound && m_ZeroGravBoundKey == Key)
+		return;
+	if(m_ZeroGravKeyBound)
+		RestoreZeroGravKey();
+
+	const char *pCurrentBind = GameClient()->m_Binds.Get(Key, KeyModifier::NONE);
+	if(str_comp(pCurrentBind, "+lc_zerograv_forced") == 0)
+	{
+		// Still bound from a previous session; recover the original bind from the config.
+		str_copy(m_aZeroGravPrevBind, g_Config.m_LcZeroGravForcedKeyPrev, sizeof(m_aZeroGravPrevBind));
+	}
+	else
+	{
+		str_copy(m_aZeroGravPrevBind, pCurrentBind, sizeof(m_aZeroGravPrevBind));
+		str_copy(g_Config.m_LcZeroGravForcedKeyPrev, pCurrentBind, sizeof(g_Config.m_LcZeroGravForcedKeyPrev));
+		GameClient()->m_Binds.Bind(Key, "+lc_zerograv_forced");
+	}
+	m_ZeroGravBoundKey = Key;
+	m_ZeroGravKeyBound = true;
+}
+
+void CLazyClient::RestoreZeroGravKey()
+{
+	if(!m_ZeroGravKeyBound)
+		return;
+	GameClient()->m_Binds.Bind(m_ZeroGravBoundKey, m_aZeroGravPrevBind);
+	g_Config.m_LcZeroGravForcedKeyPrev[0] = '\0';
+	m_aZeroGravPrevBind[0] = '\0';
+	m_ZeroGravKeyBound = false;
+	m_ZeroGravBoundKey = 0;
+}
+
+void CLazyClient::RestoreStaleZeroGravKeyBind()
+{
+	if(g_Config.m_LcZeroGravForcedKeyPrev[0] == '\0')
+		return;
+
+	const int Key = Input()->FindKeyByName(g_Config.m_LcZeroGravForcedKey);
+	if(Key == KEY_UNKNOWN)
+	{
+		g_Config.m_LcZeroGravForcedKeyPrev[0] = '\0';
+		return;
+	}
+
+	if(str_comp(GameClient()->m_Binds.Get(Key, KeyModifier::NONE), "+lc_zerograv_forced") == 0)
+		GameClient()->m_Binds.Bind(Key, g_Config.m_LcZeroGravForcedKeyPrev);
+	g_Config.m_LcZeroGravForcedKeyPrev[0] = '\0';
 }
 
 void CLazyClient::UpdateGoresMode()
@@ -1131,18 +1206,224 @@ void CLazyClient::ClearZeroGravityWarning(bool Immediate)
 		m_ZeroGravWarningHideTimer = ZERO_GRAV_WARNING_HIDE_DELAY;
 }
 
+void CLazyClient::UpdateZeroGravityWarningHideTimer()
+{
+	if(m_ZeroGravWarningHideTimer <= 0.0f)
+		return;
+	m_ZeroGravWarningHideTimer -= Client()->RenderFrameTime();
+	if(m_ZeroGravWarningHideTimer <= 0.0f)
+	{
+		m_ZeroGravWarningHideTimer = 0.0f;
+		m_ZeroGravWarning = false;
+	}
+}
+
+void CLazyClient::ConZeroGravForced(IConsole::IResult *pResult, void *pUserData)
+{
+	CLazyClient *pThis = static_cast<CLazyClient *>(pUserData);
+	if(pResult->GetInteger(0) == 0)
+		return;
+	pThis->ToggleForcedZeroGravity();
+}
+
+void CLazyClient::ToggleForcedZeroGravity()
+{
+	if(g_Config.m_LcZeroGravMode != 1 || !g_Config.m_LcZeroGravPredict)
+		return;
+	if(GameClient()->m_Chat.IsActive() || GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive())
+		return;
+
+	if(m_ZeroGravForcedState != ZERO_GRAV_FORCED_OFF)
+	{
+		DeactivateForcedZeroGravity();
+		return;
+	}
+	ActivateForcedZeroGravity();
+}
+
+void CLazyClient::ActivateForcedZeroGravity()
+{
+	if(Client()->State() != IClient::STATE_ONLINE || GameClient()->m_Snap.m_SpecInfo.m_Active)
+		return;
+	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
+	if(!Snap.m_pLocalCharacter)
+		return;
+
+	m_ZeroGravForcedCore = GameClient()->m_PredictedChar;
+	m_ZeroGravForcedInput = GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy];
+	m_ZeroGravForcedSnapshotHooked = Snap.m_pLocalCharacter->m_HookState == HOOK_GRABBED;
+	if(m_ZeroGravForcedCore.m_HookState == HOOK_GRABBED)
+		m_ZeroGravForcedHookPos = m_ZeroGravForcedCore.m_HookPos;
+	else
+		m_ZeroGravForcedHookPos = vec2(Snap.m_pLocalCharacter->m_HookX, Snap.m_pLocalCharacter->m_HookY);
+
+	// Compute the forced prediction once from the exact state/input that the
+	// normal predictor would use this tick. The saved snapshot keeps the warning
+	// valid after the tee is released from the real keys.
+	m_ZeroGravForcedSeconds = -1.0f;
+	const CCharacterCore &Core = m_ZeroGravForcedCore;
+	const CNetObj_PlayerInput &Input = m_ZeroGravForcedInput;
+	const bool SnapshotHooked = m_ZeroGravForcedSnapshotHooked;
+	const bool Invalid = (Core.m_HookState != HOOK_GRABBED && !SnapshotHooked) ||
+			     Core.HookedPlayer() != -1 ||
+			     Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
+			     Core.m_Super || Core.m_Invincible;
+	if(!Invalid)
+	{
+		const vec2 HookDelta = m_ZeroGravForcedHookPos - Core.m_Pos;
+		const int HoldDirection = Input.m_Direction;
+		const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
+					     HoldDirection != 0 &&
+					     HookDelta.x * HoldDirection < 0.0f &&
+					     std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
+					     !Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
+		if(ZeroGravityHold)
+		{
+			CCharacterCore Sim = Core;
+			Sim.SetCoreWorld(nullptr, Collision(), nullptr);
+			Sim.m_Input.m_Hook = Input.m_Hook;
+			Sim.m_Input.m_Direction = HoldDirection;
+			Sim.m_Input.m_Jump = Input.m_Jump;
+			if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
+			{
+				Sim.m_HookState = HOOK_GRABBED;
+				Sim.m_HookPos = m_ZeroGravForcedHookPos;
+				Sim.m_HookTick = 0;
+				Sim.SetHookedPlayer(-1);
+			}
+
+			const int TickSpeed = std::max(1, Client()->GameTickSpeed());
+			const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
+			vec2 PrevPos = Sim.m_Pos;
+			for(int Tick = 1; Tick <= MaxTicks; Tick++)
+			{
+				Sim.Tick(true, false);
+				Sim.Move();
+				Sim.Quantize();
+				if(PathHitsFreeze(Collision(), PrevPos, Sim.m_Pos))
+				{
+					m_ZeroGravForcedSeconds = Tick / (float)TickSpeed;
+					break;
+				}
+				PrevPos = Sim.m_Pos;
+			}
+		}
+	}
+
+	m_ZeroGravForcedState = ZERO_GRAV_FORCED_WAIT_SECOND;
+	m_ZeroGravForcedTimer = 0.0f;
+	m_ZeroGravForcedSkipInput = true;
+	m_ZeroGravTarget = Snap.m_LocalClientId;
+	m_ZeroGravWarning = false;
+	m_ZeroGravWarningHideTimer = 0.0f;
+	m_ZeroGravSeconds = 0.0f;
+	Console()->ExecuteLine("say /spec", IConsole::CLIENT_ID_UNSPECIFIED);
+}
+
+void CLazyClient::DeactivateForcedZeroGravity()
+{
+	m_ZeroGravForcedState = ZERO_GRAV_FORCED_OFF;
+	m_ZeroGravForcedTimer = 0.0f;
+	m_ZeroGravForcedSkipInput = false;
+	m_ZeroGravForcedSeconds = -1.0f;
+	m_ZeroGravForcedSnapshotHooked = false;
+	m_ZeroGravForcedHookPos = vec2(0.0f, 0.0f);
+	m_ZeroGravForcedCore.Reset();
+	m_ZeroGravForcedInput = {};
+	m_ZeroGravWarning = false;
+	m_ZeroGravWarningHideTimer = 0.0f;
+	m_ZeroGravSeconds = 0.0f;
+	m_ZeroGravTarget = -1;
+}
+
+bool CLazyClient::ForcedZeroGravityInputPressed() const
+{
+	if(GameClient()->m_Chat.IsActive() || GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive())
+		return false;
+
+	const bool Scoreboard = GameClient()->m_Scoreboard.IsActive();
+	for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
+	{
+		if(Scoreboard && Key >= KEY_MOUSE_1 && Key <= KEY_MOUSE_WHEEL_RIGHT)
+			continue;
+		const char *pBind = GameClient()->m_Binds.Get(Key, KeyModifier::NONE);
+		if(pBind && str_find(pBind, "+lc_zerograv_forced"))
+			continue;
+		if(Input()->KeyPress(Key))
+			return true;
+	}
+	return false;
+}
+
+void CLazyClient::UpdateForcedZeroGravityPredictor()
+{
+	UpdateZeroGravityWarningHideTimer();
+	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE)
+	{
+		DeactivateForcedZeroGravity();
+		return;
+	}
+
+	if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_OFF)
+	{
+		ClearZeroGravityWarning(true);
+		return;
+	}
+
+	if(m_ZeroGravForcedSkipInput)
+		m_ZeroGravForcedSkipInput = false;
+	else if(ForcedZeroGravityInputPressed())
+	{
+		DeactivateForcedZeroGravity();
+		return;
+	}
+
+	if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_WAIT_SECOND)
+	{
+		ClearZeroGravityWarning(true);
+		m_ZeroGravForcedTimer += Client()->RenderFrameTime();
+		if(m_ZeroGravForcedTimer >= ZERO_GRAV_FORCED_SPEC_DELAY)
+		{
+			Console()->ExecuteLine("say /spec", IConsole::CLIENT_ID_UNSPECIFIED);
+			m_ZeroGravForcedState = ZERO_GRAV_FORCED_ACTIVE;
+			m_ZeroGravForcedTimer = 0.0f;
+			if(m_ZeroGravForcedSeconds >= 0.0f)
+			{
+				m_ZeroGravWarning = true;
+				m_ZeroGravSeconds = m_ZeroGravForcedSeconds;
+				m_ZeroGravWarningHideTimer = 0.0f;
+			}
+			else
+				ClearZeroGravityWarning(true);
+		}
+		return;
+	}
+
+	if(m_ZeroGravForcedState != ZERO_GRAV_FORCED_ACTIVE)
+		return;
+
+	if(m_ZeroGravForcedSeconds < 0.0f)
+	{
+		ClearZeroGravityWarning(false);
+		return;
+	}
+
+	m_ZeroGravWarning = true;
+	m_ZeroGravSeconds = m_ZeroGravForcedSeconds;
+	m_ZeroGravWarningHideTimer = 0.0f;
+}
+
 void CLazyClient::UpdateZeroGravityPredictor()
 {
 	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
-	if(m_ZeroGravWarningHideTimer > 0.0f)
+	if(g_Config.m_LcZeroGravMode == 1)
 	{
-		m_ZeroGravWarningHideTimer -= Client()->RenderFrameTime();
-		if(m_ZeroGravWarningHideTimer <= 0.0f)
-		{
-			m_ZeroGravWarningHideTimer = 0.0f;
-			m_ZeroGravWarning = false;
-		}
+		UpdateForcedZeroGravityPredictor();
+		return;
 	}
+	if(m_ZeroGravForcedState != ZERO_GRAV_FORCED_OFF)
+		DeactivateForcedZeroGravity();
+	UpdateZeroGravityWarningHideTimer();
 
 	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE)
 	{
@@ -1675,6 +1956,27 @@ void CLazyClient::OnUpdate()
 	{
 		RestoreGunKey();
 		m_GoresWasEnabled = false;
+	}
+
+	const bool ForcedZeroGravEnabled = g_Config.m_LcZeroGravMode == 1;
+	if(!m_ZeroGravKeyInitialized)
+	{
+		m_ZeroGravKeyInitialized = true;
+		if(ForcedZeroGravEnabled)
+			BindZeroGravKeyForced();
+		else
+			RestoreStaleZeroGravKeyBind();
+		m_ZeroGravWasForced = ForcedZeroGravEnabled;
+	}
+	else if(ForcedZeroGravEnabled && !m_ZeroGravWasForced)
+	{
+		BindZeroGravKeyForced();
+		m_ZeroGravWasForced = true;
+	}
+	else if(!ForcedZeroGravEnabled && m_ZeroGravWasForced)
+	{
+		RestoreZeroGravKey();
+		m_ZeroGravWasForced = false;
 	}
 
 	UpdateClientLogoState();

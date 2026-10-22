@@ -9,6 +9,7 @@
 #include <engine/shared/protocol.h>
 
 #include <game/client/component.h>
+#include <game/gamecore.h>
 
 #include <memory>
 #include <string>
@@ -51,6 +52,7 @@ public:
 	void OnFireInput(int Pressed, bool Changed);
 	void OnWeaponSelectInput();
 	void BindGunKey();
+	void BindZeroGravKey();
 
 	// Antiping
 	void UpdateAntiping();
@@ -66,6 +68,10 @@ private:
 	void BindGunKeyForced();
 	void RestoreGunKey();
 	void RestoreStaleGunKeyBind();
+	static void ConZeroGravForced(IConsole::IResult *pResult, void *pUserData);
+	void BindZeroGravKeyForced();
+	void RestoreZeroGravKey();
+	void RestoreStaleZeroGravKeyBind();
 
 	// Gores mode
 	bool m_GoresHeavyWeapon = false;
@@ -162,6 +168,21 @@ private:
 	int m_ZeroGravHistoryNext = 0;
 	int m_ZeroGravTarget = -1;
 
+	// Forced mode
+	int m_ZeroGravForcedState = 0;
+	float m_ZeroGravForcedTimer = 0.0f;
+	bool m_ZeroGravForcedSkipInput = false;
+	bool m_ZeroGravForcedSnapshotHooked = false;
+	vec2 m_ZeroGravForcedHookPos = vec2(0.0f, 0.0f);
+	CCharacterCore m_ZeroGravForcedCore;
+	CNetObj_PlayerInput m_ZeroGravForcedInput = {};
+	float m_ZeroGravForcedSeconds = -1.0f;
+	bool m_ZeroGravKeyInitialized = false;
+	bool m_ZeroGravWasForced = false;
+	bool m_ZeroGravKeyBound = false;
+	int m_ZeroGravBoundKey = 0;
+	char m_aZeroGravPrevBind[256] = {};
+
 	void ResetAutoMarginState();
 	void UpdateAutoMargin();
 	void ApplyAspect(int Width, int Height);
@@ -176,6 +197,12 @@ private:
 	void RenderTelemetry();
 	int FindZeroGravityTarget() const;
 	void ClearZeroGravityWarning(bool Immediate);
+	void UpdateZeroGravityWarningHideTimer();
+	void UpdateForcedZeroGravityPredictor();
+	void ToggleForcedZeroGravity();
+	void ActivateForcedZeroGravity();
+	void DeactivateForcedZeroGravity();
+	bool ForcedZeroGravityInputPressed() const;
 	void UpdateZeroGravityPredictor();
 	bool PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos) const;
 	void RenderZeroGravityWarning();
