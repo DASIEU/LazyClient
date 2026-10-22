@@ -56,7 +56,7 @@ constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
 constexpr int ZERO_GRAV_SPEEDRUN_FAST_CHECKS = 3;
 constexpr int ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS = 5;
 constexpr float ZERO_GRAV_FORCED_SPEC_DELAY = 1.00f;
-constexpr float ZERO_GRAV_FORCED_CANDIDATE_AGE = 1.00f;
+constexpr float ZERO_GRAV_FORCED_CANDIDATE_AGE = 2.00f;
 constexpr int ZERO_GRAV_FORCED_OFF = 0;
 constexpr int ZERO_GRAV_FORCED_WAIT_SECOND = 1;
 constexpr int ZERO_GRAV_FORCED_ACTIVE = 2;
@@ -1372,6 +1372,11 @@ void CLazyClient::ActivateForcedZeroGravity()
 		Seconds = m_ZeroGravForcedCandidateSeconds;
 	}
 
+	char aDbg[160];
+	str_format(aDbg, sizeof(aDbg), "LazyClient: forced dbg gate=%d cur=%.1f cand=%d candsec=%.1f dir=%d hook=%d",
+		Valid, Seconds, m_ZeroGravForcedCandidateValid, m_ZeroGravForcedCandidateSeconds, Input.m_Direction, Input.m_Hook);
+	GameClient()->m_Chat.Echo(aDbg);
+
 	m_ZeroGravForcedCore = Core;
 	m_ZeroGravForcedInput = Input;
 	m_ZeroGravForcedSnapshotHooked = SnapshotHooked;
@@ -1821,6 +1826,20 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravWarning = true;
 	m_ZeroGravSeconds = HitSeconds;
 	m_ZeroGravWarningHideTimer = 0.0f;
+
+	// Keep the exact local hold that just predicted a freeze so switching to
+	// forced mode and pressing the bind immediately still has a dangerous
+	// snapshot to use.
+	if(TargetIsLocal && pCurrentInput)
+	{
+		m_ZeroGravForcedCandidateCore = Core;
+		m_ZeroGravForcedCandidateInput = *pCurrentInput;
+		m_ZeroGravForcedCandidateSnapshotHooked = SnapshotHooked;
+		m_ZeroGravForcedCandidateHookPos = HookPos;
+		m_ZeroGravForcedCandidateSeconds = HitSeconds;
+		m_ZeroGravForcedCandidateTime = Client()->LocalTime();
+		m_ZeroGravForcedCandidateValid = true;
+	}
 }
 
 void CLazyClient::RenderZeroGravityForcedStatus()
