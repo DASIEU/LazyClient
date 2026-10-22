@@ -56,7 +56,9 @@ constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
 constexpr int ZERO_GRAV_SPEEDRUN_FAST_CHECKS = 3;
 constexpr int ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS = 5;
 constexpr float ZERO_GRAV_FORCED_SPEC_DELAY = 1.00f;
-constexpr float ZERO_GRAV_FORCED_CANDIDATE_AGE = 2.00f;
+// Match Prediction mode's 200 ms warning persistence (plus one 20 Hz check)
+// so forced mode cannot show a stale, too-large time from an older sway phase.
+constexpr float ZERO_GRAV_FORCED_CANDIDATE_AGE = ZERO_GRAV_WARNING_HIDE_DELAY + 0.10f;
 constexpr int ZERO_GRAV_FORCED_OFF = 0;
 constexpr int ZERO_GRAV_FORCED_WAIT_SECOND = 1;
 constexpr int ZERO_GRAV_FORCED_ACTIVE = 2;
@@ -1283,20 +1285,19 @@ bool CLazyClient::IsForcedZeroGravityHold(const CCharacterCore &Core, const CNet
 	       !Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 }
 
-float CLazyClient::SimulateForcedZeroGravity(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const
+float CLazyClient::SimulateZeroGravityFreeze(const CCharacterCore &Core, int Hook, int Direction, int Jump, bool SnapshotHooked, vec2 SnapshotHookPos) const
 {
 	CCharacterCore Sim = Core;
 	Sim.SetCoreWorld(nullptr, Collision(), nullptr);
-	// Forced mode only activates while the tee is already hooked. Keep the hook
-	// attached even if the bind key replaced the hook key or the user released
-	// it to reach the bind; the saved hold is what is being predicted.
-	Sim.m_Input.m_Hook = 1;
-	Sim.m_Input.m_Direction = Input.m_Direction;
-	Sim.m_Input.m_Jump = Input.m_Jump;
+	Sim.m_Input.m_Hook = Hook;
+	Sim.m_Input.m_Direction = Direction;
+	Sim.m_Input.m_Jump = Jump;
 	if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
 	{
+		// The predicted core can be a tick behind the snapshot. Keep using
+		// the snapshot's hook position so the simulation stays attached.
 		Sim.m_HookState = HOOK_GRABBED;
-		Sim.m_HookPos = HookPos;
+		Sim.m_HookPos = SnapshotHookPos;
 		Sim.m_HookTick = 0;
 		Sim.SetHookedPlayer(-1);
 	}
@@ -1314,6 +1315,11 @@ float CLazyClient::SimulateForcedZeroGravity(const CCharacterCore &Core, const C
 		PrevPos = Sim.m_Pos;
 	}
 	return -1.0f;
+}
+
+float CLazyClient::SimulateForcedZeroGravity(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const
+{
+	return SimulateZeroGravityFreeze(Core, Input.m_Hook, Input.m_Direction, Input.m_Jump, SnapshotHooked, HookPos);
 }
 
 void CLazyClient::CaptureForcedZeroGravityCandidate()
@@ -1351,7 +1357,7 @@ void CLazyClient::ActivateForcedZeroGravity()
 	if(!BuildForcedZeroGravityState(Core, Input, SnapshotHooked, HookPos))
 		return;
 
-	const bool Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
+	bool Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
 	float Seconds = Valid ? SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos) : -1.0f;
 	const bool CurrentlyHooked = Core.m_HookState == HOOK_GRABBED || SnapshotHooked;
 	const bool CurrentStatusValid = Core.HookedPlayer() == -1 &&
@@ -1359,22 +1365,40 @@ void CLazyClient::ActivateForcedZeroGravity()
 						Core.m_Super || Core.m_Invincible) &&
 					!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 	const float Now = Client()->LocalTime();
-	if(Seconds < 0.0f && CurrentlyHooked && CurrentStatusValid &&
-		m_ZeroGravForcedCandidateValid && Now - m_ZeroGravForcedCandidateTime <= ZERO_GRAV_FORCED_CANDIDATE_AGE)
+	const float CandidateAge = Now - m_ZeroGravForcedCandidateTime;
+	const bool CandidateFresh = m_ZeroGravForcedCandidateValid &&
+				    CandidateAge >= 0.0f && CandidateAge <= ZERO_GRAV_FORCED_CANDIDATE_AGE;
+	bool UsedCandidate = false;
+	if(Seconds < 0.0f && CurrentlyHooked && CurrentStatusValid && CandidateFresh)
 	{
-		// The bind can be pressed during a safe sway phase, after releasing the
-		// keys to reach it, or on a key that replaces the hook/direction bind.
-		// Use the most recent hold that was actually dangerous.
-		Core = m_ZeroGravForcedCandidateCore;
-		Input = m_ZeroGravForcedCandidateInput;
-		SnapshotHooked = m_ZeroGravForcedCandidateSnapshotHooked;
-		HookPos = m_ZeroGravForcedCandidateHookPos;
-		Seconds = m_ZeroGravForcedCandidateSeconds;
+		// A bind key can replace the hook or direction key on the activation
+		// tick. Re-run the normal prediction on the current hold with the last
+		// held input so the displayed time is the time from the current phase.
+		if(Input.m_Direction == 0 || Input.m_Hook == 0)
+		{
+			Input = m_ZeroGravForcedCandidateInput;
+			Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
+			Seconds = Valid ? SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos) : -1.0f;
+			UsedCandidate = true;
+		}
+
+		if(Seconds < 0.0f)
+		{
+			// The current sway phase is safe, but the hold was dangerous a
+			// moment ago. Use that saved hold and subtract the time already
+			// elapsed so the warning does not show an old, too-large value.
+			Core = m_ZeroGravForcedCandidateCore;
+			Input = m_ZeroGravForcedCandidateInput;
+			SnapshotHooked = m_ZeroGravForcedCandidateSnapshotHooked;
+			HookPos = m_ZeroGravForcedCandidateHookPos;
+			Seconds = std::max(0.0f, m_ZeroGravForcedCandidateSeconds - CandidateAge);
+			UsedCandidate = true;
+		}
 	}
 
-	char aDbg[160];
-	str_format(aDbg, sizeof(aDbg), "LazyClient: forced dbg gate=%d cur=%.1f cand=%d candsec=%.1f dir=%d hook=%d",
-		Valid, Seconds, m_ZeroGravForcedCandidateValid, m_ZeroGravForcedCandidateSeconds, Input.m_Direction, Input.m_Hook);
+	char aDbg[192];
+	str_format(aDbg, sizeof(aDbg), "LazyClient: forced dbg gate=%d cur=%.1f cand=%d candsec=%.1f age=%.1f used=%d dir=%d hook=%d",
+		Valid, Seconds, m_ZeroGravForcedCandidateValid, m_ZeroGravForcedCandidateSeconds, CandidateAge, UsedCandidate, Input.m_Direction, Input.m_Hook);
 	GameClient()->m_Chat.Echo(aDbg);
 
 	m_ZeroGravForcedCore = Core;
@@ -1782,40 +1806,10 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		m_ZeroGravSpeedrunCooldown = 0;
 	}
 
-	const int TickSpeed = std::max(1, Client()->GameTickSpeed());
-	const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
-
-	CCharacterCore Sim = Core;
-	Sim.SetCoreWorld(nullptr, Collision(), nullptr);
-	Sim.m_Input.m_Hook = pCurrentInput ? pCurrentInput->m_Hook : 1;
-	Sim.m_Input.m_Direction = HoldDirection;
-	if(pCurrentInput)
-		Sim.m_Input.m_Jump = pCurrentInput->m_Jump;
-	if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
-	{
-		// The predicted core can be a tick behind the snapshot. Keep using
-		// the snapshot's hook position so the simulation stays attached.
-		Sim.m_HookState = HOOK_GRABBED;
-		Sim.m_HookPos = vec2(pCharacter->m_HookX, pCharacter->m_HookY);
-		Sim.m_HookTick = 0;
-		Sim.SetHookedPlayer(-1);
-	}
-
-	float HitSeconds = -1.0f;
-	vec2 PrevPos = Sim.m_Pos;
-	for(int Tick = 1; Tick <= MaxTicks; Tick++)
-	{
-		Sim.Tick(true, false);
-		Sim.Move();
-		Sim.Quantize();
-
-		if(PathHitsFreeze(Collision(), PrevPos, Sim.m_Pos))
-		{
-			HitSeconds = Tick / (float)TickSpeed;
-			break;
-		}
-		PrevPos = Sim.m_Pos;
-	}
+	const int Hook = pCurrentInput ? pCurrentInput->m_Hook : 1;
+	const int Jump = pCurrentInput ? pCurrentInput->m_Jump : Core.m_Input.m_Jump;
+	const float HitSeconds = SimulateZeroGravityFreeze(
+		Core, Hook, HoldDirection, Jump, SnapshotHooked, vec2(pCharacter->m_HookX, pCharacter->m_HookY));
 
 	if(HitSeconds < 0.0f)
 	{

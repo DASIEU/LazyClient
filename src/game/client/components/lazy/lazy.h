@@ -216,6 +216,7 @@ private:
 	void DeactivateForcedZeroGravity();
 	bool BuildForcedZeroGravityState(CCharacterCore &Core, CNetObj_PlayerInput &Input, bool &SnapshotHooked, vec2 &HookPos) const;
 	bool IsForcedZeroGravityHold(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const;
+	float SimulateZeroGravityFreeze(const CCharacterCore &Core, int Hook, int Direction, int Jump, bool SnapshotHooked, vec2 SnapshotHookPos) const;
 	float SimulateForcedZeroGravity(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const;
 	void CaptureForcedZeroGravityCandidate();
 	void ResetForcedZeroGravityInputState();
