@@ -56,7 +56,7 @@ constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
 constexpr int ZERO_GRAV_SPEEDRUN_FAST_CHECKS = 3;
 constexpr int ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS = 5;
 constexpr float ZERO_GRAV_FORCED_SPEC_DELAY = 1.00f;
-constexpr float ZERO_GRAV_FORCED_CANDIDATE_AGE = 0.50f;
+constexpr float ZERO_GRAV_FORCED_CANDIDATE_AGE = 1.00f;
 constexpr int ZERO_GRAV_FORCED_OFF = 0;
 constexpr int ZERO_GRAV_FORCED_WAIT_SECOND = 1;
 constexpr int ZERO_GRAV_FORCED_ACTIVE = 2;
@@ -1277,6 +1277,7 @@ bool CLazyClient::IsForcedZeroGravityHold(const CCharacterCore &Core, const CNet
 	const vec2 HookDelta = HookPos - Core.m_Pos;
 	const int HoldDirection = Input.m_Direction;
 	return Core.HookedPlayer() == -1 &&
+	       Input.m_Hook != 0 &&
 	       HoldDirection != 0 &&
 	       HookDelta.x * HoldDirection < 0.0f &&
 	       std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
@@ -1323,10 +1324,18 @@ void CLazyClient::CaptureForcedZeroGravityCandidate()
 		!IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos))
 		return;
 
+	// Keep the last hold that actually freezes within the warning horizon. The
+	// exact tick where the bind is pressed can be a safe phase of the sway, but
+	// the user wants the warning for the dangerous phase they are holding.
+	const float Seconds = SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos);
+	if(Seconds < 0.0f)
+		return;
+
 	m_ZeroGravForcedCandidateCore = Core;
 	m_ZeroGravForcedCandidateInput = Input;
 	m_ZeroGravForcedCandidateSnapshotHooked = SnapshotHooked;
 	m_ZeroGravForcedCandidateHookPos = HookPos;
+	m_ZeroGravForcedCandidateSeconds = Seconds;
 	m_ZeroGravForcedCandidateTime = Client()->LocalTime();
 	m_ZeroGravForcedCandidateValid = true;
 }
@@ -1340,34 +1349,35 @@ void CLazyClient::ActivateForcedZeroGravity()
 	if(!BuildForcedZeroGravityState(Core, Input, SnapshotHooked, HookPos))
 		return;
 
-	bool Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
+	const bool Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
+	float Seconds = Valid ? SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos) : -1.0f;
 	const bool CurrentlyHooked = Core.m_HookState == HOOK_GRABBED || SnapshotHooked;
 	const bool CurrentStatusValid = Core.HookedPlayer() == -1 &&
 					!(Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
 						Core.m_Super || Core.m_Invincible) &&
 					!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 	const float Now = Client()->LocalTime();
-	if(!Valid && CurrentlyHooked && CurrentStatusValid && Input.m_Direction != 0 && Input.m_Hook != 0 &&
+	if(Seconds < 0.0f && CurrentlyHooked && CurrentStatusValid &&
 		m_ZeroGravForcedCandidateValid && Now - m_ZeroGravForcedCandidateTime <= ZERO_GRAV_FORCED_CANDIDATE_AGE)
 	{
-		// The bind can be pressed during a sway phase where the instantaneous
-		// gate fails. Use the most recent valid hold instead of dropping the
-		// prediction entirely.
+		// The bind can be pressed during a safe sway phase, after releasing the
+		// keys to reach it, or on a key that replaces the hook/direction bind.
+		// Use the most recent hold that was actually dangerous.
 		Core = m_ZeroGravForcedCandidateCore;
 		Input = m_ZeroGravForcedCandidateInput;
 		SnapshotHooked = m_ZeroGravForcedCandidateSnapshotHooked;
 		HookPos = m_ZeroGravForcedCandidateHookPos;
-		Valid = true;
+		Seconds = m_ZeroGravForcedCandidateSeconds;
 	}
 
 	m_ZeroGravForcedCore = Core;
 	m_ZeroGravForcedInput = Input;
 	m_ZeroGravForcedSnapshotHooked = SnapshotHooked;
 	m_ZeroGravForcedHookPos = HookPos;
-	m_ZeroGravForcedSeconds = Valid ? SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos) : -1.0f;
+	m_ZeroGravForcedSeconds = Seconds;
 
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_WAIT_SECOND;
-	m_ZeroGravForcedTimer = 0.0f;
+	m_ZeroGravForcedStartTime = Client()->LocalTime();
 	ResetForcedZeroGravityInputState();
 	m_ZeroGravTarget = GameClient()->m_Snap.m_LocalClientId;
 	m_ZeroGravWarning = false;
@@ -1379,7 +1389,7 @@ void CLazyClient::ActivateForcedZeroGravity()
 void CLazyClient::DeactivateForcedZeroGravity()
 {
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_OFF;
-	m_ZeroGravForcedTimer = 0.0f;
+	m_ZeroGravForcedStartTime = 0.0f;
 	std::fill(std::begin(m_aZeroGravForcedKeysDown), std::end(m_aZeroGravForcedKeysDown), false);
 	m_ZeroGravForcedSeconds = -1.0f;
 	m_ZeroGravForcedSnapshotHooked = false;
@@ -1388,6 +1398,8 @@ void CLazyClient::DeactivateForcedZeroGravity()
 	m_ZeroGravForcedInput = {};
 	m_ZeroGravForcedCandidateValid = false;
 	m_ZeroGravForcedCandidateTime = -1.0f;
+	m_ZeroGravForcedCandidateCheck = 0.0f;
+	m_ZeroGravForcedCandidateSeconds = -1.0f;
 	m_ZeroGravForcedCandidateCore.Reset();
 	m_ZeroGravForcedCandidateInput = {};
 	m_ZeroGravForcedCandidateSnapshotHooked = false;
@@ -1452,21 +1464,19 @@ void CLazyClient::UpdateForcedZeroGravityPredictor()
 		return;
 	}
 
-	if(ForcedZeroGravityInputPressed())
-	{
-		DeactivateForcedZeroGravity();
-		return;
-	}
-
 	if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_WAIT_SECOND)
 	{
+		// Ignore ordinary input during the two-step spec sequence. The user has
+		// to release and re-press movement keys around the pauses; those presses
+		// must not cancel the prediction before the warning can appear. The bind
+		// command itself still toggles forced mode off while waiting.
 		ClearZeroGravityWarning(true);
-		m_ZeroGravForcedTimer += Client()->RenderFrameTime();
-		if(m_ZeroGravForcedTimer >= ZERO_GRAV_FORCED_SPEC_DELAY)
+		if(Client()->LocalTime() - m_ZeroGravForcedStartTime >= ZERO_GRAV_FORCED_SPEC_DELAY)
 		{
 			Console()->ExecuteLine("say /spec", IConsole::CLIENT_ID_UNSPECIFIED);
 			m_ZeroGravForcedState = ZERO_GRAV_FORCED_ACTIVE;
-			m_ZeroGravForcedTimer = 0.0f;
+			m_ZeroGravForcedStartTime = 0.0f;
+			ResetForcedZeroGravityInputState();
 			if(m_ZeroGravForcedSeconds >= 0.0f)
 			{
 				m_ZeroGravWarning = true;
@@ -1481,6 +1491,12 @@ void CLazyClient::UpdateForcedZeroGravityPredictor()
 
 	if(m_ZeroGravForcedState != ZERO_GRAV_FORCED_ACTIVE)
 		return;
+
+	if(ForcedZeroGravityInputPressed())
+	{
+		DeactivateForcedZeroGravity();
+		return;
+	}
 
 	if(m_ZeroGravForcedSeconds < 0.0f)
 	{
@@ -1507,8 +1523,15 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		m_ZeroGravFastChecks = 0;
 		m_ZeroGravSpeedrunCooldown = 0;
 		m_ZeroGravHasHookPos = false;
-		if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_OFF)
-			CaptureForcedZeroGravityCandidate();
+		if(g_Config.m_LcZeroGravPredict && m_ZeroGravForcedState == ZERO_GRAV_FORCED_OFF)
+		{
+			m_ZeroGravForcedCandidateCheck -= Client()->RenderFrameTime();
+			if(m_ZeroGravForcedCandidateCheck <= 0.0f)
+			{
+				m_ZeroGravForcedCandidateCheck = 0.05f;
+				CaptureForcedZeroGravityCandidate();
+			}
+		}
 		UpdateForcedZeroGravityPredictor();
 		return;
 	}

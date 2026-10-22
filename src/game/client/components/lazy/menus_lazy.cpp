@@ -447,7 +447,7 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 			if(DoButton_Menu(&s_BindForcedKeyButton, Localize("Apply forced key bind"), 0, &Button))
 				GameClient()->m_Lazy.BindZeroGravKey();
 
-			LazyInfoLabel(&MainView, Localize("Press the bound key at a wall to save the current hold. The client sends say /spec, waits 1 s, sends it again, then shows the warning if the saved hold reaches freeze within the warning time. The hold-area and speedrun checks are skipped in forced mode. Any new key or mouse press turns it off; keys are ignored in chat and mouse clicks are ignored on the scoreboard."), Ui(), TextRender());
+			LazyInfoLabel(&MainView, Localize("Press the bound key at a wall to save the current hold. The client sends say /spec, waits 1 s, sends it again, then shows the warning if the saved hold reaches freeze within the warning time. The hold-area and speedrun checks are skipped in forced mode. Any new key or mouse press after the second say /spec turns it off; input during the one-second wait is ignored. Keys are ignored in chat and mouse clicks are ignored on the scoreboard."), Ui(), TextRender());
 		}
 	}
 	else

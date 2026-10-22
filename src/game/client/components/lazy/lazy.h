@@ -171,7 +171,7 @@ private:
 
 	// Forced mode
 	int m_ZeroGravForcedState = 0;
-	float m_ZeroGravForcedTimer = 0.0f;
+	float m_ZeroGravForcedStartTime = 0.0f;
 	bool m_ZeroGravForcedBindHeld = false;
 	bool m_aZeroGravForcedKeysDown[KEY_LAST] = {};
 	bool m_ZeroGravForcedSnapshotHooked = false;
@@ -181,6 +181,8 @@ private:
 	float m_ZeroGravForcedSeconds = -1.0f;
 	bool m_ZeroGravForcedCandidateValid = false;
 	float m_ZeroGravForcedCandidateTime = -1.0f;
+	float m_ZeroGravForcedCandidateCheck = 0.0f;
+	float m_ZeroGravForcedCandidateSeconds = -1.0f;
 	CCharacterCore m_ZeroGravForcedCandidateCore;
 	CNetObj_PlayerInput m_ZeroGravForcedCandidateInput = {};
 	bool m_ZeroGravForcedCandidateSnapshotHooked = false;
