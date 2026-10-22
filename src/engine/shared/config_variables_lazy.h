@@ -47,12 +47,12 @@ MACRO_CONFIG_INT(LcFriendHeartScoreboard, lc_friend_heart_scoreboard, 1, 0, 1, C
 MACRO_CONFIG_INT(LcBetterVotes, lc_better_votes, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show vote percentages, the pass threshold and remaining yes votes")
 MACRO_CONFIG_INT(LcVotePassPercentage, lc_vote_pass_percentage, 50, 1, 99, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vote yes percentage required to pass (match the server setting)")
 MACRO_CONFIG_INT(LcZeroGravPredict, lc_zerograv_predict, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict freeze tiles after holding a zero-gravity wall position")
-MACRO_CONFIG_INT(LcZeroGravMode, lc_zerograv_mode, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity predictor mode: 0 = prediction, 1 = forced")
+MACRO_CONFIG_INT(LcZeroGravMode, lc_zerograv_mode, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity predictor mode: 0 = always on, 1 = key toggles it")
 MACRO_CONFIG_INT(LcZeroGravPredictTime, lc_zerograv_predict_time, 5, 1, 10, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity freeze warning time in seconds")
 MACRO_CONFIG_INT(LcZeroGravHoldTiles, lc_zerograv_hold_tiles, 4, 1, 16, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity hold area radius in tiles")
 MACRO_CONFIG_INT(LcZeroGravSpeedrunGuard, lc_zerograv_speedrun_guard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Suppress the freeze warning while moving fast (anti-speedrun guard)")
 MACRO_CONFIG_INT(LcZeroGravSpeedrunSpeed, lc_zerograv_speedrun_speed, 25, 5, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-speedrun guard horizontal speed threshold in tiles per second")
-MACRO_CONFIG_STR(LcZeroGravForcedKey, lc_zerograv_forced_key, 32, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Key that toggles forced zero-gravity freeze prediction")
+MACRO_CONFIG_STR(LcZeroGravForcedKey, lc_zerograv_forced_key, 32, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Key that toggles the zero-gravity freeze predictor in forced mode")
 MACRO_CONFIG_STR(LcZeroGravForcedKeyPrev, lc_zerograv_forced_key_prev, 128, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Previous bind for the forced zero-gravity key (internal)")
 
 // Telemetry

@@ -169,26 +169,11 @@ private:
 	int m_ZeroGravHistoryNext = 0;
 	int m_ZeroGravTarget = -1;
 
-	// Forced mode
-	int m_ZeroGravForcedState = 0;
-	float m_ZeroGravForcedStartTime = 0.0f;
-	float m_ZeroGravForcedInputGraceUntil = 0.0f;
+	// Forced mode is only a toggle for the ordinary predictor.
+	bool m_ZeroGravForcedEnabled = false;
+	bool m_ZeroGravForcedStatusOn = false;
 	float m_ZeroGravForcedStatusUntil = 0.0f;
 	bool m_ZeroGravForcedBindHeld = false;
-	bool m_aZeroGravForcedKeysDown[KEY_LAST] = {};
-	bool m_ZeroGravForcedSnapshotHooked = false;
-	vec2 m_ZeroGravForcedHookPos = vec2(0.0f, 0.0f);
-	CCharacterCore m_ZeroGravForcedCore;
-	CNetObj_PlayerInput m_ZeroGravForcedInput = {};
-	float m_ZeroGravForcedSeconds = -1.0f;
-	bool m_ZeroGravForcedCandidateValid = false;
-	float m_ZeroGravForcedCandidateTime = -1.0f;
-	float m_ZeroGravForcedCandidateCheck = 0.0f;
-	float m_ZeroGravForcedCandidateSeconds = -1.0f;
-	CCharacterCore m_ZeroGravForcedCandidateCore;
-	CNetObj_PlayerInput m_ZeroGravForcedCandidateInput = {};
-	bool m_ZeroGravForcedCandidateSnapshotHooked = false;
-	vec2 m_ZeroGravForcedCandidateHookPos = vec2(0.0f, 0.0f);
 	bool m_ZeroGravKeyInitialized = false;
 	bool m_ZeroGravWasForced = false;
 	bool m_ZeroGravKeyBound = false;
@@ -210,18 +195,10 @@ private:
 	int FindZeroGravityTarget() const;
 	void ClearZeroGravityWarning(bool Immediate);
 	void UpdateZeroGravityWarningHideTimer();
-	void UpdateForcedZeroGravityPredictor();
+	void ResetZeroGravityTracking();
 	void ToggleForcedZeroGravity();
-	void ActivateForcedZeroGravity();
-	void DeactivateForcedZeroGravity();
-	bool BuildForcedZeroGravityState(CCharacterCore &Core, CNetObj_PlayerInput &Input, bool &SnapshotHooked, vec2 &HookPos) const;
-	bool IsForcedZeroGravityHold(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const;
 	float SimulateZeroGravityFreeze(const CCharacterCore &Core, int Hook, int Direction, int Jump, bool SnapshotHooked, vec2 SnapshotHookPos) const;
-	float SimulateForcedZeroGravity(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const;
-	void CaptureForcedZeroGravityCandidate();
-	void ResetForcedZeroGravityInputState();
 	bool AnyForcedZeroGravityBindKeyPressed() const;
-	bool ForcedZeroGravityInputPressed();
 	void UpdateZeroGravityPredictor();
 	bool PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos) const;
 	void RenderZeroGravityWarning();

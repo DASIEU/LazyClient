@@ -55,13 +55,6 @@ constexpr float ZERO_GRAV_HOOK_MOVE_DISTANCE = 16.0f;
 constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
 constexpr int ZERO_GRAV_SPEEDRUN_FAST_CHECKS = 3;
 constexpr int ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS = 5;
-constexpr float ZERO_GRAV_FORCED_SPEC_DELAY = 1.00f;
-// Match Prediction mode's 200 ms warning persistence (plus one 20 Hz check)
-// so forced mode cannot show a stale, too-large time from an older sway phase.
-constexpr float ZERO_GRAV_FORCED_CANDIDATE_AGE = ZERO_GRAV_WARNING_HIDE_DELAY + 0.10f;
-constexpr int ZERO_GRAV_FORCED_OFF = 0;
-constexpr int ZERO_GRAV_FORCED_WAIT_SECOND = 1;
-constexpr int ZERO_GRAV_FORCED_ACTIVE = 2;
 constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
@@ -99,7 +92,7 @@ float MarginFromPing(float Ping)
 void CLazyClient::OnConsoleInit()
 {
 	Console()->Register("+lc_gun", "", CFGFLAG_CLIENT, ConGunFire, this, "Fire the gun in gores mode without using the hammer");
-	Console()->Register("+lc_zerograv_forced", "", CFGFLAG_CLIENT, ConZeroGravForced, this, "Toggle forced zero-gravity freeze prediction");
+	Console()->Register("+lc_zerograv_forced", "", CFGFLAG_CLIENT, ConZeroGravForced, this, "Toggle the zero-gravity freeze predictor");
 }
 
 void CLazyClient::OnReset()
@@ -120,17 +113,12 @@ void CLazyClient::OnReset()
 	m_ClientLogosInitialized = false;
 	m_WasClientLogosEnabled = false;
 	ResetBestClientList();
-	DeactivateForcedZeroGravity();
-	m_ZeroGravWarning = false;
-	m_ZeroGravCheckTimer = 0.0f;
-	m_ZeroGravHistoryCount = 0;
-	m_ZeroGravHistoryNext = 0;
-	m_ZeroGravTarget = -1;
-	m_ZeroGravMissedChecks = 0;
-	m_ZeroGravWarningHideTimer = 0.0f;
-	m_ZeroGravFastChecks = 0;
-	m_ZeroGravSpeedrunCooldown = 0;
-	m_ZeroGravHasHookPos = false;
+	m_ZeroGravForcedEnabled = false;
+	m_ZeroGravForcedStatusOn = false;
+	m_ZeroGravForcedStatusUntil = 0.0f;
+	m_ZeroGravForcedBindHeld = false;
+	ClearZeroGravityWarning(true);
+	ResetZeroGravityTracking();
 	ResetAutoMarginState();
 	ResetTelemetry();
 }
@@ -152,17 +140,11 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_AntipingSmoothedPing = -1.0f;
 	std::fill(std::begin(m_aClientTypes), std::end(m_aClientTypes), LC_CLIENT_NONE);
 	ResetBestClientList();
-	DeactivateForcedZeroGravity();
-	m_ZeroGravWarning = false;
-	m_ZeroGravCheckTimer = 0.0f;
-	m_ZeroGravHistoryCount = 0;
-	m_ZeroGravHistoryNext = 0;
-	m_ZeroGravTarget = -1;
-	m_ZeroGravMissedChecks = 0;
-	m_ZeroGravWarningHideTimer = 0.0f;
-	m_ZeroGravFastChecks = 0;
-	m_ZeroGravSpeedrunCooldown = 0;
-	m_ZeroGravHasHookPos = false;
+	m_ZeroGravForcedEnabled = false;
+	m_ZeroGravForcedStatusOn = false;
+	m_ZeroGravForcedStatusUntil = 0.0f;
+	ClearZeroGravityWarning(true);
+	ResetZeroGravityTracking();
 	ResetTelemetry();
 }
 
@@ -1221,6 +1203,18 @@ void CLazyClient::UpdateZeroGravityWarningHideTimer()
 	}
 }
 
+void CLazyClient::ResetZeroGravityTracking()
+{
+	m_ZeroGravCheckTimer = 0.0f;
+	m_ZeroGravHistoryCount = 0;
+	m_ZeroGravHistoryNext = 0;
+	m_ZeroGravMissedChecks = 0;
+	m_ZeroGravFastChecks = 0;
+	m_ZeroGravSpeedrunCooldown = 0;
+	m_ZeroGravTarget = -1;
+	m_ZeroGravHasHookPos = false;
+}
+
 void CLazyClient::ConZeroGravForced(IConsole::IResult *pResult, void *pUserData)
 {
 	CLazyClient *pThis = static_cast<CLazyClient *>(pUserData);
@@ -1243,46 +1237,18 @@ void CLazyClient::ToggleForcedZeroGravity()
 		return;
 	if(GameClient()->m_Chat.IsActive() || GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive())
 		return;
-
-	if(m_ZeroGravForcedState != ZERO_GRAV_FORCED_OFF)
-	{
-		DeactivateForcedZeroGravity();
+	const int ForcedKey = Input()->FindKeyByName(g_Config.m_LcZeroGravForcedKey);
+	if(ForcedKey >= KEY_MOUSE_1 && ForcedKey <= KEY_MOUSE_WHEEL_RIGHT && GameClient()->m_Scoreboard.IsActive())
 		return;
-	}
-	ActivateForcedZeroGravity();
-}
 
-bool CLazyClient::BuildForcedZeroGravityState(CCharacterCore &Core, CNetObj_PlayerInput &Input, bool &SnapshotHooked, vec2 &HookPos) const
-{
-	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
-	if(Client()->State() != IClient::STATE_ONLINE || Snap.m_SpecInfo.m_Active || !Snap.m_pLocalCharacter)
-		return false;
+	m_ZeroGravForcedEnabled = !m_ZeroGravForcedEnabled;
+	m_ZeroGravForcedStatusOn = m_ZeroGravForcedEnabled;
+	m_ZeroGravForcedStatusUntil = Client()->LocalTime() + 2.0f;
 
-	Core = GameClient()->m_PredictedChar;
-	Input = GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy];
-	SnapshotHooked = Snap.m_pLocalCharacter->m_HookState == HOOK_GRABBED;
-	if(Core.m_HookState == HOOK_GRABBED)
-		HookPos = Core.m_HookPos;
-	else
-		HookPos = vec2(Snap.m_pLocalCharacter->m_HookX, Snap.m_pLocalCharacter->m_HookY);
-	return true;
-}
-
-bool CLazyClient::IsForcedZeroGravityHold(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const
-{
-	if((Core.m_HookState != HOOK_GRABBED && !SnapshotHooked) ||
-		Core.HookedPlayer() != -1 ||
-		Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
-		Core.m_Super || Core.m_Invincible)
-		return false;
-
-	const vec2 HookDelta = HookPos - Core.m_Pos;
-	const int HoldDirection = Input.m_Direction;
-	return Core.HookedPlayer() == -1 &&
-	       HoldDirection != 0 &&
-	       HookDelta.x * HoldDirection < 0.0f &&
-	       std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
-	       !Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
+	// Forced mode is only a switch. Start the ordinary predictor from a clean
+	// state so it has exactly the same warmup and rules as Prediction mode.
+	ClearZeroGravityWarning(true);
+	ResetZeroGravityTracking();
 }
 
 float CLazyClient::SimulateZeroGravityFreeze(const CCharacterCore &Core, int Hook, int Direction, int Jump, bool SnapshotHooked, vec2 SnapshotHookPos) const
@@ -1317,149 +1283,6 @@ float CLazyClient::SimulateZeroGravityFreeze(const CCharacterCore &Core, int Hoo
 	return -1.0f;
 }
 
-float CLazyClient::SimulateForcedZeroGravity(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const
-{
-	return SimulateZeroGravityFreeze(Core, Input.m_Hook, Input.m_Direction, Input.m_Jump, SnapshotHooked, HookPos);
-}
-
-void CLazyClient::CaptureForcedZeroGravityCandidate()
-{
-	CCharacterCore Core;
-	CNetObj_PlayerInput Input;
-	bool SnapshotHooked = false;
-	vec2 HookPos(0.0f, 0.0f);
-	if(!BuildForcedZeroGravityState(Core, Input, SnapshotHooked, HookPos) ||
-		!IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos))
-		return;
-
-	// Keep the last hold that actually freezes within the warning horizon. The
-	// exact tick where the bind is pressed can be a safe phase of the sway, but
-	// the user wants the warning for the dangerous phase they are holding.
-	const float Seconds = SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos);
-	if(Seconds < 0.0f)
-		return;
-
-	m_ZeroGravForcedCandidateCore = Core;
-	m_ZeroGravForcedCandidateInput = Input;
-	m_ZeroGravForcedCandidateSnapshotHooked = SnapshotHooked;
-	m_ZeroGravForcedCandidateHookPos = HookPos;
-	m_ZeroGravForcedCandidateSeconds = Seconds;
-	m_ZeroGravForcedCandidateTime = Client()->LocalTime();
-	m_ZeroGravForcedCandidateValid = true;
-}
-
-void CLazyClient::ActivateForcedZeroGravity()
-{
-	CCharacterCore Core;
-	CNetObj_PlayerInput Input;
-	bool SnapshotHooked = false;
-	vec2 HookPos(0.0f, 0.0f);
-	if(!BuildForcedZeroGravityState(Core, Input, SnapshotHooked, HookPos))
-		return;
-
-	bool Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
-	float Seconds = Valid ? SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos) : -1.0f;
-	const bool CurrentlyHooked = Core.m_HookState == HOOK_GRABBED || SnapshotHooked;
-	const bool CurrentStatusValid = Core.HookedPlayer() == -1 &&
-					!(Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
-						Core.m_Super || Core.m_Invincible) &&
-					!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
-	const float Now = Client()->LocalTime();
-	const float CandidateAge = Now - m_ZeroGravForcedCandidateTime;
-	const bool CandidateFresh = m_ZeroGravForcedCandidateValid &&
-				    CandidateAge >= 0.0f && CandidateAge <= ZERO_GRAV_FORCED_CANDIDATE_AGE;
-	bool UsedCandidate = false;
-	if(Seconds < 0.0f && CurrentlyHooked && CurrentStatusValid && CandidateFresh)
-	{
-		// A bind key can replace the hook or direction key on the activation
-		// tick. Re-run the normal prediction on the current hold with the last
-		// held input so the displayed time is the time from the current phase.
-		if(Input.m_Direction == 0 || Input.m_Hook == 0)
-		{
-			Input = m_ZeroGravForcedCandidateInput;
-			Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
-			Seconds = Valid ? SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos) : -1.0f;
-			UsedCandidate = true;
-		}
-
-		if(Seconds < 0.0f)
-		{
-			// The current sway phase is safe, but the hold was dangerous a
-			// moment ago. Use that saved hold and subtract the time already
-			// elapsed so the warning does not show an old, too-large value.
-			Core = m_ZeroGravForcedCandidateCore;
-			Input = m_ZeroGravForcedCandidateInput;
-			SnapshotHooked = m_ZeroGravForcedCandidateSnapshotHooked;
-			HookPos = m_ZeroGravForcedCandidateHookPos;
-			Seconds = std::max(0.0f, m_ZeroGravForcedCandidateSeconds - CandidateAge);
-			UsedCandidate = true;
-		}
-	}
-
-	char aDbg[192];
-	str_format(aDbg, sizeof(aDbg), "LazyClient: forced dbg gate=%d cur=%.1f cand=%d candsec=%.1f age=%.1f used=%d dir=%d hook=%d",
-		Valid, Seconds, m_ZeroGravForcedCandidateValid, m_ZeroGravForcedCandidateSeconds, CandidateAge, UsedCandidate, Input.m_Direction, Input.m_Hook);
-	GameClient()->m_Chat.Echo(aDbg);
-
-	m_ZeroGravForcedCore = Core;
-	m_ZeroGravForcedInput = Input;
-	m_ZeroGravForcedSnapshotHooked = SnapshotHooked;
-	m_ZeroGravForcedHookPos = HookPos;
-	m_ZeroGravForcedSeconds = Seconds;
-
-	m_ZeroGravForcedStatusUntil = Client()->LocalTime() + 3.0f;
-	char aOnMsg[96];
-	if(Seconds >= 0.0f)
-		str_format(aOnMsg, sizeof(aOnMsg), "LazyClient: zero-gravity predictor ON (%.1fs)", Seconds);
-	else
-		str_copy(aOnMsg, "LazyClient: zero-gravity predictor ON (no freeze)");
-	GameClient()->m_Chat.Echo(aOnMsg);
-
-	m_ZeroGravForcedState = ZERO_GRAV_FORCED_WAIT_SECOND;
-	m_ZeroGravForcedStartTime = Client()->LocalTime();
-	ResetForcedZeroGravityInputState();
-	m_ZeroGravTarget = GameClient()->m_Snap.m_LocalClientId;
-	m_ZeroGravWarning = false;
-	m_ZeroGravWarningHideTimer = 0.0f;
-	m_ZeroGravSeconds = 0.0f;
-	Console()->ExecuteLine("say /spec", IConsole::CLIENT_ID_UNSPECIFIED);
-}
-
-void CLazyClient::DeactivateForcedZeroGravity()
-{
-	const bool WasActive = m_ZeroGravForcedState != ZERO_GRAV_FORCED_OFF;
-	m_ZeroGravForcedState = ZERO_GRAV_FORCED_OFF;
-	m_ZeroGravForcedStartTime = 0.0f;
-	m_ZeroGravForcedInputGraceUntil = 0.0f;
-	m_ZeroGravForcedStatusUntil = 0.0f;
-	std::fill(std::begin(m_aZeroGravForcedKeysDown), std::end(m_aZeroGravForcedKeysDown), false);
-	m_ZeroGravForcedSeconds = -1.0f;
-	m_ZeroGravForcedSnapshotHooked = false;
-	m_ZeroGravForcedHookPos = vec2(0.0f, 0.0f);
-	m_ZeroGravForcedCore.Reset();
-	m_ZeroGravForcedInput = {};
-	m_ZeroGravForcedCandidateValid = false;
-	m_ZeroGravForcedCandidateTime = -1.0f;
-	m_ZeroGravForcedCandidateCheck = 0.0f;
-	m_ZeroGravForcedCandidateSeconds = -1.0f;
-	m_ZeroGravForcedCandidateCore.Reset();
-	m_ZeroGravForcedCandidateInput = {};
-	m_ZeroGravForcedCandidateSnapshotHooked = false;
-	m_ZeroGravForcedCandidateHookPos = vec2(0.0f, 0.0f);
-	m_ZeroGravWarning = false;
-	m_ZeroGravWarningHideTimer = 0.0f;
-	m_ZeroGravSeconds = 0.0f;
-	m_ZeroGravTarget = -1;
-	if(WasActive)
-		GameClient()->m_Chat.Echo("LazyClient: zero-gravity predictor OFF");
-}
-
-void CLazyClient::ResetForcedZeroGravityInputState()
-{
-	for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
-		m_aZeroGravForcedKeysDown[Key] = Input()->KeyIsPressed(Key);
-}
-
 bool CLazyClient::AnyForcedZeroGravityBindKeyPressed() const
 {
 	for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
@@ -1471,139 +1294,20 @@ bool CLazyClient::AnyForcedZeroGravityBindKeyPressed() const
 	return false;
 }
 
-bool CLazyClient::ForcedZeroGravityInputPressed()
-{
-	const bool IgnoreKeyboard = GameClient()->m_Chat.IsActive() || GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive();
-	const bool Scoreboard = GameClient()->m_Scoreboard.IsActive();
-	bool Pressed = false;
-	for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
-	{
-		const bool Down = Input()->KeyIsPressed(Key);
-		const bool WasDown = m_aZeroGravForcedKeysDown[Key];
-		m_aZeroGravForcedKeysDown[Key] = Down;
-		if(!Down || WasDown || IgnoreKeyboard)
-			continue;
-		if(Scoreboard && Key >= KEY_MOUSE_1 && Key <= KEY_MOUSE_WHEEL_RIGHT)
-			continue;
-		const char *pBind = GameClient()->m_Binds.Get(Key, KeyModifier::NONE);
-		if(pBind && str_find(pBind, "+lc_zerograv_forced"))
-			continue;
-		Pressed = true;
-	}
-	return Pressed;
-}
-
-void CLazyClient::UpdateForcedZeroGravityPredictor()
-{
-	UpdateZeroGravityWarningHideTimer();
-	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE)
-	{
-		DeactivateForcedZeroGravity();
-		return;
-	}
-
-	if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_OFF)
-	{
-		ClearZeroGravityWarning(true);
-		return;
-	}
-
-	if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_WAIT_SECOND)
-	{
-		// Ignore ordinary input during the two-step spec sequence. The user has
-		// to release and re-press movement keys around the pauses; those presses
-		// must not cancel the prediction before the warning can appear. The bind
-		// command itself still toggles forced mode off while waiting.
-		ClearZeroGravityWarning(true);
-		if(Client()->LocalTime() - m_ZeroGravForcedStartTime >= ZERO_GRAV_FORCED_SPEC_DELAY)
-		{
-			Console()->ExecuteLine("say /spec", IConsole::CLIENT_ID_UNSPECIFIED);
-			m_ZeroGravForcedState = ZERO_GRAV_FORCED_ACTIVE;
-			m_ZeroGravForcedStartTime = 0.0f;
-			m_ZeroGravForcedInputGraceUntil = Client()->LocalTime() + 0.25f;
-			ResetForcedZeroGravityInputState();
-			if(m_ZeroGravForcedSeconds >= 0.0f)
-			{
-				m_ZeroGravWarning = true;
-				m_ZeroGravSeconds = m_ZeroGravForcedSeconds;
-				m_ZeroGravWarningHideTimer = 0.0f;
-				char aWarningMsg[96];
-				str_format(aWarningMsg, sizeof(aWarningMsg), "LazyClient: freeze warning armed (%.1fs)", m_ZeroGravForcedSeconds);
-				GameClient()->m_Chat.Echo(aWarningMsg);
-			}
-			else
-				ClearZeroGravityWarning(true);
-		}
-		return;
-	}
-
-	if(m_ZeroGravForcedState != ZERO_GRAV_FORCED_ACTIVE)
-		return;
-
-	// Keep the warning visible for a moment after the spec sequence so keys the
-	// user presses to regain control do not clear it on the first frame. The
-	// input state is still updated, so those keys do not count after the grace.
-	const bool InputPressed = ForcedZeroGravityInputPressed();
-	if(Client()->LocalTime() >= m_ZeroGravForcedInputGraceUntil && InputPressed)
-	{
-		DeactivateForcedZeroGravity();
-		return;
-	}
-
-	if(m_ZeroGravForcedSeconds < 0.0f)
-	{
-		ClearZeroGravityWarning(false);
-		return;
-	}
-
-	m_ZeroGravWarning = true;
-	m_ZeroGravSeconds = m_ZeroGravForcedSeconds;
-	m_ZeroGravWarningHideTimer = 0.0f;
-}
-
 void CLazyClient::UpdateZeroGravityPredictor()
 {
-	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
-	if(g_Config.m_LcZeroGravMode == 1)
-	{
-		// Do not let Prediction mode resume with a stale hold history after
-		// forced mode has been used.
-		m_ZeroGravCheckTimer = 0.0f;
-		m_ZeroGravHistoryCount = 0;
-		m_ZeroGravHistoryNext = 0;
-		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravFastChecks = 0;
-		m_ZeroGravSpeedrunCooldown = 0;
-		m_ZeroGravHasHookPos = false;
-		if(g_Config.m_LcZeroGravPredict && m_ZeroGravForcedState == ZERO_GRAV_FORCED_OFF)
-		{
-			m_ZeroGravForcedCandidateCheck -= Client()->RenderFrameTime();
-			if(m_ZeroGravForcedCandidateCheck <= 0.0f)
-			{
-				m_ZeroGravForcedCandidateCheck = 0.05f;
-				CaptureForcedZeroGravityCandidate();
-			}
-		}
-		UpdateForcedZeroGravityPredictor();
-		return;
-	}
-	if(m_ZeroGravForcedState != ZERO_GRAV_FORCED_OFF)
-		DeactivateForcedZeroGravity();
 	UpdateZeroGravityWarningHideTimer();
 
-	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE)
+	const bool ForcedMode = g_Config.m_LcZeroGravMode == 1;
+	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE ||
+		(ForcedMode && !m_ZeroGravForcedEnabled))
 	{
 		ClearZeroGravityWarning(true);
-		m_ZeroGravCheckTimer = 0.0f;
-		m_ZeroGravHistoryCount = 0;
-		m_ZeroGravHistoryNext = 0;
-		m_ZeroGravTarget = -1;
-		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravFastChecks = 0;
-		m_ZeroGravSpeedrunCooldown = 0;
+		ResetZeroGravityTracking();
 		return;
 	}
 
+	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
 	const int TargetId = FindZeroGravityTarget();
 	if(TargetId < 0 || TargetId >= MAX_CLIENTS || !Snap.m_aCharacters[TargetId].m_Active)
 	{
@@ -1820,25 +1524,11 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravWarning = true;
 	m_ZeroGravSeconds = HitSeconds;
 	m_ZeroGravWarningHideTimer = 0.0f;
-
-	// Keep the exact local hold that just predicted a freeze so switching to
-	// forced mode and pressing the bind immediately still has a dangerous
-	// snapshot to use.
-	if(TargetIsLocal && pCurrentInput)
-	{
-		m_ZeroGravForcedCandidateCore = Core;
-		m_ZeroGravForcedCandidateInput = *pCurrentInput;
-		m_ZeroGravForcedCandidateSnapshotHooked = SnapshotHooked;
-		m_ZeroGravForcedCandidateHookPos = HookPos;
-		m_ZeroGravForcedCandidateSeconds = HitSeconds;
-		m_ZeroGravForcedCandidateTime = Client()->LocalTime();
-		m_ZeroGravForcedCandidateValid = true;
-	}
 }
 
 void CLazyClient::RenderZeroGravityForcedStatus()
 {
-	if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_OFF ||
+	if(g_Config.m_LcZeroGravMode != 1 ||
 		Client()->LocalTime() >= m_ZeroGravForcedStatusUntil ||
 		Client()->State() != IClient::STATE_ONLINE ||
 		GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive())
@@ -1848,20 +1538,21 @@ void CLazyClient::RenderZeroGravityForcedStatus()
 	const float Width = 300.0f * Graphics()->ScreenAspect();
 	Graphics()->MapScreenToSize(Width, 300.0f);
 
-	char aStatus[96];
-	if(m_ZeroGravForcedSeconds >= 0.0f)
-		str_format(aStatus, sizeof(aStatus), "%s (%.1fs)", Localize("Zero gravity predictor ON"), m_ZeroGravForcedSeconds);
-	else
-		str_format(aStatus, sizeof(aStatus), "%s (no freeze)", Localize("Zero gravity predictor ON"));
+	const char *pStatus = m_ZeroGravForcedStatusOn ?
+		Localize("Zero gravity predictor ON") : Localize("Zero gravity predictor OFF");
 	const float FontSize = 10.5f;
-	const float TextWidth = TextRender()->TextWidth(FontSize, aStatus);
+	const float TextWidth = TextRender()->TextWidth(FontSize, pStatus);
 	const float BoxWidth = std::max(TextWidth + 14.0f, 120.0f);
 	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 32.0f, BoxWidth, 22.0f};
-	Box.Draw(ColorRGBA(0.04f, 0.35f, 0.16f, 0.86f), IGraphics::CORNER_ALL, 3.0f);
-	Box.DrawOutline(ColorRGBA(0.45f, 1.0f, 0.65f, 0.9f));
+	const ColorRGBA Background = m_ZeroGravForcedStatusOn ?
+		ColorRGBA(0.04f, 0.35f, 0.16f, 0.86f) : ColorRGBA(0.32f, 0.08f, 0.08f, 0.86f);
+	const ColorRGBA Outline = m_ZeroGravForcedStatusOn ?
+		ColorRGBA(0.45f, 1.0f, 0.65f, 0.9f) : ColorRGBA(1.0f, 0.55f, 0.45f, 0.9f);
+	Box.Draw(Background, IGraphics::CORNER_ALL, 3.0f);
+	Box.DrawOutline(Outline);
 
 	TextRender()->TextColor(ColorRGBA(0.92f, 1.0f, 0.95f, 1.0f));
-	Ui()->DoLabel(&Box, aStatus, FontSize, TEXTALIGN_MC);
+	Ui()->DoLabel(&Box, pStatus, FontSize, TEXTALIGN_MC);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 	Graphics()->MapScreen(OldScreen);
@@ -1887,7 +1578,7 @@ void CLazyClient::RenderZeroGravityWarning()
 	else
 		str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
 
-	const bool StatusVisible = m_ZeroGravForcedState != ZERO_GRAV_FORCED_OFF &&
+	const bool StatusVisible = g_Config.m_LcZeroGravMode == 1 &&
 		Client()->LocalTime() < m_ZeroGravForcedStatusUntil;
 	const float CountdownSize = 10.5f;
 	const float CountdownWidth = TextRender()->TextWidth(CountdownSize, aCountdown);
@@ -2151,16 +1842,26 @@ void CLazyClient::OnUpdate()
 		else
 			RestoreStaleZeroGravKeyBind();
 		m_ZeroGravWasForced = ForcedZeroGravEnabled;
+		m_ZeroGravForcedEnabled = false;
+		m_ZeroGravForcedStatusUntil = 0.0f;
 	}
 	else if(ForcedZeroGravEnabled && !m_ZeroGravWasForced)
 	{
 		BindZeroGravKeyForced();
 		m_ZeroGravWasForced = true;
+		m_ZeroGravForcedEnabled = false;
+		m_ZeroGravForcedStatusUntil = 0.0f;
+		ClearZeroGravityWarning(true);
+		ResetZeroGravityTracking();
 	}
 	else if(!ForcedZeroGravEnabled && m_ZeroGravWasForced)
 	{
 		RestoreZeroGravKey();
 		m_ZeroGravWasForced = false;
+		m_ZeroGravForcedEnabled = false;
+		m_ZeroGravForcedStatusUntil = 0.0f;
+		ClearZeroGravityWarning(true);
+		ResetZeroGravityTracking();
 	}
 
 	if(m_ZeroGravForcedBindHeld && !AnyForcedZeroGravityBindKeyPressed())

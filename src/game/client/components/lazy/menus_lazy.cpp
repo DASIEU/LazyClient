@@ -422,19 +422,19 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 10, &CUi::ms_LinearScrollbarScale, 0, "s");
 
-		if(g_Config.m_LcZeroGravMode == 0)
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravHoldTiles, &g_Config.m_LcZeroGravHoldTiles, &Button, Localize("Hold area radius"), 1, 16, &CUi::ms_LinearScrollbarScale, 0, " tiles");
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcZeroGravSpeedrunGuard, Localize("Anti-speedrun guard"), &g_Config.m_LcZeroGravSpeedrunGuard, &MainView, LazyLineSize);
+		if(g_Config.m_LcZeroGravSpeedrunGuard)
 		{
 			MainView.HSplitTop(LazyLineSize, &Button, &MainView);
-			Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravHoldTiles, &g_Config.m_LcZeroGravHoldTiles, &Button, Localize("Hold area radius"), 1, 16, &CUi::ms_LinearScrollbarScale, 0, " tiles");
+			Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravSpeedrunSpeed, &g_Config.m_LcZeroGravSpeedrunSpeed, &Button, Localize("Speedrun guard speed"), 5, 60, &CUi::ms_LinearScrollbarScale, 0, " tiles/s");
+		}
 
-			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcZeroGravSpeedrunGuard, Localize("Anti-speedrun guard"), &g_Config.m_LcZeroGravSpeedrunGuard, &MainView, LazyLineSize);
-			if(g_Config.m_LcZeroGravSpeedrunGuard)
-			{
-				MainView.HSplitTop(LazyLineSize, &Button, &MainView);
-				Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravSpeedrunSpeed, &g_Config.m_LcZeroGravSpeedrunSpeed, &Button, Localize("Speedrun guard speed"), 5, 60, &CUi::ms_LinearScrollbarScale, 0, " tiles/s");
-			}
-
-			LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. The warning stays visible for 0.2 s after the current prediction disappears, which removes short flashes. The anti-speedrun guard hides it while you move faster than the speed threshold; lower the threshold to filter speedruns more aggressively. Works for your tee, a followed player, and the tee nearest the camera in freeview."), Ui(), TextRender());
+		if(g_Config.m_LcZeroGravMode == 0)
+		{
+			LazyInfoLabel(&MainView, Localize("The predictor is always on. It warns only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. The warning stays visible for 0.2 s after the current prediction disappears. The anti-speedrun guard hides it while you move faster than the speed threshold. Works for your tee, a followed player, and the tee nearest the camera in freeview."), Ui(), TextRender());
 		}
 		else
 		{
@@ -447,7 +447,7 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 			if(DoButton_Menu(&s_BindForcedKeyButton, Localize("Apply forced key bind"), 0, &Button))
 				GameClient()->m_Lazy.BindZeroGravKey();
 
-			LazyInfoLabel(&MainView, Localize("Press the bound key at a wall to save the current hold. The client sends say /spec, waits 1 s, sends it again, then shows the warning if the saved hold reaches freeze within the warning time. The hold-area and speedrun checks are skipped in forced mode. Any new key or mouse press after the second say /spec turns it off; input during the one-second wait is ignored. Keys are ignored in chat and mouse clicks are ignored on the scoreboard."), Ui(), TextRender());
+			LazyInfoLabel(&MainView, Localize("The bound key only turns the predictor on and off. When it is on, the hold-area, anti-speedrun, warning time and display rules are exactly the same as Prediction mode. The predictor starts off when Forced is selected."), Ui(), TextRender());
 		}
 	}
 	else
