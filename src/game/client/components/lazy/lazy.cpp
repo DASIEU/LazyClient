@@ -55,7 +55,8 @@ constexpr float ZERO_GRAV_HOOK_MOVE_DISTANCE = 16.0f;
 constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
 constexpr int ZERO_GRAV_SPEEDRUN_FAST_CHECKS = 3;
 constexpr int ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS = 5;
-constexpr float ZERO_GRAV_FORCED_SPEC_DELAY = 0.50f;
+constexpr float ZERO_GRAV_FORCED_SPEC_DELAY = 1.00f;
+constexpr float ZERO_GRAV_FORCED_CANDIDATE_AGE = 0.50f;
 constexpr int ZERO_GRAV_FORCED_OFF = 0;
 constexpr int ZERO_GRAV_FORCED_WAIT_SECOND = 1;
 constexpr int ZERO_GRAV_FORCED_ACTIVE = 2;
@@ -1222,7 +1223,15 @@ void CLazyClient::ConZeroGravForced(IConsole::IResult *pResult, void *pUserData)
 {
 	CLazyClient *pThis = static_cast<CLazyClient *>(pUserData);
 	if(pResult->GetInteger(0) == 0)
+	{
+		pThis->m_ZeroGravForcedBindHeld = false;
 		return;
+	}
+	// The engine repeats active binds while a key is held. Only the initial
+	// press may toggle forced mode.
+	if(pThis->m_ZeroGravForcedBindHeld)
+		return;
+	pThis->m_ZeroGravForcedBindHeld = true;
 	pThis->ToggleForcedZeroGravity();
 }
 
@@ -1241,79 +1250,122 @@ void CLazyClient::ToggleForcedZeroGravity()
 	ActivateForcedZeroGravity();
 }
 
+bool CLazyClient::BuildForcedZeroGravityState(CCharacterCore &Core, CNetObj_PlayerInput &Input, bool &SnapshotHooked, vec2 &HookPos) const
+{
+	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
+	if(Client()->State() != IClient::STATE_ONLINE || Snap.m_SpecInfo.m_Active || !Snap.m_pLocalCharacter)
+		return false;
+
+	Core = GameClient()->m_PredictedChar;
+	Input = GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy];
+	SnapshotHooked = Snap.m_pLocalCharacter->m_HookState == HOOK_GRABBED;
+	if(Core.m_HookState == HOOK_GRABBED)
+		HookPos = Core.m_HookPos;
+	else
+		HookPos = vec2(Snap.m_pLocalCharacter->m_HookX, Snap.m_pLocalCharacter->m_HookY);
+	return true;
+}
+
+bool CLazyClient::IsForcedZeroGravityHold(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const
+{
+	if((Core.m_HookState != HOOK_GRABBED && !SnapshotHooked) ||
+		Core.HookedPlayer() != -1 ||
+		Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
+		Core.m_Super || Core.m_Invincible)
+		return false;
+
+	const vec2 HookDelta = HookPos - Core.m_Pos;
+	const int HoldDirection = Input.m_Direction;
+	return Core.HookedPlayer() == -1 &&
+	       HoldDirection != 0 &&
+	       HookDelta.x * HoldDirection < 0.0f &&
+	       std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
+	       !Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
+}
+
+float CLazyClient::SimulateForcedZeroGravity(const CCharacterCore &Core, const CNetObj_PlayerInput &Input, bool SnapshotHooked, vec2 HookPos) const
+{
+	CCharacterCore Sim = Core;
+	Sim.SetCoreWorld(nullptr, Collision(), nullptr);
+	Sim.m_Input.m_Hook = Input.m_Hook;
+	Sim.m_Input.m_Direction = Input.m_Direction;
+	Sim.m_Input.m_Jump = Input.m_Jump;
+	if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
+	{
+		Sim.m_HookState = HOOK_GRABBED;
+		Sim.m_HookPos = HookPos;
+		Sim.m_HookTick = 0;
+		Sim.SetHookedPlayer(-1);
+	}
+
+	const int TickSpeed = std::max(1, Client()->GameTickSpeed());
+	const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
+	vec2 PrevPos = Sim.m_Pos;
+	for(int Tick = 1; Tick <= MaxTicks; Tick++)
+	{
+		Sim.Tick(true, false);
+		Sim.Move();
+		Sim.Quantize();
+		if(PathHitsFreeze(Collision(), PrevPos, Sim.m_Pos))
+			return Tick / (float)TickSpeed;
+		PrevPos = Sim.m_Pos;
+	}
+	return -1.0f;
+}
+
+void CLazyClient::CaptureForcedZeroGravityCandidate()
+{
+	CCharacterCore Core;
+	CNetObj_PlayerInput Input;
+	bool SnapshotHooked = false;
+	vec2 HookPos(0.0f, 0.0f);
+	if(!BuildForcedZeroGravityState(Core, Input, SnapshotHooked, HookPos) ||
+		!IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos))
+		return;
+
+	m_ZeroGravForcedCandidateCore = Core;
+	m_ZeroGravForcedCandidateInput = Input;
+	m_ZeroGravForcedCandidateSnapshotHooked = SnapshotHooked;
+	m_ZeroGravForcedCandidateHookPos = HookPos;
+	m_ZeroGravForcedCandidateTime = Client()->LocalTime();
+	m_ZeroGravForcedCandidateValid = true;
+}
+
 void CLazyClient::ActivateForcedZeroGravity()
 {
-	if(Client()->State() != IClient::STATE_ONLINE || GameClient()->m_Snap.m_SpecInfo.m_Active)
-		return;
-	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
-	if(!Snap.m_pLocalCharacter)
+	CCharacterCore Core;
+	CNetObj_PlayerInput Input;
+	bool SnapshotHooked = false;
+	vec2 HookPos(0.0f, 0.0f);
+	if(!BuildForcedZeroGravityState(Core, Input, SnapshotHooked, HookPos))
 		return;
 
-	m_ZeroGravForcedCore = GameClient()->m_PredictedChar;
-	m_ZeroGravForcedInput = GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy];
-	m_ZeroGravForcedSnapshotHooked = Snap.m_pLocalCharacter->m_HookState == HOOK_GRABBED;
-	if(m_ZeroGravForcedCore.m_HookState == HOOK_GRABBED)
-		m_ZeroGravForcedHookPos = m_ZeroGravForcedCore.m_HookPos;
-	else
-		m_ZeroGravForcedHookPos = vec2(Snap.m_pLocalCharacter->m_HookX, Snap.m_pLocalCharacter->m_HookY);
-
-	// Compute the forced prediction once from the exact state/input that the
-	// normal predictor would use this tick. The saved snapshot keeps the warning
-	// valid after the tee is released from the real keys.
-	m_ZeroGravForcedSeconds = -1.0f;
-	const CCharacterCore &Core = m_ZeroGravForcedCore;
-	const CNetObj_PlayerInput &Input = m_ZeroGravForcedInput;
-	const bool SnapshotHooked = m_ZeroGravForcedSnapshotHooked;
-	const bool Invalid = (Core.m_HookState != HOOK_GRABBED && !SnapshotHooked) ||
-			     Core.HookedPlayer() != -1 ||
-			     Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
-			     Core.m_Super || Core.m_Invincible;
-	if(!Invalid)
+	bool Valid = IsForcedZeroGravityHold(Core, Input, SnapshotHooked, HookPos);
+	const bool CurrentlyHooked = Core.m_HookState == HOOK_GRABBED || SnapshotHooked;
+	const float Now = Client()->LocalTime();
+	if(!Valid && CurrentlyHooked && Input.m_Direction != 0 && m_ZeroGravForcedCandidateValid &&
+		Now - m_ZeroGravForcedCandidateTime <= ZERO_GRAV_FORCED_CANDIDATE_AGE)
 	{
-		const vec2 HookDelta = m_ZeroGravForcedHookPos - Core.m_Pos;
-		const int HoldDirection = Input.m_Direction;
-		const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
-					     HoldDirection != 0 &&
-					     HookDelta.x * HoldDirection < 0.0f &&
-					     std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
-					     !Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
-		if(ZeroGravityHold)
-		{
-			CCharacterCore Sim = Core;
-			Sim.SetCoreWorld(nullptr, Collision(), nullptr);
-			Sim.m_Input.m_Hook = Input.m_Hook;
-			Sim.m_Input.m_Direction = HoldDirection;
-			Sim.m_Input.m_Jump = Input.m_Jump;
-			if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
-			{
-				Sim.m_HookState = HOOK_GRABBED;
-				Sim.m_HookPos = m_ZeroGravForcedHookPos;
-				Sim.m_HookTick = 0;
-				Sim.SetHookedPlayer(-1);
-			}
-
-			const int TickSpeed = std::max(1, Client()->GameTickSpeed());
-			const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
-			vec2 PrevPos = Sim.m_Pos;
-			for(int Tick = 1; Tick <= MaxTicks; Tick++)
-			{
-				Sim.Tick(true, false);
-				Sim.Move();
-				Sim.Quantize();
-				if(PathHitsFreeze(Collision(), PrevPos, Sim.m_Pos))
-				{
-					m_ZeroGravForcedSeconds = Tick / (float)TickSpeed;
-					break;
-				}
-				PrevPos = Sim.m_Pos;
-			}
-		}
+		// The bind can be pressed during a sway phase where the instantaneous
+		// gate fails. Use the most recent valid hold instead of dropping the
+		// prediction entirely.
+		Core = m_ZeroGravForcedCandidateCore;
+		Input = m_ZeroGravForcedCandidateInput;
+		SnapshotHooked = m_ZeroGravForcedCandidateSnapshotHooked;
+		HookPos = m_ZeroGravForcedCandidateHookPos;
+		Valid = true;
 	}
+
+	m_ZeroGravForcedCore = Core;
+	m_ZeroGravForcedInput = Input;
+	m_ZeroGravForcedSnapshotHooked = SnapshotHooked;
+	m_ZeroGravForcedHookPos = HookPos;
+	m_ZeroGravForcedSeconds = Valid ? SimulateForcedZeroGravity(Core, Input, SnapshotHooked, HookPos) : -1.0f;
 
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_WAIT_SECOND;
 	m_ZeroGravForcedTimer = 0.0f;
-	m_ZeroGravForcedSkipInput = true;
-	m_ZeroGravTarget = Snap.m_LocalClientId;
+	ResetForcedZeroGravityInputState();
+	m_ZeroGravTarget = GameClient()->m_Snap.m_LocalClientId;
 	m_ZeroGravWarning = false;
 	m_ZeroGravWarningHideTimer = 0.0f;
 	m_ZeroGravSeconds = 0.0f;
@@ -1324,35 +1376,61 @@ void CLazyClient::DeactivateForcedZeroGravity()
 {
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_OFF;
 	m_ZeroGravForcedTimer = 0.0f;
-	m_ZeroGravForcedSkipInput = false;
+	std::fill(std::begin(m_aZeroGravForcedKeysDown), std::end(m_aZeroGravForcedKeysDown), false);
 	m_ZeroGravForcedSeconds = -1.0f;
 	m_ZeroGravForcedSnapshotHooked = false;
 	m_ZeroGravForcedHookPos = vec2(0.0f, 0.0f);
 	m_ZeroGravForcedCore.Reset();
 	m_ZeroGravForcedInput = {};
+	m_ZeroGravForcedCandidateValid = false;
+	m_ZeroGravForcedCandidateTime = -1.0f;
+	m_ZeroGravForcedCandidateCore.Reset();
+	m_ZeroGravForcedCandidateInput = {};
+	m_ZeroGravForcedCandidateSnapshotHooked = false;
+	m_ZeroGravForcedCandidateHookPos = vec2(0.0f, 0.0f);
 	m_ZeroGravWarning = false;
 	m_ZeroGravWarningHideTimer = 0.0f;
 	m_ZeroGravSeconds = 0.0f;
 	m_ZeroGravTarget = -1;
 }
 
-bool CLazyClient::ForcedZeroGravityInputPressed() const
+void CLazyClient::ResetForcedZeroGravityInputState()
 {
-	if(GameClient()->m_Chat.IsActive() || GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive())
-		return false;
+	for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
+		m_aZeroGravForcedKeysDown[Key] = Input()->KeyIsPressed(Key);
+}
 
-	const bool Scoreboard = GameClient()->m_Scoreboard.IsActive();
+bool CLazyClient::AnyForcedZeroGravityBindKeyPressed() const
+{
 	for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
 	{
+		const char *pBind = GameClient()->m_Binds.Get(Key, KeyModifier::NONE);
+		if(pBind && str_find(pBind, "+lc_zerograv_forced") && Input()->KeyIsPressed(Key))
+			return true;
+	}
+	return false;
+}
+
+bool CLazyClient::ForcedZeroGravityInputPressed()
+{
+	const bool IgnoreKeyboard = GameClient()->m_Chat.IsActive() || GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive();
+	const bool Scoreboard = GameClient()->m_Scoreboard.IsActive();
+	bool Pressed = false;
+	for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
+	{
+		const bool Down = Input()->KeyIsPressed(Key);
+		const bool WasDown = m_aZeroGravForcedKeysDown[Key];
+		m_aZeroGravForcedKeysDown[Key] = Down;
+		if(!Down || WasDown || IgnoreKeyboard)
+			continue;
 		if(Scoreboard && Key >= KEY_MOUSE_1 && Key <= KEY_MOUSE_WHEEL_RIGHT)
 			continue;
 		const char *pBind = GameClient()->m_Binds.Get(Key, KeyModifier::NONE);
 		if(pBind && str_find(pBind, "+lc_zerograv_forced"))
 			continue;
-		if(Input()->KeyPress(Key))
-			return true;
+		Pressed = true;
 	}
-	return false;
+	return Pressed;
 }
 
 void CLazyClient::UpdateForcedZeroGravityPredictor()
@@ -1370,9 +1448,7 @@ void CLazyClient::UpdateForcedZeroGravityPredictor()
 		return;
 	}
 
-	if(m_ZeroGravForcedSkipInput)
-		m_ZeroGravForcedSkipInput = false;
-	else if(ForcedZeroGravityInputPressed())
+	if(ForcedZeroGravityInputPressed())
 	{
 		DeactivateForcedZeroGravity();
 		return;
@@ -1427,6 +1503,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		m_ZeroGravFastChecks = 0;
 		m_ZeroGravSpeedrunCooldown = 0;
 		m_ZeroGravHasHookPos = false;
+		if(m_ZeroGravForcedState == ZERO_GRAV_FORCED_OFF)
+			CaptureForcedZeroGravityCandidate();
 		UpdateForcedZeroGravityPredictor();
 		return;
 	}
@@ -1987,6 +2065,9 @@ void CLazyClient::OnUpdate()
 		RestoreZeroGravKey();
 		m_ZeroGravWasForced = false;
 	}
+
+	if(m_ZeroGravForcedBindHeld && !AnyForcedZeroGravityBindKeyPressed())
+		m_ZeroGravForcedBindHeld = false;
 
 	UpdateClientLogoState();
 	UpdateBestClientList();
