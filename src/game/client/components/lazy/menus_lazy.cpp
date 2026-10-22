@@ -416,7 +416,7 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravHoldTiles, &g_Config.m_LcZeroGravHoldTiles, &Button, Localize("Hold area radius"), 1, 16, &CUi::ms_LinearScrollbarScale, 0, " tiles");
 
-		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. A small countdown appears when the trajectory reaches freeze within the warning time. Works for your tee, a followed player, and the tee nearest the camera in freeview."), Ui(), TextRender());
+		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. A stable countdown appears when the trajectory reaches freeze within the warning time; it only counts down and never jumps back up as the tee sways. Works for your tee, a followed player, and the tee nearest the camera in freeview."), Ui(), TextRender());
 	}
 	else
 	{

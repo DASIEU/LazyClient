@@ -153,6 +153,8 @@ private:
 	float m_ZeroGravSeconds = 0.0f;
 	int m_ZeroGravMissedChecks = 0;
 	int m_ZeroGravWarningMisses = 0;
+	vec2 m_ZeroGravHookPos = vec2(0.0f, 0.0f);
+	bool m_ZeroGravHasHookPos = false;
 	vec2 m_aZeroGravHistory[ZERO_GRAV_HISTORY_SIZE] = {};
 	int m_ZeroGravHistoryCount = 0;
 	int m_ZeroGravHistoryNext = 0;

@@ -50,7 +50,8 @@ constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 constexpr float ZERO_GRAV_TILE_SIZE = 32.0f;
 constexpr int ZERO_GRAV_HOLD_GRACE_CHECKS = 10;
-constexpr int ZERO_GRAV_WARNING_GRACE_CHECKS = 20;
+constexpr int ZERO_GRAV_DANGER_TIMEOUT_CHECKS = 40;
+constexpr float ZERO_GRAV_HOOK_MOVE_DISTANCE = 16.0f;
 constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
@@ -115,6 +116,7 @@ void CLazyClient::OnReset()
 	m_ZeroGravTarget = -1;
 	m_ZeroGravMissedChecks = 0;
 	m_ZeroGravWarningMisses = 0;
+	m_ZeroGravHasHookPos = false;
 	ResetAutoMarginState();
 	ResetTelemetry();
 }
@@ -143,6 +145,7 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_ZeroGravTarget = -1;
 	m_ZeroGravMissedChecks = 0;
 	m_ZeroGravWarningMisses = 0;
+	m_ZeroGravHasHookPos = false;
 	ResetTelemetry();
 }
 
@@ -1202,6 +1205,17 @@ void CLazyClient::UpdateZeroGravityPredictor()
 
 	const vec2 HookPos = Core.m_HookState == HOOK_GRABBED ? Core.m_HookPos : vec2(pCharacter->m_HookX, pCharacter->m_HookY);
 	const vec2 HookDelta = HookPos - Core.m_Pos;
+	if(m_ZeroGravHasHookPos && distance(HookPos, m_ZeroGravHookPos) > ZERO_GRAV_HOOK_MOVE_DISTANCE)
+	{
+		// A rehook is a new hold. Do not carry the old countdown across it.
+		m_ZeroGravWarning = false;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravWarningMisses = 0;
+	}
+	m_ZeroGravHookPos = HookPos;
+	m_ZeroGravHasHookPos = true;
 	// The gores "zero gravity" hold is a wall hook with the opposing
 	// movement key held, so the hook drag and air control cancel out.
 	const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
@@ -1304,23 +1318,37 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		PrevPos = Sim.m_Pos;
 	}
 
-	if(HitSeconds < 0.0f)
+	// Keep a latched countdown instead of replacing it with every new snapshot.
+	// The tee's sway changes the current time-to-freeze from check to check, so
+	// a fresh value would visibly jump up and down. The displayed value only
+	// counts down, snaps to a closer prediction, and expires when it reaches
+	// zero (or after a short run of checks without any predicted freeze).
+	const bool WasLatched = m_ZeroGravWarning;
+	if(WasLatched)
+		m_ZeroGravSeconds = std::max(0.0f, m_ZeroGravSeconds - 0.05f);
+
+	if(HitSeconds >= 0.0f)
 	{
-		// The simulated trajectory can miss the freeze on a single check while
-		// the tee is still swaying into it. Hold the warning briefly.
-		if(m_ZeroGravWarning && m_ZeroGravWarningMisses < ZERO_GRAV_WARNING_GRACE_CHECKS)
-		{
-			m_ZeroGravWarningMisses++;
-			return;
-		}
-		m_ZeroGravWarning = false;
+		if(!WasLatched || m_ZeroGravSeconds <= 0.0f || HitSeconds < m_ZeroGravSeconds)
+			m_ZeroGravSeconds = HitSeconds;
+		m_ZeroGravWarning = true;
 		m_ZeroGravWarningMisses = 0;
-		return;
+	}
+	else
+	{
+		m_ZeroGravWarningMisses++;
+		if(!WasLatched || m_ZeroGravWarningMisses >= ZERO_GRAV_DANGER_TIMEOUT_CHECKS)
+		{
+			m_ZeroGravWarning = false;
+			m_ZeroGravWarningMisses = 0;
+		}
 	}
 
-	m_ZeroGravWarning = true;
-	m_ZeroGravSeconds = HitSeconds;
-	m_ZeroGravWarningMisses = 0;
+	if(m_ZeroGravWarning && m_ZeroGravSeconds <= 0.0f)
+	{
+		m_ZeroGravWarning = false;
+		m_ZeroGravWarningMisses = 0;
+	}
 }
 
 void CLazyClient::RenderZeroGravityWarning()
