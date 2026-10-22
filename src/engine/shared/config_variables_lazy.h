@@ -49,6 +49,8 @@ MACRO_CONFIG_INT(LcVotePassPercentage, lc_vote_pass_percentage, 50, 1, 99, CFGFL
 MACRO_CONFIG_INT(LcZeroGravPredict, lc_zerograv_predict, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict freeze tiles after holding a zero-gravity wall position")
 MACRO_CONFIG_INT(LcZeroGravPredictTime, lc_zerograv_predict_time, 5, 1, 10, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity freeze warning time in seconds")
 MACRO_CONFIG_INT(LcZeroGravHoldTiles, lc_zerograv_hold_tiles, 4, 1, 16, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity hold area radius in tiles")
+MACRO_CONFIG_INT(LcZeroGravSpeedrunGuard, lc_zerograv_speedrun_guard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Suppress the freeze warning while moving fast (anti-speedrun guard)")
+MACRO_CONFIG_INT(LcZeroGravSpeedrunSpeed, lc_zerograv_speedrun_speed, 25, 5, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-speedrun guard horizontal speed threshold in tiles per second")
 
 // Telemetry
 MACRO_CONFIG_INT(LcTelemetry, lc_telemetry, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the LazyClient telemetry overlay")

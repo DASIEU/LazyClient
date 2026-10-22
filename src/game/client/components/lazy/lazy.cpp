@@ -51,6 +51,9 @@ constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 constexpr float ZERO_GRAV_TILE_SIZE = 32.0f;
 constexpr int ZERO_GRAV_HOLD_GRACE_CHECKS = 10;
 constexpr float ZERO_GRAV_HOOK_MOVE_DISTANCE = 16.0f;
+constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
+constexpr int ZERO_GRAV_SPEEDRUN_FAST_CHECKS = 3;
+constexpr int ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS = 5;
 constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
@@ -114,7 +117,9 @@ void CLazyClient::OnReset()
 	m_ZeroGravHistoryNext = 0;
 	m_ZeroGravTarget = -1;
 	m_ZeroGravMissedChecks = 0;
-	m_ZeroGravWarningMisses = 0;
+	m_ZeroGravWarningHideTimer = 0.0f;
+	m_ZeroGravFastChecks = 0;
+	m_ZeroGravSpeedrunCooldown = 0;
 	m_ZeroGravHasHookPos = false;
 	ResetAutoMarginState();
 	ResetTelemetry();
@@ -143,7 +148,9 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_ZeroGravHistoryNext = 0;
 	m_ZeroGravTarget = -1;
 	m_ZeroGravMissedChecks = 0;
-	m_ZeroGravWarningMisses = 0;
+	m_ZeroGravWarningHideTimer = 0.0f;
+	m_ZeroGravFastChecks = 0;
+	m_ZeroGravSpeedrunCooldown = 0;
 	m_ZeroGravHasHookPos = false;
 	ResetTelemetry();
 }
@@ -1112,42 +1119,67 @@ int CLazyClient::FindZeroGravityTarget() const
 	return BestId;
 }
 
+void CLazyClient::ClearZeroGravityWarning(bool Immediate)
+{
+	if(Immediate || !m_ZeroGravWarning)
+	{
+		m_ZeroGravWarning = false;
+		m_ZeroGravWarningHideTimer = 0.0f;
+		return;
+	}
+	if(m_ZeroGravWarningHideTimer <= 0.0f)
+		m_ZeroGravWarningHideTimer = ZERO_GRAV_WARNING_HIDE_DELAY;
+}
+
 void CLazyClient::UpdateZeroGravityPredictor()
 {
 	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
+	if(m_ZeroGravWarningHideTimer > 0.0f)
+	{
+		m_ZeroGravWarningHideTimer -= Client()->RenderFrameTime();
+		if(m_ZeroGravWarningHideTimer <= 0.0f)
+		{
+			m_ZeroGravWarningHideTimer = 0.0f;
+			m_ZeroGravWarning = false;
+		}
+	}
+
 	if(!g_Config.m_LcZeroGravPredict || Client()->State() != IClient::STATE_ONLINE)
 	{
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(true);
 		m_ZeroGravCheckTimer = 0.0f;
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravTarget = -1;
 		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravWarningMisses = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
 		return;
 	}
 
 	const int TargetId = FindZeroGravityTarget();
 	if(TargetId < 0 || TargetId >= MAX_CLIENTS || !Snap.m_aCharacters[TargetId].m_Active)
 	{
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(true);
 		m_ZeroGravCheckTimer = 0.0f;
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravTarget = -1;
 		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravWarningMisses = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
 		return;
 	}
 
 	if(TargetId != m_ZeroGravTarget)
 	{
 		m_ZeroGravTarget = TargetId;
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(true);
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravWarningMisses = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
 	}
 
 	const bool TargetIsLocal = !Snap.m_SpecInfo.m_Active && TargetId == Snap.m_LocalClientId;
@@ -1173,13 +1205,14 @@ void CLazyClient::UpdateZeroGravityPredictor()
 
 	if(!pCharacter)
 	{
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(true);
 		m_ZeroGravCheckTimer = 0.0f;
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravTarget = -1;
 		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravWarningMisses = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
 		return;
 	}
 
@@ -1188,12 +1221,13 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		Core.m_FreezeEnd > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen || Core.m_IsInFreeze ||
 		Core.m_Super || Core.m_Invincible)
 	{
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(true);
 		m_ZeroGravCheckTimer = 0.0f;
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravWarningMisses = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
 		return;
 	}
 
@@ -1212,11 +1246,12 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	if(m_ZeroGravHasHookPos && distance(HookPos, m_ZeroGravHookPos) > ZERO_GRAV_HOOK_MOVE_DISTANCE)
 	{
 		// A rehook is a new hold. Do not carry the old countdown across it.
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(true);
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravWarningMisses = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
 	}
 	m_ZeroGravHookPos = HookPos;
 	m_ZeroGravHasHookPos = true;
@@ -1237,11 +1272,12 @@ void CLazyClient::UpdateZeroGravityPredictor()
 			m_ZeroGravMissedChecks++;
 			return;
 		}
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(false);
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravWarningMisses = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
 		return;
 	}
 
@@ -1251,7 +1287,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 
 	if(m_ZeroGravHistoryCount < ZERO_GRAV_HISTORY_SIZE)
 	{
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(false);
 		m_ZeroGravMissedChecks = 0;
 		return;
 	}
@@ -1282,14 +1318,46 @@ void CLazyClient::UpdateZeroGravityPredictor()
 			m_ZeroGravMissedChecks++;
 			return;
 		}
-		m_ZeroGravWarning = false;
+		ClearZeroGravityWarning(false);
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravMissedChecks = 0;
-		m_ZeroGravWarningMisses = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
 		return;
 	}
 	m_ZeroGravMissedChecks = 0;
+
+	// Anti-speedrun guard: a real zero-gravity hold swings within the hold
+	// area, while a speedrun traverses it with sustained horizontal velocity.
+	// Suppress the warning only after the speed stays high for a few checks,
+	// and keep suppressing briefly after the tee slows down.
+	if(g_Config.m_LcZeroGravSpeedrunGuard)
+	{
+		const float HSpeed = std::abs(Core.m_Vel.x) * (float)Client()->GameTickSpeed() / ZERO_GRAV_TILE_SIZE;
+		if(HSpeed > (float)g_Config.m_LcZeroGravSpeedrunSpeed)
+		{
+			m_ZeroGravFastChecks = std::min(m_ZeroGravFastChecks + 1, ZERO_GRAV_SPEEDRUN_FAST_CHECKS);
+			if(m_ZeroGravFastChecks >= ZERO_GRAV_SPEEDRUN_FAST_CHECKS)
+				m_ZeroGravSpeedrunCooldown = ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS;
+		}
+		else
+		{
+			m_ZeroGravFastChecks = 0;
+		}
+
+		if(m_ZeroGravSpeedrunCooldown > 0)
+		{
+			m_ZeroGravSpeedrunCooldown--;
+			ClearZeroGravityWarning(false);
+			return;
+		}
+	}
+	else
+	{
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
+	}
 
 	const int TickSpeed = std::max(1, Client()->GameTickSpeed());
 	const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
@@ -1328,14 +1396,13 @@ void CLazyClient::UpdateZeroGravityPredictor()
 
 	if(HitSeconds < 0.0f)
 	{
-		m_ZeroGravWarning = false;
-		m_ZeroGravWarningMisses = 0;
+		ClearZeroGravityWarning(false);
 		return;
 	}
 
 	m_ZeroGravWarning = true;
 	m_ZeroGravSeconds = HitSeconds;
-	m_ZeroGravWarningMisses = 0;
+	m_ZeroGravWarningHideTimer = 0.0f;
 }
 
 void CLazyClient::RenderZeroGravityWarning()

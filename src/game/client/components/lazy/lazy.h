@@ -151,8 +151,10 @@ private:
 	float m_ZeroGravCheckTimer = 0.0f;
 	bool m_ZeroGravWarning = false;
 	float m_ZeroGravSeconds = 0.0f;
+	float m_ZeroGravWarningHideTimer = 0.0f;
+	int m_ZeroGravFastChecks = 0;
+	int m_ZeroGravSpeedrunCooldown = 0;
 	int m_ZeroGravMissedChecks = 0;
-	int m_ZeroGravWarningMisses = 0;
 	vec2 m_ZeroGravHookPos = vec2(0.0f, 0.0f);
 	bool m_ZeroGravHasHookPos = false;
 	vec2 m_aZeroGravHistory[ZERO_GRAV_HISTORY_SIZE] = {};
@@ -173,6 +175,7 @@ private:
 	void UpdateTelemetry();
 	void RenderTelemetry();
 	int FindZeroGravityTarget() const;
+	void ClearZeroGravityWarning(bool Immediate);
 	void UpdateZeroGravityPredictor();
 	bool PathHitsFreeze(CCollision *pCollision, vec2 PrevPos, vec2 Pos) const;
 	void RenderZeroGravityWarning();

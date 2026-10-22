@@ -416,7 +416,14 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravHoldTiles, &g_Config.m_LcZeroGravHoldTiles, &Button, Localize("Hold area radius"), 1, 16, &CUi::ms_LinearScrollbarScale, 0, " tiles");
 
-		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. A stable countdown appears when the trajectory reaches freeze within the warning time; it only counts down and never jumps back up as the tee sways. Works for your tee, a followed player, and the tee nearest the camera in freeview."), Ui(), TextRender());
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcZeroGravSpeedrunGuard, Localize("Anti-speedrun guard"), &g_Config.m_LcZeroGravSpeedrunGuard, &MainView, LazyLineSize);
+		if(g_Config.m_LcZeroGravSpeedrunGuard)
+		{
+			MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+			Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravSpeedrunSpeed, &g_Config.m_LcZeroGravSpeedrunSpeed, &Button, Localize("Speedrun guard speed"), 5, 60, &CUi::ms_LinearScrollbarScale, 0, " tiles/s");
+		}
+
+		LazyInfoLabel(&MainView, Localize("Only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. The warning stays visible for 0.2 s after the current prediction disappears, which removes short flashes. The anti-speedrun guard hides it while you move faster than the speed threshold; lower the threshold to filter speedruns more aggressively. Works for your tee, a followed player, and the tee nearest the camera in freeview."), Ui(), TextRender());
 	}
 	else
 	{
