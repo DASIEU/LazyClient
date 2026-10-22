@@ -1519,7 +1519,7 @@ void CLazyClient::RenderTelemetry()
 	}
 	if(g_Config.m_LcTelemetryLoss)
 	{
-		str_format(aBuf, sizeof(aBuf), "Loss: %.1f%%", m_TelemetryPacketLoss);
+		str_format(aBuf, sizeof(aBuf), "Loss: %.2f%%", m_TelemetryPacketLoss);
 		AddLine(aBuf);
 	}
 	if(g_Config.m_LcTelemetryPrediction)
