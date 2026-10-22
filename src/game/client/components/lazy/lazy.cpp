@@ -1206,6 +1206,11 @@ void CLazyClient::UpdateZeroGravityPredictor()
 
 	const vec2 HookPos = Core.m_HookState == HOOK_GRABBED ? Core.m_HookPos : vec2(pCharacter->m_HookX, pCharacter->m_HookY);
 	const vec2 HookDelta = HookPos - Core.m_Pos;
+	// For the local tee we know the real held keys. `Core.m_Direction` is only
+	// the last nonzero direction, so using it would keep simulating a key that
+	// has already been released and over-predict freezes near the wall.
+	const CNetObj_PlayerInput *pCurrentInput = TargetIsLocal ? &GameClient()->m_Controls.m_aInputData[g_Config.m_ClDummy] : nullptr;
+	const int HoldDirection = pCurrentInput ? pCurrentInput->m_Direction : Core.m_Direction;
 	if(m_ZeroGravHasHookPos && distance(HookPos, m_ZeroGravHookPos) > ZERO_GRAV_HOOK_MOVE_DISTANCE)
 	{
 		// A rehook is a new hold. Do not carry the old countdown across it.
@@ -1220,7 +1225,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	// The gores "zero gravity" hold is a wall hook with the opposing
 	// movement key held, so the hook drag and air control cancel out.
 	const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
-		HookDelta.x * Core.m_Direction < 0.0f &&
+		HoldDirection != 0 &&
+		HookDelta.x * HoldDirection < 0.0f &&
 		std::abs(HookDelta.x) > 8.0f &&
 		!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 
@@ -1292,8 +1298,10 @@ void CLazyClient::UpdateZeroGravityPredictor()
 
 	CCharacterCore Sim = Core;
 	Sim.SetCoreWorld(nullptr, Collision(), nullptr);
-	Sim.m_Input.m_Hook = 1;
-	Sim.m_Input.m_Direction = Core.m_Direction;
+	Sim.m_Input.m_Hook = pCurrentInput ? pCurrentInput->m_Hook : 1;
+	Sim.m_Input.m_Direction = HoldDirection;
+	if(pCurrentInput)
+		Sim.m_Input.m_Jump = pCurrentInput->m_Jump;
 	if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
 	{
 		// The predicted core can be a tick behind the snapshot. Keep using
