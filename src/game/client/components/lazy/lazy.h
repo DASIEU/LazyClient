@@ -103,6 +103,7 @@ private:
 
 	// Telemetry
 	static constexpr int TELEMETRY_FRAME_SAMPLES = 4096;
+	static constexpr int TELEMETRY_LOSS_SAMPLES = 5;
 	float m_aTelemetryFrameTimes[TELEMETRY_FRAME_SAMPLES] = {};
 	float m_aTelemetrySorted[TELEMETRY_FRAME_SAMPLES] = {};
 	int m_TelemetryFrameCount = 0;
@@ -119,6 +120,10 @@ private:
 	float m_TelemetrySnapshotRate = 0.0f;
 	uint64_t m_TelemetryPrevRecvVital = 0;
 	uint64_t m_TelemetryPrevLostVital = 0;
+	uint64_t m_TelemetryPrevResend = 0;
+	uint64_t m_aTelemetryLossRecv[TELEMETRY_LOSS_SAMPLES] = {};
+	uint64_t m_aTelemetryLossLost[TELEMETRY_LOSS_SAMPLES] = {};
+	int m_TelemetryLossIndex = 0;
 
 	// Antipiping
 	float m_AntipingSmoothedPing = -1.0f;
@@ -146,6 +151,8 @@ private:
 	float m_ZeroGravCheckTimer = 0.0f;
 	bool m_ZeroGravWarning = false;
 	float m_ZeroGravSeconds = 0.0f;
+	int m_ZeroGravMissedChecks = 0;
+	int m_ZeroGravWarningMisses = 0;
 	vec2 m_aZeroGravHistory[ZERO_GRAV_HISTORY_SIZE] = {};
 	int m_ZeroGravHistoryCount = 0;
 	int m_ZeroGravHistoryNext = 0;

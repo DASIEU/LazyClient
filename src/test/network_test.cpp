@@ -113,3 +113,47 @@ TEST(Network, UnpackChunks)
 	CNetChunk Chunk;
 	EXPECT_FALSE(Unpacker.UnpackNextChunk(&Chunk));
 }
+
+TEST(Network, VitalChunkLossCounters)
+{
+	CNetConnection Connection;
+	Connection.Reset();
+	Connection.m_Sixup = false;
+
+	auto FeedVital = [&](int Sequence) {
+		CNetPacketConstruct Packet = {};
+		Packet.m_NumChunks = 1;
+
+		CNetChunkHeader Header;
+		Header.m_Flags = NET_CHUNKFLAG_VITAL;
+		Header.m_Size = 1;
+		Header.m_Sequence = Sequence;
+		unsigned char *pData = Header.Pack(Packet.m_aChunkData);
+		*pData = 0;
+		pData++;
+		Packet.m_DataSize = (int)(pData - Packet.m_aChunkData);
+
+		CPacketChunkUnpacker Unpacker;
+		Unpacker.FeedPacket(NETADDR{}, Packet, &Connection, 0);
+		CNetChunk Chunk;
+		while(Unpacker.UnpackNextChunk(&Chunk))
+		{
+		}
+	};
+
+	FeedVital(1);
+	EXPECT_EQ(Connection.RecvVitalChunks(), 1u);
+	EXPECT_EQ(Connection.LostVitalChunks(), 0u);
+	EXPECT_EQ(Connection.ResendRequests(), 0u);
+
+	// Sequence 2 is missing, so receiving 3 counts one lost vital chunk.
+	FeedVital(3);
+	EXPECT_EQ(Connection.RecvVitalChunks(), 1u);
+	EXPECT_EQ(Connection.LostVitalChunks(), 1u);
+	EXPECT_EQ(Connection.ResendRequests(), 1u);
+
+	// The resend fills the gap.
+	FeedVital(2);
+	EXPECT_EQ(Connection.RecvVitalChunks(), 2u);
+	EXPECT_EQ(Connection.LostVitalChunks(), 1u);
+}

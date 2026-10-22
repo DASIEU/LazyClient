@@ -62,6 +62,16 @@ static void LazyBeginScroll(CUIRect *pRect, CScrollRegion *pScrollRegion, CScrol
 	*pRect = Inner;
 }
 
+static void LazyEndScroll(CScrollRegion *pScrollRegion, CUIRect ContentBottom)
+{
+	// Register the consumed content height so the scrollbar can actually
+	// reach the lower sections of the LazyClient settings pages.
+	ContentBottom.y += 10.0f;
+	ContentBottom.h = 1.0f;
+	pScrollRegion->AddRect(ContentBottom);
+	pScrollRegion->End();
+}
+
 void CMenus::RenderSettingsLazy(CUIRect MainView)
 {
 	CUIRect TabBar, Button;
@@ -355,7 +365,9 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 			GameClient()->m_Lazy.RevertAspect();
 	}
 
-	s_ScrollRegion.End();
+	CUIRect ContentBottom = Left;
+	ContentBottom.y = std::max(Left.y, Right.y);
+	LazyEndScroll(&s_ScrollRegion, ContentBottom);
 }
 
 void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
@@ -414,26 +426,20 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
 	LazySectionTitle(&MainView, Localize("Telemetry"), Ui());
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetry, Localize("Show telemetry overlay"), &g_Config.m_LcTelemetry, &MainView, LazyLineSize);
-	if(g_Config.m_LcTelemetry)
-	{
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps, Localize("FPS"), &g_Config.m_LcTelemetryFps, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFpsAvg, Localize("Average FPS"), &g_Config.m_LcTelemetryFpsAvg, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps1Pct, Localize("1% low FPS"), &g_Config.m_LcTelemetryFps1Pct, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps01Pct, Localize("0.1% low FPS"), &g_Config.m_LcTelemetryFps01Pct, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFrametime, Localize("Frame time"), &g_Config.m_LcTelemetryFrametime, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryPing, Localize("Ping"), &g_Config.m_LcTelemetryPing, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryJitter, Localize("Ping jitter"), &g_Config.m_LcTelemetryJitter, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryLoss, Localize("Packet loss"), &g_Config.m_LcTelemetryLoss, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryPrediction, Localize("Prediction time"), &g_Config.m_LcTelemetryPrediction, &MainView, LazyLineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetrySnaps, Localize("Snapshots per second"), &g_Config.m_LcTelemetrySnaps, &MainView, LazyLineSize);
-		LazyInfoLabel(&MainView, Localize("Local-only overlay in the top-right. Packet loss is estimated from missing vital network chunks over the last second."), Ui(), TextRender());
-	}
-	else
-	{
-		LazyInfoLabel(&MainView, Localize("No telemetry overlay is shown."), Ui(), TextRender());
-	}
+	LazyInfoLabel(&MainView, Localize("Choose which values the overlay shows."), Ui(), TextRender());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps, Localize("FPS"), &g_Config.m_LcTelemetryFps, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFpsAvg, Localize("Average FPS"), &g_Config.m_LcTelemetryFpsAvg, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps1Pct, Localize("1% low FPS"), &g_Config.m_LcTelemetryFps1Pct, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps01Pct, Localize("0.1% low FPS"), &g_Config.m_LcTelemetryFps01Pct, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFrametime, Localize("Frame time"), &g_Config.m_LcTelemetryFrametime, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryPing, Localize("Ping"), &g_Config.m_LcTelemetryPing, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryJitter, Localize("Ping jitter"), &g_Config.m_LcTelemetryJitter, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryLoss, Localize("Packet loss"), &g_Config.m_LcTelemetryLoss, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryPrediction, Localize("Prediction time"), &g_Config.m_LcTelemetryPrediction, &MainView, LazyLineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetrySnaps, Localize("Snapshots per second"), &g_Config.m_LcTelemetrySnaps, &MainView, LazyLineSize);
+	LazyInfoLabel(&MainView, Localize("Local-only overlay in the top-right. Packet loss is estimated from missing vital network chunks and resend requests over the last few seconds."), Ui(), TextRender());
 
-	s_ScrollRegion.End();
+	LazyEndScroll(&s_ScrollRegion, MainView);
 }
 
 void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
@@ -447,7 +453,7 @@ void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 	MainView.HSplitTop(20.0f, &Label, &MainView);
 	Ui()->DoLabel(&Label, Localize("No options yet."), 14.0f, TEXTALIGN_ML);
 
-	s_ScrollRegion.End();
+	LazyEndScroll(&s_ScrollRegion, MainView);
 }
 
 void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
@@ -498,7 +504,9 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	if(DoButton_Menu(&s_ReleasesButton, Localize("Open GitHub Releases"), 0, &Button))
 		Client()->ViewLink("https://github.com/DASIEU/LazyClient/releases");
 
-	s_ScrollRegion.End();
+	CUIRect ContentBottom = Left;
+	ContentBottom.y = std::max(Left.y, Right.y);
+	LazyEndScroll(&s_ScrollRegion, ContentBottom);
 }
 
 void CMenus::RenderSettingsLazyInfo(CUIRect MainView)
@@ -579,5 +587,7 @@ void CMenus::RenderSettingsLazyInfo(CUIRect MainView)
 			Client()->ViewLink("https://github.com/DASIEU/LazyClient/blob/master/license.txt");
 	}
 
-	s_ScrollRegion.End();
+	CUIRect ContentBottom = Left;
+	ContentBottom.y = std::max(Left.y, Right.y);
+	LazyEndScroll(&s_ScrollRegion, ContentBottom);
 }

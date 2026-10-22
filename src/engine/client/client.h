@@ -366,7 +366,7 @@ public:
 	{
 		if(Conn < 0 || Conn >= NUM_CONNS)
 			return {};
-		return {m_aNetClient[Conn].RecvVitalChunks(), m_aNetClient[Conn].LostVitalChunks()};
+		return {m_aNetClient[Conn].RecvVitalChunks(), m_aNetClient[Conn].LostVitalChunks(), m_aNetClient[Conn].ResendRequests()};
 	}
 	CSnapItem SnapGetItem(int SnapId, int Index) const override;
 	int GetPredictionTick() override;

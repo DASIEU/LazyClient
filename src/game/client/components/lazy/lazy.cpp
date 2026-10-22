@@ -49,7 +49,8 @@ constexpr int AUTO_MARGIN_STEP_DOWN = 5;
 constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 constexpr float ZERO_GRAV_TILE_SIZE = 32.0f;
-constexpr float ZERO_GRAV_HOLD_MAX_HSPEED = 60.0f;
+constexpr int ZERO_GRAV_HOLD_GRACE_CHECKS = 5;
+constexpr int ZERO_GRAV_WARNING_GRACE_CHECKS = 8;
 constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
@@ -112,6 +113,8 @@ void CLazyClient::OnReset()
 	m_ZeroGravHistoryCount = 0;
 	m_ZeroGravHistoryNext = 0;
 	m_ZeroGravTarget = -1;
+	m_ZeroGravMissedChecks = 0;
+	m_ZeroGravWarningMisses = 0;
 	ResetAutoMarginState();
 	ResetTelemetry();
 }
@@ -138,6 +141,8 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_ZeroGravHistoryCount = 0;
 	m_ZeroGravHistoryNext = 0;
 	m_ZeroGravTarget = -1;
+	m_ZeroGravMissedChecks = 0;
+	m_ZeroGravWarningMisses = 0;
 	ResetTelemetry();
 }
 
@@ -1115,6 +1120,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravTarget = -1;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravWarningMisses = 0;
 		return;
 	}
 
@@ -1126,6 +1133,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravTarget = -1;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravWarningMisses = 0;
 		return;
 	}
 
@@ -1135,6 +1144,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		m_ZeroGravWarning = false;
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravWarningMisses = 0;
 	}
 
 	const bool TargetIsLocal = !Snap.m_SpecInfo.m_Active && TargetId == Snap.m_LocalClientId;
@@ -1165,6 +1176,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
 		m_ZeroGravTarget = -1;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravWarningMisses = 0;
 		return;
 	}
 
@@ -1177,6 +1190,8 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		m_ZeroGravCheckTimer = 0.0f;
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravWarningMisses = 0;
 		return;
 	}
 
@@ -1192,14 +1207,22 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
 		HookDelta.x * Core.m_Direction < 0.0f &&
 		std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
-		std::abs(Core.m_Vel.x) < ZERO_GRAV_HOLD_MAX_HSPEED &&
 		!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 
 	if(!ZeroGravityHold)
 	{
+		// A swaying hold can briefly fail a gate. Keep the last warning for
+		// a few checks instead of flickering off and rebuilding the history.
+		if(m_ZeroGravHistoryCount > 0 && m_ZeroGravMissedChecks < ZERO_GRAV_HOLD_GRACE_CHECKS)
+		{
+			m_ZeroGravMissedChecks++;
+			return;
+		}
 		m_ZeroGravWarning = false;
 		m_ZeroGravHistoryCount = 0;
 		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravWarningMisses = 0;
 		return;
 	}
 
@@ -1207,30 +1230,47 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravHistoryNext = (m_ZeroGravHistoryNext + 1) % ZERO_GRAV_HISTORY_SIZE;
 	m_ZeroGravHistoryCount = std::min(m_ZeroGravHistoryCount + 1, ZERO_GRAV_HISTORY_SIZE);
 
+	if(m_ZeroGravHistoryCount < ZERO_GRAV_HISTORY_SIZE)
+	{
+		m_ZeroGravWarning = false;
+		m_ZeroGravMissedChecks = 0;
+		return;
+	}
+
 	// Only start predicting when the tee has stayed inside the configured
 	// hold area for the last two seconds, which filters out fast map traversal.
-	// Keep the whole history close to the current position so that leaving a
-	// previously stable hold clears the warning immediately.
-	bool StayedInArea = m_ZeroGravHistoryCount >= ZERO_GRAV_HISTORY_SIZE;
-	if(StayedInArea)
+	bool StayedInArea = true;
+	const float HoldRadius = (float)g_Config.m_LcZeroGravHoldTiles * ZERO_GRAV_TILE_SIZE;
+	float MinX = m_aZeroGravHistory[0].x, MaxX = MinX;
+	float MinY = m_aZeroGravHistory[0].y, MaxY = MinY;
+	for(const vec2 &Pos : m_aZeroGravHistory)
 	{
-		const float HoldRadius = (float)g_Config.m_LcZeroGravHoldTiles * ZERO_GRAV_TILE_SIZE;
-		for(const vec2 &Pos : m_aZeroGravHistory)
-		{
-			if(std::abs(Pos.x - Core.m_Pos.x) > HoldRadius ||
-				std::abs(Pos.y - Core.m_Pos.y) > HoldRadius)
-			{
-				StayedInArea = false;
-				break;
-			}
-		}
+		MinX = std::min(MinX, Pos.x);
+		MaxX = std::max(MaxX, Pos.x);
+		MinY = std::min(MinY, Pos.y);
+		MaxY = std::max(MaxY, Pos.y);
 	}
+	StayedInArea = MaxX - MinX <= HoldRadius * 2.0f && MaxY - MinY <= HoldRadius * 2.0f;
 
 	if(!StayedInArea)
 	{
+		// Remove the new outlier. A single spike should not poison the whole
+		// history window, but sustained movement still clears it after grace.
+		m_ZeroGravHistoryNext = (m_ZeroGravHistoryNext + ZERO_GRAV_HISTORY_SIZE - 1) % ZERO_GRAV_HISTORY_SIZE;
+		m_ZeroGravHistoryCount--;
+		if(m_ZeroGravMissedChecks < ZERO_GRAV_HOLD_GRACE_CHECKS)
+		{
+			m_ZeroGravMissedChecks++;
+			return;
+		}
 		m_ZeroGravWarning = false;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravWarningMisses = 0;
 		return;
 	}
+	m_ZeroGravMissedChecks = 0;
 
 	const int TickSpeed = std::max(1, Client()->GameTickSpeed());
 	const int MaxTicks = std::max(1, g_Config.m_LcZeroGravPredictTime) * TickSpeed;
@@ -1255,7 +1295,6 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	{
 		Sim.Tick(true, false);
 		Sim.Move();
-		Sim.Quantize();
 
 		if(PathHitsFreeze(Collision(), PrevPos, Sim.m_Pos))
 		{
@@ -1265,14 +1304,23 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		PrevPos = Sim.m_Pos;
 	}
 
-	if(!ZeroGravityHold || HitSeconds < 0.0f)
+	if(HitSeconds < 0.0f)
 	{
+		// The simulated trajectory can miss the freeze on a single check while
+		// the tee is still swaying into it. Hold the warning briefly.
+		if(m_ZeroGravWarning && m_ZeroGravWarningMisses < ZERO_GRAV_WARNING_GRACE_CHECKS)
+		{
+			m_ZeroGravWarningMisses++;
+			return;
+		}
 		m_ZeroGravWarning = false;
+		m_ZeroGravWarningMisses = 0;
 		return;
 	}
 
 	m_ZeroGravWarning = true;
 	m_ZeroGravSeconds = HitSeconds;
+	m_ZeroGravWarningMisses = 0;
 }
 
 void CLazyClient::RenderZeroGravityWarning()
@@ -1325,6 +1373,13 @@ void CLazyClient::ResetTelemetry()
 	m_TelemetrySnapshotRate = 0.0f;
 	m_TelemetryPrevRecvVital = 0;
 	m_TelemetryPrevLostVital = 0;
+	m_TelemetryPrevResend = 0;
+	for(int i = 0; i < TELEMETRY_LOSS_SAMPLES; i++)
+	{
+		m_aTelemetryLossRecv[i] = 0;
+		m_aTelemetryLossLost[i] = 0;
+	}
+	m_TelemetryLossIndex = 0;
 }
 
 void CLazyClient::UpdateTelemetry()
@@ -1372,18 +1427,41 @@ void CLazyClient::UpdateTelemetry()
 		m_TelemetryPing = (float)std::max(0, GameClient()->m_Snap.m_pLocalInfo->m_Latency);
 
 	const SClientNetStats Stats = Client()->GetNetStats(g_Config.m_ClDummy);
-	if(Stats.m_RecvVitalChunks < m_TelemetryPrevRecvVital || Stats.m_LostVitalChunks < m_TelemetryPrevLostVital)
+	const bool NetStatsReset = Stats.m_RecvVitalChunks < m_TelemetryPrevRecvVital ||
+		Stats.m_LostVitalChunks < m_TelemetryPrevLostVital ||
+		Stats.m_ResendRequests < m_TelemetryPrevResend;
+	if(NetStatsReset)
 	{
-		m_TelemetryPacketLoss = 0.0f;
+		for(int i = 0; i < TELEMETRY_LOSS_SAMPLES; i++)
+		{
+			m_aTelemetryLossRecv[i] = 0;
+			m_aTelemetryLossLost[i] = 0;
+		}
+		m_TelemetryLossIndex = 0;
 	}
 	else
 	{
 		const uint64_t Received = Stats.m_RecvVitalChunks - m_TelemetryPrevRecvVital;
-		const uint64_t Lost = Stats.m_LostVitalChunks - m_TelemetryPrevLostVital;
-		m_TelemetryPacketLoss = Received + Lost > 0 ? 100.0f * (float)Lost / (float)(Received + Lost) : 0.0f;
+		const uint64_t LostChunks = Stats.m_LostVitalChunks - m_TelemetryPrevLostVital;
+		const uint64_t ResendRequests = Stats.m_ResendRequests - m_TelemetryPrevResend;
+		m_aTelemetryLossRecv[m_TelemetryLossIndex] = Received;
+		// Prefer the chunk-gap estimate; resend requests are a fallback for
+		// cases where the gap was filled before it could be counted.
+		m_aTelemetryLossLost[m_TelemetryLossIndex] = LostChunks > 0 ? LostChunks : ResendRequests;
+		m_TelemetryLossIndex = (m_TelemetryLossIndex + 1) % TELEMETRY_LOSS_SAMPLES;
 	}
 	m_TelemetryPrevRecvVital = Stats.m_RecvVitalChunks;
 	m_TelemetryPrevLostVital = Stats.m_LostVitalChunks;
+	m_TelemetryPrevResend = Stats.m_ResendRequests;
+
+	uint64_t WindowReceived = 0;
+	uint64_t WindowLost = 0;
+	for(int i = 0; i < TELEMETRY_LOSS_SAMPLES; i++)
+	{
+		WindowReceived += m_aTelemetryLossRecv[i];
+		WindowLost += m_aTelemetryLossLost[i];
+	}
+	m_TelemetryPacketLoss = WindowReceived + WindowLost > 0 ? 100.0f * (float)WindowLost / (float)(WindowReceived + WindowLost) : 0.0f;
 
 	m_TelemetrySnapshotRate = (float)m_TelemetrySnapshots;
 	m_TelemetrySnapshots = 0;

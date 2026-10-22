@@ -47,6 +47,7 @@ void CNetConnection::ResetStats()
 	m_Stats = {};
 	m_RecvVitalChunks = 0;
 	m_LostVitalChunks = 0;
+	m_ResendRequests = 0;
 	m_LastCountedLossAck = -1;
 	ClearPeerAddr();
 	m_LastUpdateTime = 0;
@@ -78,6 +79,7 @@ void CNetConnection::Reset()
 
 	m_RecvVitalChunks = 0;
 	m_LostVitalChunks = 0;
+	m_ResendRequests = 0;
 	m_LastCountedLossAck = -1;
 
 	m_Buffer.Init();
@@ -122,6 +124,8 @@ void CNetConnection::AckChunks(int Ack)
 
 void CNetConnection::SignalResend()
 {
+	if((m_Construct.m_Flags & NET_PACKETFLAG_RESEND) == 0)
+		m_ResendRequests++;
 	m_Construct.m_Flags |= NET_PACKETFLAG_RESEND;
 }
 

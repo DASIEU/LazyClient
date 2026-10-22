@@ -31,6 +31,7 @@ struct SClientNetStats
 {
 	uint64_t m_RecvVitalChunks = 0;
 	uint64_t m_LostVitalChunks = 0;
+	uint64_t m_ResendRequests = 0;
 };
 
 enum
