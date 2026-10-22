@@ -50,7 +50,6 @@ constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 constexpr float ZERO_GRAV_TILE_SIZE = 32.0f;
 constexpr int ZERO_GRAV_HOLD_GRACE_CHECKS = 10;
-constexpr int ZERO_GRAV_DANGER_TIMEOUT_CHECKS = 40;
 constexpr float ZERO_GRAV_HOOK_MOVE_DISTANCE = 16.0f;
 constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
 
@@ -1201,7 +1200,6 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravCheckTimer -= Client()->RenderFrameTime();
 	if(m_ZeroGravCheckTimer > 0.0f)
 		return;
-	const float CheckInterval = std::clamp(0.05f - m_ZeroGravCheckTimer, 0.05f, 0.25f);
 	m_ZeroGravCheckTimer = 0.05f;
 
 	const vec2 HookPos = Core.m_HookState == HOOK_GRABBED ? Core.m_HookPos : vec2(pCharacter->m_HookX, pCharacter->m_HookY);
@@ -1227,7 +1225,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	const bool ZeroGravityHold = Core.HookedPlayer() == -1 &&
 		HoldDirection != 0 &&
 		HookDelta.x * HoldDirection < 0.0f &&
-		std::abs(HookDelta.x) > 8.0f &&
+		std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
 		!Collision()->IsOnGround(Core.m_Pos, CCharacterCore::PhysicalSize());
 
 	if(!ZeroGravityHold)
@@ -1318,6 +1316,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	{
 		Sim.Tick(true, false);
 		Sim.Move();
+		Sim.Quantize();
 
 		if(PathHitsFreeze(Collision(), PrevPos, Sim.m_Pos))
 		{
@@ -1327,37 +1326,16 @@ void CLazyClient::UpdateZeroGravityPredictor()
 		PrevPos = Sim.m_Pos;
 	}
 
-	// Keep a latched countdown instead of replacing it with every new snapshot.
-	// The tee's sway changes the current time-to-freeze from check to check, so
-	// a fresh value would visibly jump up and down. The displayed value only
-	// counts down, snaps to a closer prediction, and expires when it reaches
-	// zero (or after a short run of checks without any predicted freeze).
-	const bool WasLatched = m_ZeroGravWarning;
-	if(WasLatched)
-		m_ZeroGravSeconds = std::max(0.0f, m_ZeroGravSeconds - CheckInterval);
-
-	if(HitSeconds >= 0.0f)
-	{
-		if(!WasLatched || m_ZeroGravSeconds <= 0.0f || HitSeconds < m_ZeroGravSeconds)
-			m_ZeroGravSeconds = HitSeconds;
-		m_ZeroGravWarning = true;
-		m_ZeroGravWarningMisses = 0;
-	}
-	else
-	{
-		m_ZeroGravWarningMisses++;
-		if(!WasLatched || m_ZeroGravWarningMisses >= ZERO_GRAV_DANGER_TIMEOUT_CHECKS)
-		{
-			m_ZeroGravWarning = false;
-			m_ZeroGravWarningMisses = 0;
-		}
-	}
-
-	if(m_ZeroGravWarning && m_ZeroGravSeconds <= 0.0f)
+	if(HitSeconds < 0.0f)
 	{
 		m_ZeroGravWarning = false;
 		m_ZeroGravWarningMisses = 0;
+		return;
 	}
+
+	m_ZeroGravWarning = true;
+	m_ZeroGravSeconds = HitSeconds;
+	m_ZeroGravWarningMisses = 0;
 }
 
 void CLazyClient::RenderZeroGravityWarning()
