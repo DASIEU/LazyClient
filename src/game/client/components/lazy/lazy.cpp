@@ -49,8 +49,8 @@ constexpr int AUTO_MARGIN_STEP_DOWN = 5;
 constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 constexpr float ZERO_GRAV_TILE_SIZE = 32.0f;
-constexpr int ZERO_GRAV_HOLD_GRACE_CHECKS = 5;
-constexpr int ZERO_GRAV_WARNING_GRACE_CHECKS = 8;
+constexpr int ZERO_GRAV_HOLD_GRACE_CHECKS = 10;
+constexpr int ZERO_GRAV_WARNING_GRACE_CHECKS = 10;
 constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
