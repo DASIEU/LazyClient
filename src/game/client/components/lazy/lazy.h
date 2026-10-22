@@ -172,6 +172,7 @@ private:
 	// Forced mode
 	int m_ZeroGravForcedState = 0;
 	float m_ZeroGravForcedStartTime = 0.0f;
+	float m_ZeroGravForcedInputGraceUntil = 0.0f;
 	bool m_ZeroGravForcedBindHeld = false;
 	bool m_aZeroGravForcedKeysDown[KEY_LAST] = {};
 	bool m_ZeroGravForcedSnapshotHooked = false;

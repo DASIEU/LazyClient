@@ -1277,7 +1277,6 @@ bool CLazyClient::IsForcedZeroGravityHold(const CCharacterCore &Core, const CNet
 	const vec2 HookDelta = HookPos - Core.m_Pos;
 	const int HoldDirection = Input.m_Direction;
 	return Core.HookedPlayer() == -1 &&
-	       Input.m_Hook != 0 &&
 	       HoldDirection != 0 &&
 	       HookDelta.x * HoldDirection < 0.0f &&
 	       std::abs(HookDelta.x) > 8.0f && length(HookDelta) > 46.0f &&
@@ -1288,7 +1287,10 @@ float CLazyClient::SimulateForcedZeroGravity(const CCharacterCore &Core, const C
 {
 	CCharacterCore Sim = Core;
 	Sim.SetCoreWorld(nullptr, Collision(), nullptr);
-	Sim.m_Input.m_Hook = Input.m_Hook;
+	// Forced mode only activates while the tee is already hooked. Keep the hook
+	// attached even if the bind key replaced the hook key or the user released
+	// it to reach the bind; the saved hold is what is being predicted.
+	Sim.m_Input.m_Hook = 1;
 	Sim.m_Input.m_Direction = Input.m_Direction;
 	Sim.m_Input.m_Jump = Input.m_Jump;
 	if(Sim.m_HookState != HOOK_GRABBED && SnapshotHooked)
@@ -1390,6 +1392,7 @@ void CLazyClient::DeactivateForcedZeroGravity()
 {
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_OFF;
 	m_ZeroGravForcedStartTime = 0.0f;
+	m_ZeroGravForcedInputGraceUntil = 0.0f;
 	std::fill(std::begin(m_aZeroGravForcedKeysDown), std::end(m_aZeroGravForcedKeysDown), false);
 	m_ZeroGravForcedSeconds = -1.0f;
 	m_ZeroGravForcedSnapshotHooked = false;
@@ -1476,6 +1479,7 @@ void CLazyClient::UpdateForcedZeroGravityPredictor()
 			Console()->ExecuteLine("say /spec", IConsole::CLIENT_ID_UNSPECIFIED);
 			m_ZeroGravForcedState = ZERO_GRAV_FORCED_ACTIVE;
 			m_ZeroGravForcedStartTime = 0.0f;
+			m_ZeroGravForcedInputGraceUntil = Client()->LocalTime() + 0.25f;
 			ResetForcedZeroGravityInputState();
 			if(m_ZeroGravForcedSeconds >= 0.0f)
 			{
@@ -1492,7 +1496,11 @@ void CLazyClient::UpdateForcedZeroGravityPredictor()
 	if(m_ZeroGravForcedState != ZERO_GRAV_FORCED_ACTIVE)
 		return;
 
-	if(ForcedZeroGravityInputPressed())
+	// Keep the warning visible for a moment after the spec sequence so keys the
+	// user presses to regain control do not clear it on the first frame. The
+	// input state is still updated, so those keys do not count after the grace.
+	const bool InputPressed = ForcedZeroGravityInputPressed();
+	if(Client()->LocalTime() >= m_ZeroGravForcedInputGraceUntil && InputPressed)
 	{
 		DeactivateForcedZeroGravity();
 		return;
