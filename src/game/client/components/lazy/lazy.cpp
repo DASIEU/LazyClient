@@ -1418,6 +1418,15 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	const CGameClient::CSnapState &Snap = GameClient()->m_Snap;
 	if(g_Config.m_LcZeroGravMode == 1)
 	{
+		// Do not let Prediction mode resume with a stale hold history after
+		// forced mode has been used.
+		m_ZeroGravCheckTimer = 0.0f;
+		m_ZeroGravHistoryCount = 0;
+		m_ZeroGravHistoryNext = 0;
+		m_ZeroGravMissedChecks = 0;
+		m_ZeroGravFastChecks = 0;
+		m_ZeroGravSpeedrunCooldown = 0;
+		m_ZeroGravHasHookPos = false;
 		UpdateForcedZeroGravityPredictor();
 		return;
 	}
