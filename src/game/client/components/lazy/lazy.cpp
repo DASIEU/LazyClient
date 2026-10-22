@@ -1379,7 +1379,12 @@ void CLazyClient::ActivateForcedZeroGravity()
 	m_ZeroGravForcedSeconds = Seconds;
 
 	m_ZeroGravForcedStatusUntil = Client()->LocalTime() + 3.0f;
-	GameClient()->m_Chat.Echo("LazyClient: zero-gravity predictor ON");
+	char aOnMsg[96];
+	if(Seconds >= 0.0f)
+		str_format(aOnMsg, sizeof(aOnMsg), "LazyClient: zero-gravity predictor ON (%.1fs)", Seconds);
+	else
+		str_copy(aOnMsg, "LazyClient: zero-gravity predictor ON (no freeze)");
+	GameClient()->m_Chat.Echo(aOnMsg);
 
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_WAIT_SECOND;
 	m_ZeroGravForcedStartTime = Client()->LocalTime();
@@ -1393,6 +1398,7 @@ void CLazyClient::ActivateForcedZeroGravity()
 
 void CLazyClient::DeactivateForcedZeroGravity()
 {
+	const bool WasActive = m_ZeroGravForcedState != ZERO_GRAV_FORCED_OFF;
 	m_ZeroGravForcedState = ZERO_GRAV_FORCED_OFF;
 	m_ZeroGravForcedStartTime = 0.0f;
 	m_ZeroGravForcedInputGraceUntil = 0.0f;
@@ -1415,6 +1421,8 @@ void CLazyClient::DeactivateForcedZeroGravity()
 	m_ZeroGravWarningHideTimer = 0.0f;
 	m_ZeroGravSeconds = 0.0f;
 	m_ZeroGravTarget = -1;
+	if(WasActive)
+		GameClient()->m_Chat.Echo("LazyClient: zero-gravity predictor OFF");
 }
 
 void CLazyClient::ResetForcedZeroGravityInputState()
@@ -1490,6 +1498,9 @@ void CLazyClient::UpdateForcedZeroGravityPredictor()
 				m_ZeroGravWarning = true;
 				m_ZeroGravSeconds = m_ZeroGravForcedSeconds;
 				m_ZeroGravWarningHideTimer = 0.0f;
+				char aWarningMsg[96];
+				str_format(aWarningMsg, sizeof(aWarningMsg), "LazyClient: freeze warning armed (%.1fs)", m_ZeroGravForcedSeconds);
+				GameClient()->m_Chat.Echo(aWarningMsg);
 			}
 			else
 				ClearZeroGravityWarning(true);
