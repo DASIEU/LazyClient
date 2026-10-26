@@ -280,6 +280,7 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	{
 		Right.HSplitTop(LazyLineSize, &Button, &Right);
 		Ui()->DoScrollbarOption(&g_Config.m_LcSnapTapDelay, &g_Config.m_LcSnapTapDelay, &Button, Localize("Switch delay"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "ms");
+		LazyInfoLabel(&Right, Localize("When both direction keys are held, the last pressed one wins. Taps shorter than a game tick are kept, so they are no longer lost between ticks."), Ui(), TextRender());
 	}
 
 	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);

@@ -53,6 +53,7 @@ void CControls::ResetInput(int Dummy)
 
 	m_aInputDirectionLeft[Dummy] = 0;
 	m_aInputDirectionRight[Dummy] = 0;
+	GameClient()->m_Lazy.ResetSnapTap(Dummy);
 }
 
 void CControls::OnPlayerDeath()
@@ -307,7 +308,7 @@ int CControls::SnapInput(int *pData)
 		// set direction
 		const bool LeftPressed = m_aInputDirectionLeft[g_Config.m_ClDummy] != 0;
 		const bool RightPressed = m_aInputDirectionRight[g_Config.m_ClDummy] != 0;
-		m_aInputData[g_Config.m_ClDummy].m_Direction = GameClient()->m_Lazy.ResolveMovementDirection(g_Config.m_ClDummy, LeftPressed, RightPressed);
+		m_aInputData[g_Config.m_ClDummy].m_Direction = GameClient()->m_Lazy.ResolveMovementDirection(g_Config.m_ClDummy, LeftPressed, RightPressed, true);
 
 		// dummy copy moves
 		if(g_Config.m_ClDummyCopyMoves)
@@ -543,7 +544,7 @@ bool CControls::CheckNewInput()
 		{
 			const bool LeftPressed = m_aInputDirectionLeft[Dummy] != 0;
 			const bool RightPressed = m_aInputDirectionRight[Dummy] != 0;
-			TestInput.m_Direction = GameClient()->m_Lazy.ResolveMovementDirection(Dummy, LeftPressed, RightPressed);
+			TestInput.m_Direction = GameClient()->m_Lazy.ResolveMovementDirection(Dummy, LeftPressed, RightPressed, false);
 		}
 
 		if(m_aFastInput[Dummy].m_Direction != TestInput.m_Direction)

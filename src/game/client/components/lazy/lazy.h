@@ -42,11 +42,12 @@ public:
 	float InputOffsetTicks() const;
 	bool ApplyInputToOthers() const;
 	bool InputModeActive() const;
+	bool HasInputLead() const;
 
 	// Snap tap
 	void ResetSnapTap(int Dummy);
 	void OnMovementKey(bool Left, bool Pressed);
-	int ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed);
+	int ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed, bool ConsumePending);
 
 	// Gores mode
 	void UpdateGoresMode();
@@ -94,6 +95,8 @@ private:
 	int m_aSnapApplied[NUM_DUMMIES] = {};
 	int m_aSnapLastPressed[NUM_DUMMIES] = {};
 	int64_t m_aSnapLastPressedTime[NUM_DUMMIES] = {};
+	// Direction of a tap that was released before a tick could sample it.
+	int m_aSnapPending[NUM_DUMMIES] = {};
 
 	// Auto margin
 	float m_CheckTimer = 0.0f;

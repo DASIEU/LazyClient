@@ -449,56 +449,92 @@ bool CLazyClient::InputModeActive() const
 	return g_Config.m_LcInputMode != 0 || g_Config.m_TcFastInput != 0;
 }
 
+bool CLazyClient::HasInputLead() const
+{
+	return InputOffsetTicks() > 0.0f;
+}
+
 void CLazyClient::ResetSnapTap(int Dummy)
 {
 	m_aSnapApplied[Dummy] = 0;
 	m_aSnapLastPressed[Dummy] = 0;
 	m_aSnapLastPressedTime[Dummy] = 0;
+	m_aSnapPending[Dummy] = 0;
 }
 
 void CLazyClient::OnMovementKey(bool Left, bool Pressed)
 {
-	if(!Pressed || !g_Config.m_LcSnapTap)
+	if(!g_Config.m_LcSnapTap)
 		return;
 
 	const int Dummy = g_Config.m_ClDummy;
-	m_aSnapLastPressed[Dummy] = Left ? -1 : 1;
-	m_aSnapLastPressedTime[Dummy] = time_get();
+	if(Pressed)
+	{
+		m_aSnapLastPressed[Dummy] = Left ? -1 : 1;
+		m_aSnapLastPressedTime[Dummy] = time_get();
+		return;
+	}
+
+	if(GameClient()->m_Chat.IsActive() || GameClient()->m_Menus.IsActive() || GameClient()->m_GameConsole.IsActive())
+		return;
+
+	// Direction is sampled once per simulation tick. A tap that starts and ends
+	// between two ticks would otherwise be invisible, so remember its direction
+	// and apply it for one tick.
+	const int Direction = Left ? -1 : 1;
+	if(GameClient()->m_Controls.m_aLastData[Dummy].m_Direction != Direction)
+		m_aSnapPending[Dummy] = Direction;
 }
 
-int CLazyClient::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed)
+int CLazyClient::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightPressed, bool ConsumePending)
 {
+	int Direction;
 	if(LeftPressed == RightPressed)
 	{
 		if(!LeftPressed)
 		{
 			m_aSnapApplied[Dummy] = 0;
-			return 0;
+			Direction = 0;
 		}
-
-		if(!g_Config.m_LcSnapTap)
-			return 0;
-
-		int CandidateDirection = m_aSnapLastPressed[Dummy];
-		if(CandidateDirection != -1 && CandidateDirection != 1)
-			CandidateDirection = m_aSnapApplied[Dummy] != 0 ? m_aSnapApplied[Dummy] : -1;
-
-		if(m_aSnapApplied[Dummy] == 0)
+		else if(!g_Config.m_LcSnapTap)
 		{
-			m_aSnapApplied[Dummy] = CandidateDirection;
+			Direction = 0;
 		}
-		else if(m_aSnapApplied[Dummy] != CandidateDirection)
+		else
 		{
-			const int64_t Delay = (time_freq() * (int64_t)g_Config.m_LcSnapTapDelay) / 1000;
-			if(Delay <= 0 || time_get() - m_aSnapLastPressedTime[Dummy] >= Delay)
+			int CandidateDirection = m_aSnapLastPressed[Dummy];
+			if(CandidateDirection != -1 && CandidateDirection != 1)
+				CandidateDirection = m_aSnapApplied[Dummy] != 0 ? m_aSnapApplied[Dummy] : -1;
+
+			if(m_aSnapApplied[Dummy] == 0)
+			{
 				m_aSnapApplied[Dummy] = CandidateDirection;
-		}
+			}
+			else if(m_aSnapApplied[Dummy] != CandidateDirection)
+			{
+				const int64_t Delay = (time_freq() * (int64_t)g_Config.m_LcSnapTapDelay) / 1000;
+				if(Delay <= 0 || time_get() - m_aSnapLastPressedTime[Dummy] >= Delay)
+					m_aSnapApplied[Dummy] = CandidateDirection;
+			}
 
-		return m_aSnapApplied[Dummy];
+			Direction = m_aSnapApplied[Dummy];
+		}
+	}
+	else
+	{
+		m_aSnapApplied[Dummy] = LeftPressed ? -1 : 1;
+		Direction = m_aSnapApplied[Dummy];
 	}
 
-	m_aSnapApplied[Dummy] = LeftPressed ? -1 : 1;
-	return m_aSnapApplied[Dummy];
+	// A short tap is only consumed by the real input path (SnapInput), so the
+	// fast-input prediction still resolves from the live key state.
+	if(ConsumePending && m_aSnapPending[Dummy] != 0)
+	{
+		Direction = m_aSnapPending[Dummy];
+		m_aSnapPending[Dummy] = 0;
+	}
+
+	return Direction;
 }
 
 void CLazyClient::ConGunFire(IConsole::IResult *pResult, void *pUserData)
