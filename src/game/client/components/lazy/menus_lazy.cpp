@@ -50,6 +50,31 @@ static void LazyInfoLabel(CUIRect *pRect, const char *pText, CUi *pUi, ITextRend
 	pTextRender->TextColor(pTextRender->DefaultTextColor());
 }
 
+// Input offsets are stored in 0.01-tick units. Display them as ticks so the
+// slider matches the values used for prediction and BestClient's slider.
+static void LazyTickAmountSlider(CUi *pUi, int *pValue, const CUIRect *pRect, const char *pLabel, int Min, int Max)
+{
+	int Value = std::clamp(*pValue, Min, Max);
+
+	const int Increment = std::max(1, (Max - Min) / 35);
+	if(pUi->Input()->ModifierIsPressed() && pUi->Input()->KeyPress(KEY_MOUSE_WHEEL_UP) && pUi->MouseInside(pRect))
+		Value = std::clamp(Value + Increment, Min, Max);
+	if(pUi->Input()->ModifierIsPressed() && pUi->Input()->KeyPress(KEY_MOUSE_WHEEL_DOWN) && pUi->MouseInside(pRect))
+		Value = std::clamp(Value - Increment, Min, Max);
+
+	char aBuf[128];
+	str_format(aBuf, sizeof(aBuf), "%s: %.2f ticks", pLabel, Value / 100.0f);
+
+	CUIRect Label, ScrollBar;
+	pRect->VSplitMid(&Label, &ScrollBar, std::min(10.0f, pRect->w * 0.05f));
+	pUi->DoLabel(&Label, aBuf, Label.h * CUi::ms_FontmodHeight * 0.8f, TEXTALIGN_ML);
+
+	const float Rel = (Value - Min) / (float)(Max - Min);
+	const float NewRel = pUi->DoScrollbarH(pValue, &ScrollBar, Rel);
+	Value = (int)(Min + NewRel * (Max - Min) + 0.5f);
+	*pValue = std::clamp(Value, Min, Max);
+}
+
 static void LazyBeginScroll(CUIRect *pRect, CScrollRegion *pScrollRegion, CScrollRegionParams *pParams)
 {
 	pParams->m_ScrollUnit = 60.0f;
@@ -156,12 +181,12 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	if(g_Config.m_LcInputMode == 1)
 	{
 		Left.HSplitTop(LazyLineSize, &Button, &Left);
-		Ui()->DoScrollbarOption(&g_Config.m_LcFastInputAmount, &g_Config.m_LcFastInputAmount, &Button, Localize("Fast amount"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "ms");
+		Ui()->DoScrollbarOption(&g_Config.m_LcFastInputAmount, &g_Config.m_LcFastInputAmount, &Button, Localize("Fast amount"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, " ms");
 	}
 	else if(g_Config.m_LcInputMode == 2)
 	{
 		Left.HSplitTop(LazyLineSize, &Button, &Left);
-		Ui()->DoScrollbarOption(&g_Config.m_LcBestInputAmount, &g_Config.m_LcBestInputAmount, &Button, Localize("Best amount"), 0, 1000, &CUi::ms_LinearScrollbarScale, 0, "0.01 ticks");
+		LazyTickAmountSlider(Ui(), &g_Config.m_LcBestInputAmount, &Button, Localize("Best amount"), 0, 1000);
 		Left.HSplitTop(LazyLineSize, &Button, &Left);
 		Ui()->DoScrollbarOption(&g_Config.m_LcBestInputSmoothing, &g_Config.m_LcBestInputSmoothing, &Button, Localize("Smoothing"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
 		Left.HSplitTop(LazyLineSize, &Button, &Left);
@@ -170,12 +195,12 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	else if(g_Config.m_LcInputMode == 3)
 	{
 		Left.HSplitTop(LazyLineSize, &Button, &Left);
-		Ui()->DoScrollbarOption(&g_Config.m_LcSaikoInputAmount, &g_Config.m_LcSaikoInputAmount, &Button, Localize("Saiko amount"), 0, 500, &CUi::ms_LinearScrollbarScale, 0, "0.01 ticks");
+		LazyTickAmountSlider(Ui(), &g_Config.m_LcSaikoInputAmount, &Button, Localize("Saiko amount"), 0, 500);
 	}
 	else if(g_Config.m_LcInputMode == 4)
 	{
 		Left.HSplitTop(LazyLineSize, &Button, &Left);
-		Ui()->DoScrollbarOption(&g_Config.m_LcCloudInputAmount, &g_Config.m_LcCloudInputAmount, &Button, Localize("Cloud amount"), 0, 500, &CUi::ms_LinearScrollbarScale, 0, "0.01 ticks");
+		LazyTickAmountSlider(Ui(), &g_Config.m_LcCloudInputAmount, &Button, Localize("Cloud amount"), 0, 500);
 	}
 
 	if(g_Config.m_LcInputMode != 0)
@@ -183,6 +208,12 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 		Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcInputOthers, Localize("Apply to other tees"), &g_Config.m_LcInputOthers, &Left, LazyLineSize);
 	}
+
+	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSubTickAiming, Localize("Sub-tick aiming"), &g_Config.m_ClSubTickAiming, &Left, LazyLineSize);
+	LazyInfoLabel(&Left, Localize("Sends aim updates between ticks for smoother hooks. Disable it if hooks feel unstable."), Ui(), TextRender());
+	if(!g_Config.m_ClSubTickAiming)
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInputRepredictHook, Localize("Repredict on mid-tick hook direction change (may lag)"), &g_Config.m_TcFastInputRepredictHook, &Left, LazyLineSize);
 
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
 	Left.HSplitTop(LazyLineSize, &Button, &Left);
@@ -197,8 +228,10 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 		ConfigManager()->Reset("lc_best_input_latency_comp");
 		ConfigManager()->Reset("lc_saiko_input_amount");
 		ConfigManager()->Reset("lc_cloud_input_amount");
+		ConfigManager()->Reset("cl_sub_tick_aiming");
 		ConfigManager()->Reset("tc_fast_input");
 		ConfigManager()->Reset("tc_fast_input_others");
+		ConfigManager()->Reset("tc_fast_input_repredict_hook");
 	}
 
 	// ---------------------------------------------------------------- Gores mode
