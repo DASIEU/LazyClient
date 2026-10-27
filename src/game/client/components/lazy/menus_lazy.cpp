@@ -40,11 +40,45 @@ static constexpr const char *LAZY_INVITES_HEADER =
 	"# Names are case-insensitive. Later entries override earlier ones.\n"
 	"# Unknown players who whisper !invite are appended here as ask.\n";
 
-static void LazySectionTitle(CUIRect *pRect, const char *pTitle, CUi *pUi)
+static void LazyInfoIconAt(CUIRect Icon, const char *pText, CUi *pUi, CGameClient *pGameClient)
+{
+	constexpr float TooltipWidth = 400.0f;
+	constexpr float TooltipFade = 0.15f;
+
+	pUi->DoButtonLogic(pText, 0, &Icon, BUTTONFLAG_NONE);
+	const bool Hovered = pUi->HotItem() == pText;
+	const ColorRGBA Fill = Hovered ? ColorRGBA(0.36f, 0.55f, 0.88f, 0.95f) : ColorRGBA(0.18f, 0.20f, 0.27f, 0.90f);
+	Icon.Draw(Fill, IGraphics::CORNER_ALL, Icon.h / 2.0f);
+	pUi->DoLabel(&Icon, "i", 11.0f, TEXTALIGN_MC);
+
+	pGameClient->m_Tooltips.DoToolTip(pText, &Icon, pText, TooltipWidth);
+	pGameClient->m_Tooltips.SetFadeTime(pText, TooltipFade);
+}
+
+// Draw the "i" right after a label, so long explanations sit next to the
+// feature name instead of taking a whole row below it.
+static void LazyInfoIconAfterText(CUIRect Row, float TextX, float FontSize, const char *pLabel, const char *pText, CUi *pUi, CGameClient *pGameClient)
+{
+	constexpr float IconSize = 16.0f;
+	constexpr float Gap = 6.0f;
+
+	CUIRect Icon;
+	Icon.w = Icon.h = IconSize;
+	const float LabelWidth = pGameClient->TextRender()->TextWidth(FontSize, pLabel);
+	Icon.x = TextX + LabelWidth + Gap;
+	Icon.y = Row.y + (Row.h - Icon.h) / 2.0f;
+	if(Icon.x + Icon.w > Row.x + Row.w)
+		Icon.x = Row.x + Row.w - Icon.w;
+	LazyInfoIconAt(Icon, pText, pUi, pGameClient);
+}
+
+static void LazySectionTitle(CUIRect *pRect, const char *pTitle, CUi *pUi, CGameClient *pGameClient = nullptr, const char *pInfo = nullptr)
 {
 	CUIRect Label;
 	pRect->HSplitTop(LazyHeadlineHeight, &Label, pRect);
 	pUi->DoLabel(&Label, pTitle, LazyHeadlineSize, TEXTALIGN_ML);
+	if(pGameClient != nullptr && pInfo != nullptr)
+		LazyInfoIconAfterText(Label, Label.x, LazyHeadlineSize, pTitle, pInfo, pUi, pGameClient);
 	pRect->HSplitTop(LazyMarginSmall, nullptr, pRect);
 }
 
@@ -57,27 +91,19 @@ static void LazyInfoLabel(CUIRect *pRect, const char *pText, CUi *pUi, ITextRend
 	pTextRender->TextColor(pTextRender->DefaultTextColor());
 }
 
-// Compact replacement for long descriptions: a round "i" whose tooltip only
-// appears while the mouse is over it. The text pointer doubles as the stable
-// UI id, which is fine because localized feature strings live for the process.
-static void LazyInfoIcon(CUIRect *pRect, const char *pText, CUi *pUi, CGameClient *pGameClient)
+int CMenus::DoButton_CheckBoxWithInfo(const void *pId, const char *pText, int *pValue, CUIRect *pRect, float VMargin, const char *pInfo)
 {
-	constexpr float IconSize = 16.0f;
-	constexpr float TooltipWidth = 400.0f;
-	constexpr float TooltipFade = 0.15f;
+	CUIRect Row;
+	pRect->HSplitTop(VMargin, &Row, pRect);
 
-	CUIRect Row, Icon;
-	pRect->HSplitTop(IconSize, &Row, pRect);
-	Row.VSplitLeft(IconSize, &Icon, nullptr);
+	CUIRect Check = Row;
+	const float FontSize = VMargin * CUi::ms_FontmodHeight;
+	const float LabelWidth = TextRender()->TextWidth(FontSize, pText);
+	Check.w = std::min(Row.w, VMargin + 5.0f + LabelWidth);
 
-	pUi->DoButtonLogic(pText, 0, &Icon, BUTTONFLAG_NONE);
-	const bool Hovered = pUi->HotItem() == pText;
-	const ColorRGBA Fill = Hovered ? ColorRGBA(0.36f, 0.55f, 0.88f, 0.95f) : ColorRGBA(0.18f, 0.20f, 0.27f, 0.90f);
-	Icon.Draw(Fill, IGraphics::CORNER_ALL, Icon.h / 2.0f);
-	pUi->DoLabel(&Icon, "i", 11.0f, TEXTALIGN_MC);
-
-	pGameClient->m_Tooltips.DoToolTip(pText, &Icon, pText, TooltipWidth);
-	pGameClient->m_Tooltips.SetFadeTime(pText, TooltipFade);
+	const int Logic = DoButton_CheckBoxAutoVMarginAndSet(pId, pText, pValue, &Check, VMargin);
+	LazyInfoIconAfterText(Row, Row.x + VMargin + 5.0f, FontSize, pText, pInfo, Ui(), GameClient());
+	return Logic;
 }
 
 // Input offsets are stored in 0.01-tick units. Display them as ticks so the
@@ -214,8 +240,7 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	Right.VSplitRight(5.0f, &Right, nullptr);
 
 	// ---------------------------------------------------------------- Input modes
-	LazySectionTitle(&Left, Localize("Input Modes"), Ui());
-	LazyInfoIcon(&Left, Localize("Shifts input prediction forward. The higher the amount, the earlier your tee reacts."), Ui(), GameClient());
+	LazySectionTitle(&Left, Localize("Input Modes"), Ui(), GameClient(), Localize("Shifts input prediction forward. The higher the amount, the earlier your tee reacts."));
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
 
 	Left.HSplitTop(LazyLineSize, &Tabs, &Left);
@@ -264,8 +289,7 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	}
 
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSubTickAiming, Localize("Sub-tick aiming"), &g_Config.m_ClSubTickAiming, &Left, LazyLineSize);
-	LazyInfoIcon(&Left, Localize("Sends aim updates between ticks for smoother hooks. Disable it if hooks feel unstable."), Ui(), GameClient());
+	DoButton_CheckBoxWithInfo(&g_Config.m_ClSubTickAiming, Localize("Sub-tick aiming"), &g_Config.m_ClSubTickAiming, &Left, LazyLineSize, Localize("Sends aim updates between ticks for smoother hooks. Disable it if hooks feel unstable."));
 	if(!g_Config.m_ClSubTickAiming)
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInputRepredictHook, Localize("Repredict on mid-tick hook direction change (may lag)"), &g_Config.m_TcFastInputRepredictHook, &Left, LazyLineSize);
 
@@ -290,8 +314,7 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 
 	// ---------------------------------------------------------------- Gores mode
 	Left.HSplitTop(LazyMargin * 1.5f, nullptr, &Left);
-	LazySectionTitle(&Left, Localize("Gores Mode"), Ui());
-	LazyInfoIcon(&Left, Localize("Holds the gun. Left click switches to the hammer, hits, then switches back after the delay."), Ui(), GameClient());
+	LazySectionTitle(&Left, Localize("Gores Mode"), Ui(), GameClient(), Localize("Holds the gun. Left click switches to the hammer, hits, then switches back after the delay."));
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcGoresMode, Localize("Enable gores mode"), &g_Config.m_LcGoresMode, &Left, LazyLineSize);
 
@@ -311,7 +334,7 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	}
 
 	// ---------------------------------------------------------------- Right column
-	LazySectionTitle(&Right, Localize("Antiping"), Ui());
+	LazySectionTitle(&Right, Localize("Antiping"), Ui(), GameClient(), g_Config.m_LcAntipingMode == 2 ? Localize("Turns antiping on when ping is at or above this value, and off when it is below.") : nullptr);
 
 	Right.HSplitTop(LazyLineSize, &Tabs, &Right);
 	static const char *s_apAntipingModes[] = {"Off", "On", "Auto"};
@@ -345,7 +368,6 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 			if(Value != g_Config.m_LcAntipingAutoPing)
 				g_Config.m_LcAntipingAutoPing = Value;
 		}
-		LazyInfoIcon(&Right, Localize("Turns antiping on when ping is at or above this value, and off when it is below."), Ui(), GameClient());
 	}
 	else if(g_Config.m_LcAntipingMode == 0)
 	{
@@ -357,22 +379,19 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	}
 
 	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcAutoMargin, Localize("Automatic prediction margin"), &g_Config.m_LcAutoMargin, &Right, LazyLineSize);
-	LazyInfoIcon(&Right, Localize("Raises the prediction margin when ping or jitter gets high."), Ui(), GameClient());
+	DoButton_CheckBoxWithInfo(&g_Config.m_LcAutoMargin, Localize("Automatic prediction margin"), &g_Config.m_LcAutoMargin, &Right, LazyLineSize, Localize("Raises the prediction margin when ping or jitter gets high."));
 
 	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
-	LazySectionTitle(&Right, Localize("Snap Tap"), Ui());
+	LazySectionTitle(&Right, Localize("Snap Tap"), Ui(), GameClient(), Localize("When both direction keys are held, the last pressed one wins. Taps shorter than a game tick are kept, so they are no longer lost between ticks."));
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcSnapTap, Localize("Enable snap tap"), &g_Config.m_LcSnapTap, &Right, LazyLineSize);
 	if(g_Config.m_LcSnapTap)
 	{
 		Right.HSplitTop(LazyLineSize, &Button, &Right);
 		Ui()->DoScrollbarOption(&g_Config.m_LcSnapTapDelay, &g_Config.m_LcSnapTapDelay, &Button, Localize("Switch delay"), 0, 200, &CUi::ms_LinearScrollbarScale, 0, "ms");
-		LazyInfoIcon(&Right, Localize("When both direction keys are held, the last pressed one wins. Taps shorter than a game tick are kept, so they are no longer lost between ticks."), Ui(), GameClient());
 	}
 
 	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
-	LazySectionTitle(&Right, Localize("Aspect Ratio"), Ui());
-	LazyInfoIcon(&Right, Localize("Stretches the game to fill the window at the chosen ratio. Reverts after 5 seconds unless confirmed."), Ui(), GameClient());
+	LazySectionTitle(&Right, Localize("Aspect Ratio"), Ui(), GameClient(), Localize("Stretches the game to fill the window at the chosen ratio. Reverts after 5 seconds unless confirmed."));
 	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
 
 	static CLineInputNumber s_AspectWidth(16);
@@ -465,28 +484,22 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
-	LazySectionTitle(&MainView, Localize("Client Logos"), Ui());
+	LazySectionTitle(&MainView, Localize("Client Logos"), Ui(), GameClient(), Localize("Shows a small logo before player names. LazyClient also tags its own skin so compatible clients can show it. The BestClient public list is fetched over the network to show its logo; disable it to stay fully local."));
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcClientLogos, Localize("Show client logos"), &g_Config.m_LcClientLogos, &MainView, LazyLineSize);
-	LazyInfoIcon(&MainView, Localize("Shows a small logo before player names. LazyClient also tags its own skin so compatible clients can show it."), Ui(), GameClient());
 	if(g_Config.m_LcClientLogos)
-	{
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcBestClientPublicList, Localize("Use BestClient public list (network)"), &g_Config.m_LcBestClientPublicList, &MainView, LazyLineSize);
-		LazyInfoIcon(&MainView, Localize("Fetches BestClient's public player list to show its logo. Disable this to stay fully local."), Ui(), GameClient());
-	}
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
 	LazySectionTitle(&MainView, Localize("Scoreboard"), Ui());
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcFriendHeartScoreboard, Localize("Friend heart"), &g_Config.m_LcFriendHeartScoreboard, &MainView, LazyLineSize);
-	LazyInfoLabel(&MainView, Localize("Shows a heart before friends in the scoreboard."), Ui(), TextRender());
+	DoButton_CheckBoxWithInfo(&g_Config.m_LcFriendHeartScoreboard, Localize("Friend heart"), &g_Config.m_LcFriendHeartScoreboard, &MainView, LazyLineSize, Localize("Shows a heart before friends in the scoreboard."));
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Votes"), Ui());
+	LazySectionTitle(&MainView, Localize("Votes"), Ui(), GameClient(), Localize("Match the required yes percentage to the server's sv_vote_yes_percentage setting. The vote list shows the remaining yes votes."));
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcBetterVotes, Localize("Better vote display"), &g_Config.m_LcBetterVotes, &MainView, LazyLineSize);
 	if(g_Config.m_LcBetterVotes)
 	{
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcVotePassPercentage, &g_Config.m_LcVotePassPercentage, &Button, Localize("Required yes percentage"), 1, 99, &CUi::ms_LinearScrollbarScale, 0, "%");
-		LazyInfoIcon(&MainView, Localize("Match this to the server's sv_vote_yes_percentage setting. The vote list shows the remaining yes votes."), Ui(), GameClient());
 	}
 	else
 	{
@@ -494,7 +507,14 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	}
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Hooked Freeze Predictor"), Ui());
+	const char *pZeroGravInfo = nullptr;
+	if(g_Config.m_LcZeroGravPredict)
+	{
+		pZeroGravInfo = g_Config.m_LcZeroGravMode == 0 ?
+			Localize("The predictor is always on. It warns only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. The warning stays visible for 0.2 s after the current prediction disappears. The anti-speedrun guard hides it while you move faster than the speed threshold. Works for your tee, a followed player, and the tee nearest the camera in freeview.") :
+			Localize("The bound key only turns the predictor on and off. When it is on, the hold-area, anti-speedrun, warning time and display rules are exactly the same as Prediction mode. The predictor starts off when Forced is selected.");
+	}
+	LazySectionTitle(&MainView, Localize("Hooked Freeze Predictor"), Ui(), GameClient(), pZeroGravInfo);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcZeroGravPredict, Localize("Predict freeze tiles"), &g_Config.m_LcZeroGravPredict, &MainView, LazyLineSize);
 	if(g_Config.m_LcZeroGravPredict)
 	{
@@ -520,11 +540,7 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 			Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravSpeedrunSpeed, &g_Config.m_LcZeroGravSpeedrunSpeed, &Button, Localize("Speedrun guard speed"), 5, 60, &CUi::ms_LinearScrollbarScale, 0, " tiles/s");
 		}
 
-		if(g_Config.m_LcZeroGravMode == 0)
-		{
-			LazyInfoIcon(&MainView, Localize("The predictor is always on. It warns only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. The warning stays visible for 0.2 s after the current prediction disappears. The anti-speedrun guard hides it while you move faster than the speed threshold. Works for your tee, a followed player, and the tee nearest the camera in freeview."), Ui(), GameClient());
-		}
-		else
+		if(g_Config.m_LcZeroGravMode != 0)
 		{
 			MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 			static CLineInput s_ForcedKeyInput(g_Config.m_LcZeroGravForcedKey, sizeof(g_Config.m_LcZeroGravForcedKey));
@@ -535,12 +551,10 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 			if(DoButton_Menu(&s_BindForcedKeyButton, Localize("Apply forced key bind"), 0, &Button))
 				GameClient()->m_Lazy.BindZeroGravKey();
 
-			LazyInfoIcon(&MainView, Localize("The bound key only turns the predictor on and off. When it is on, the hold-area, anti-speedrun, warning time and display rules are exactly the same as Prediction mode. The predictor starts off when Forced is selected."), Ui(), GameClient());
 		}
 
 		MainView.HSplitTop(LazyMargin, nullptr, &MainView);
-		LazySectionTitle(&MainView, Localize("Warning Appearance"), Ui());
-		LazyInfoIcon(&MainView, Localize("Move and stretch the warning independently on each axis. Offsets are in pixels; scale changes how many screen pixels one overlay pixel uses."), Ui(), GameClient());
+		LazySectionTitle(&MainView, Localize("Warning Appearance"), Ui(), GameClient(), Localize("Move and stretch the warning independently on each axis. Offsets are in pixels; scale changes how many screen pixels one overlay pixel uses."));
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravOffsetX, &g_Config.m_LcZeroGravOffsetX, &Button, Localize("Horizontal offset"), -300, 300, &CUi::ms_LinearScrollbarScale, 0, " px");
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
@@ -564,9 +578,8 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	}
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Telemetry"), Ui());
+	LazySectionTitle(&MainView, Localize("Telemetry"), Ui(), GameClient(), Localize("Choose which values the overlay shows. The overlay is local-only in the top-right. Packet loss is estimated from missing vital network chunks and resend requests over the last few seconds."));
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetry, Localize("Show telemetry overlay"), &g_Config.m_LcTelemetry, &MainView, LazyLineSize);
-	LazyInfoIcon(&MainView, Localize("Choose which values the overlay shows."), Ui(), GameClient());
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps, Localize("FPS"), &g_Config.m_LcTelemetryFps, &MainView, LazyLineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFpsAvg, Localize("Average FPS"), &g_Config.m_LcTelemetryFpsAvg, &MainView, LazyLineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryFps1Pct, Localize("1% low FPS"), &g_Config.m_LcTelemetryFps1Pct, &MainView, LazyLineSize);
@@ -577,7 +590,6 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryLoss, Localize("Packet loss"), &g_Config.m_LcTelemetryLoss, &MainView, LazyLineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetryPrediction, Localize("Prediction time"), &g_Config.m_LcTelemetryPrediction, &MainView, LazyLineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetrySnaps, Localize("Snapshots per second"), &g_Config.m_LcTelemetrySnaps, &MainView, LazyLineSize);
-	LazyInfoIcon(&MainView, Localize("Local-only overlay in the top-right. Packet loss is estimated from missing vital network chunks and resend requests over the last few seconds."), Ui(), GameClient());
 
 	MainView.HSplitTop(LazyMargin, nullptr, &MainView);
 	LazySectionTitle(&MainView, Localize("Telemetry Appearance"), Ui());
@@ -604,19 +616,14 @@ void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
-	LazySectionTitle(&MainView, Localize("Team Invites"), Ui());
+	LazySectionTitle(&MainView, Localize("Team Invites"), Ui(), GameClient(), Localize("When a player whispers !invite, the client checks lazy_invites.txt next to settings_lazy.cfg: approve invites them automatically, ask shows a chat notice, deny ignores them. Players not in the file are treated as ask and added to it. Console: lc_invite_approve <name>, lc_invite_ask <name>, lc_invite_deny <name>."));
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcInviteManager, Localize("Handle !invite whispers"), &g_Config.m_LcInviteManager, &MainView, LazyLineSize);
-	LazyInfoIcon(&MainView, Localize("When a player whispers !invite, the client checks lazy_invites.txt: approve invites them automatically, ask shows a chat notice, deny ignores them. Players not in the file are treated as ask and added to it."), Ui(), GameClient());
 
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 	static CButtonContainer s_OpenInviteListButton;
 	MainView.HSplitTop(LazyLineSize * 1.5f, &Button, &MainView);
 	if(DoButton_Menu(&s_OpenInviteListButton, Localize("Open invite list"), 0, &Button))
 		LazyOpenSaveFile(Client(), Storage(), CLazyClient::INVITES_FILE, LAZY_INVITES_HEADER);
-	LazyInfoLabel(&MainView, Localize("The file is stored next to settings_lazy.cfg. Entries apply immediately, no reload needed."), Ui(), TextRender());
-
-	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
-	LazyInfoIcon(&MainView, Localize("Console: lc_invite_approve <name>, lc_invite_ask <name>, lc_invite_deny <name>. Example: lc_invite_approve Nameless Tee."), Ui(), GameClient());
 
 	LazyEndScroll(&s_ScrollRegion, MainView);
 }
@@ -628,8 +635,7 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
-	LazySectionTitle(&MainView, Localize("Better Zooming"), Ui());
-	LazyInfoIcon(&MainView, Localize("lc_zoom_in and lc_zoom_out change the zoom by the configured number of levels instead of one level like +zoom/-zoom. Bind them to keys below or with the bind command."), Ui(), GameClient());
+	LazySectionTitle(&MainView, Localize("Better Zooming"), Ui(), GameClient(), Localize("lc_zoom_in and lc_zoom_out change the zoom by the configured number of levels instead of one level like +zoom/-zoom. A step of 3 takes the level from 10 to 7 while zooming out. Bind them to keys below or with the bind command; a key can only run one of the two commands."));
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
@@ -671,11 +677,9 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 		GameClient()->m_Lazy.BindZoomKey(true);
 		GameClient()->m_Lazy.BindZoomKey(false);
 	}
-	LazyInfoIcon(&MainView, Localize("Each press changes the zoom, so a step of 3 takes the level from 10 to 7 while zooming out. A key can only run one of the two commands."), Ui(), GameClient());
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Auto Team Lock"), Ui());
-	LazyInfoIcon(&MainView, Localize("Locks your team automatically a while after you join it by sending /lock, so you and your team cannot be joined by others mid-run. The team is locked again if someone unlocks it. The delay gives teammates time to join first."), Ui(), GameClient());
+	LazySectionTitle(&MainView, Localize("Auto Team Lock"), Ui(), GameClient(), Localize("Locks your team automatically a while after you join it by sending /lock, so you and your team cannot be joined by others mid-run. The team is locked again if someone unlocks it. The delay counts from the moment you join; set it long enough for your teammates to join (5-600 seconds)."));
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 
 	static CButtonContainer s_AutoTeamLockCheckbox, s_LockTeamNowButton;
@@ -685,7 +689,6 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 	Ui()->DoScrollbarOption(&g_Config.m_LcAutoTeamLockDelay, &g_Config.m_LcAutoTeamLockDelay, &Button, Localize("Lock delay"), 5, 600, &CUi::ms_LinearScrollbarScale, 0, " s");
-	LazyInfoIcon(&MainView, Localize("The delay counts from the moment you join the team. Set it long enough for your teammates to join (5-600 seconds)."), Ui(), GameClient());
 
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
@@ -694,13 +697,12 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	LazyInfoLabel(&MainView, Localize("lc_team_lock does the same from the console or a bind."), Ui(), TextRender());
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Auto Kill While Frozen"), Ui());
+	LazySectionTitle(&MainView, Localize("Auto Kill While Frozen"), Ui(), GameClient(), Localize("Only active while you are the only player in your team, frozen, standing in a freeze tile, and not moving. Sliding, leaving the freeze tile or unfreezing restarts the timer, and the kill is sent once per freeze."));
 	static CButtonContainer s_AutoKillFrozenCheckbox;
 	DoButton_CheckBoxAutoVMarginAndSet(&s_AutoKillFrozenCheckbox, Localize("Kill when alone and frozen"), &g_Config.m_LcAutoKillFrozen, &MainView, LazyLineSize);
 
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 	Ui()->DoScrollbarOption(&g_Config.m_LcAutoKillFrozenTime, &g_Config.m_LcAutoKillFrozenTime, &Button, Localize("Kill after"), 1, 120, &CUi::ms_LinearScrollbarScale, 0, " s");
-	LazyInfoIcon(&MainView, Localize("Only active while you are the only player in your team, frozen, standing in a freeze tile, and not moving. Sliding, leaving the freeze tile or unfreezing restarts the timer, and the kill is sent once per freeze."), Ui(), GameClient());
 
 	CUIRect ContentBottom = MainView;
 	LazyEndScroll(&s_ScrollRegion, ContentBottom);
