@@ -1,6 +1,7 @@
 #include <base/io.h>
 #include <base/str.h>
 
+#include <engine/client.h>
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
 #include <engine/storage.h>
@@ -32,6 +33,12 @@ static constexpr float LazyMargin = 10.0f;
 static constexpr float LazyMarginSmall = 5.0f;
 static constexpr float LazyHeadlineSize = 18.0f;
 static constexpr float LazyHeadlineHeight = 24.0f;
+
+static constexpr const char *LAZY_INVITES_HEADER =
+	"# LazyClient team invite list\n"
+	"# One entry per line: approve <name>, ask <name> or deny <name>.\n"
+	"# Names are case-insensitive. Later entries override earlier ones.\n"
+	"# Unknown players who whisper !invite are appended here as ask.\n";
 
 static void LazySectionTitle(CUIRect *pRect, const char *pTitle, CUi *pUi)
 {
@@ -95,6 +102,30 @@ static void LazyEndScroll(CScrollRegion *pScrollRegion, CUIRect ContentBottom)
 	ContentBottom.h = 1.0f;
 	pScrollRegion->AddRect(ContentBottom);
 	pScrollRegion->End();
+}
+
+static void LazyOpenSaveFile(IClient *pClient, IStorage *pStorage, const char *pFile, const char *pHeader = nullptr)
+{
+	char aPath[IO_MAX_PATH_LENGTH];
+	pStorage->GetCompletePath(IStorage::TYPE_SAVE, pFile, aPath, sizeof(aPath));
+	if(!pStorage->FileExists(aPath, IStorage::TYPE_ABSOLUTE))
+	{
+		IOHANDLE File = pStorage->OpenFile(pFile, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+		if(File)
+		{
+			if(pHeader != nullptr)
+				io_write(File, pHeader, str_length(pHeader));
+			io_close(File);
+		}
+	}
+	pClient->ViewFile(aPath);
+}
+
+static void LazyGridRow(CUIRect *pRect, CUIRect *pLeft, CUIRect *pRight)
+{
+	CUIRect Row;
+	pRect->HSplitTop(LazyLineSize * 1.5f, &Row, pRect);
+	Row.VSplitMid(pLeft, pRight, LazyMarginSmall);
 }
 
 void CMenus::RenderSettingsLazy(CUIRect MainView)
@@ -558,25 +589,7 @@ void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 	static CButtonContainer s_OpenInviteListButton;
 	MainView.HSplitTop(LazyLineSize * 1.5f, &Button, &MainView);
 	if(DoButton_Menu(&s_OpenInviteListButton, Localize("Open invite list"), 0, &Button))
-	{
-		char aPath[IO_MAX_PATH_LENGTH];
-		Storage()->GetCompletePath(IStorage::TYPE_SAVE, CLazyClient::INVITES_FILE, aPath, sizeof(aPath));
-		if(!Storage()->FileExists(aPath, IStorage::TYPE_ABSOLUTE))
-		{
-			IOHANDLE File = Storage()->OpenFile(CLazyClient::INVITES_FILE, IOFLAG_WRITE, IStorage::TYPE_SAVE);
-			if(File)
-			{
-				const char *pHeader =
-					"# LazyClient team invite list\n"
-					"# One entry per line: approve <name>, ask <name> or deny <name>.\n"
-					"# Names are case-insensitive. Later entries override earlier ones.\n"
-					"# Unknown players who whisper !invite are appended here as ask.\n";
-				io_write(File, pHeader, str_length(pHeader));
-				io_close(File);
-			}
-		}
-		Client()->ViewFile(aPath);
-	}
+		LazyOpenSaveFile(Client(), Storage(), CLazyClient::INVITES_FILE, LAZY_INVITES_HEADER);
 	LazyInfoLabel(&MainView, Localize("The file is stored next to settings_lazy.cfg. Entries apply immediately, no reload needed."), Ui(), TextRender());
 
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
@@ -587,57 +600,11 @@ void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 
 void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 {
-	CUIRect Left, Right, Button;
+	CUIRect Button;
 	static CScrollRegion s_ScrollRegion;
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
-	auto OpenConfig = [this](const char *pFile) {
-		char aPath[IO_MAX_PATH_LENGTH];
-		Storage()->GetCompletePath(IStorage::TYPE_SAVE, pFile, aPath, sizeof(aPath));
-		if(!Storage()->FileExists(aPath, IStorage::TYPE_ABSOLUTE))
-		{
-			IOHANDLE File = Storage()->OpenFile(pFile, IOFLAG_WRITE, IStorage::TYPE_SAVE);
-			if(File)
-				io_close(File);
-		}
-		Client()->ViewFile(aPath);
-	};
-
-	MainView.VSplitMid(&Left, &Right, 30.0f);
-	Left.VSplitLeft(5.0f, nullptr, &Left);
-	Right.VSplitRight(5.0f, &Right, nullptr);
-
-	LazySectionTitle(&Left, Localize("Config Files"), Ui());
-	LazyInfoLabel(&Left, Localize("LazyClient uses the DDNet data folder and keeps each client's settings separate."), Ui(), TextRender());
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-
-	static CButtonContainer s_DDNetConfig, s_TClientConfig, s_LazyConfig;
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	if(DoButton_Menu(&s_DDNetConfig, Localize("Open DDNet Config"), 0, &Button))
-		OpenConfig("settings_ddnet.cfg");
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	if(DoButton_Menu(&s_TClientConfig, Localize("Open TClient Config"), 0, &Button))
-		OpenConfig("settings_tclient.cfg");
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	if(DoButton_Menu(&s_LazyConfig, Localize("Open LazyClient Config"), 0, &Button))
-		OpenConfig("settings_lazy.cfg");
-
-	LazySectionTitle(&Right, Localize("Updates"), Ui());
-	LazyInfoLabel(&Right, Localize("Release builds are published on GitHub."), Ui(), TextRender());
-	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
-	static CButtonContainer s_ReleasesButton;
-	Right.HSplitTop(LazyLineSize * 1.5f, &Button, &Right);
-	if(DoButton_Menu(&s_ReleasesButton, Localize("Open GitHub Releases"), 0, &Button))
-		Client()->ViewLink("https://github.com/DASIEU/LazyClient/releases");
-
-	// Continue below the taller of the two columns.
-	const float ColumnsBottom = std::max(Left.y, Right.y);
-	MainView.HSplitTop(std::max(0.0f, ColumnsBottom - MainView.y), nullptr, &MainView);
-
-	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
 	LazySectionTitle(&MainView, Localize("Better Zooming"), Ui());
 	LazyInfoLabel(&MainView, Localize("lc_zoom_in and lc_zoom_out change the zoom by the configured number of levels instead of one level like +zoom/-zoom. Bind them to keys below or with the bind command."), Ui(), TextRender());
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
@@ -718,7 +685,7 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 
 void CMenus::RenderSettingsLazyInfo(CUIRect MainView)
 {
-	CUIRect Left, Right, Button, Label;
+	CUIRect Left, Right, Button, Label, A, B;
 	static CScrollRegion s_ScrollRegion;
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
@@ -753,22 +720,44 @@ void CMenus::RenderSettingsLazyInfo(CUIRect MainView)
 	Left.HSplitTop(LazyMargin * 1.5f, nullptr, &Left);
 	LazySectionTitle(&Left, Localize("Links"), Ui());
 	static CButtonContainer s_GithubButton, s_DDNetButton, s_TClientButton, s_KoGButton;
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	if(DoButton_Menu(&s_GithubButton, Localize("LazyClient GitHub"), 0, &Button))
+	LazyGridRow(&Left, &A, &B);
+	if(DoButton_Menu(&s_GithubButton, Localize("LazyClient GitHub"), 0, &A))
 		Client()->ViewLink("https://github.com/DASIEU/LazyClient");
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	if(DoButton_Menu(&s_DDNetButton, Localize("DDNet"), 0, &Button))
+	if(DoButton_Menu(&s_DDNetButton, Localize("DDNet"), 0, &B))
 		Client()->ViewLink("https://ddnet.org/");
 	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	if(DoButton_Menu(&s_TClientButton, Localize("TClient"), 0, &Button))
+	LazyGridRow(&Left, &A, &B);
+	if(DoButton_Menu(&s_TClientButton, Localize("TClient"), 0, &A))
 		Client()->ViewLink("https://tclient.app/");
-	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
-	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
-	if(DoButton_Menu(&s_KoGButton, Localize("King of Gores"), 0, &Button))
+	if(DoButton_Menu(&s_KoGButton, Localize("King of Gores"), 0, &B))
 		Client()->ViewLink("https://kog.tw/");
 
+	Left.HSplitTop(LazyMargin * 1.5f, nullptr, &Left);
+	LazySectionTitle(&Left, Localize("Updates"), Ui());
+	LazyInfoLabel(&Left, Localize("Release builds are published on GitHub. LazyClient does not update itself."), Ui(), TextRender());
+	Left.HSplitTop(LazyMarginSmall, nullptr, &Left);
+	static CButtonContainer s_ReleasesButton;
+	Left.HSplitTop(LazyLineSize * 1.5f, &Button, &Left);
+	if(DoButton_Menu(&s_ReleasesButton, Localize("Open GitHub Releases"), 0, &Button))
+		Client()->ViewLink("https://github.com/DASIEU/LazyClient/releases");
+
+	LazySectionTitle(&Right, Localize("Config Files"), Ui());
+	LazyInfoLabel(&Right, Localize("LazyClient uses the DDNet data folder and keeps each client's settings separate. Missing files are created when opened."), Ui(), TextRender());
+	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
+	static CButtonContainer s_DDNetConfig, s_TClientConfig, s_LazyConfig, s_InviteListConfig;
+	LazyGridRow(&Right, &A, &B);
+	if(DoButton_Menu(&s_DDNetConfig, Localize("DDNet Settings"), 0, &A))
+		LazyOpenSaveFile(Client(), Storage(), "settings_ddnet.cfg");
+	if(DoButton_Menu(&s_TClientConfig, Localize("TClient Settings"), 0, &B))
+		LazyOpenSaveFile(Client(), Storage(), "settings_tclient.cfg");
+	Right.HSplitTop(LazyMarginSmall, nullptr, &Right);
+	LazyGridRow(&Right, &A, &B);
+	if(DoButton_Menu(&s_LazyConfig, Localize("LazyClient Settings"), 0, &A))
+		LazyOpenSaveFile(Client(), Storage(), "settings_lazy.cfg");
+	if(DoButton_Menu(&s_InviteListConfig, Localize("Invite List"), 0, &B))
+		LazyOpenSaveFile(Client(), Storage(), CLazyClient::INVITES_FILE, LAZY_INVITES_HEADER);
+
+	Right.HSplitTop(LazyMargin * 1.5f, nullptr, &Right);
 	LazySectionTitle(&Right, Localize("Credits"), Ui());
 	LazyInfoLabel(&Right, Localize("TClient by Tater and contributors."), Ui(), TextRender());
 	LazyInfoLabel(&Right, Localize("DDNet by Dennis Felsing and contributors."), Ui(), TextRender());
