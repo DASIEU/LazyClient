@@ -2,6 +2,7 @@
 
 #include "lazy_ccid.h"
 
+#include <base/io.h>
 #include <base/log.h>
 #include <base/math.h>
 #include <base/net.h>
@@ -13,6 +14,8 @@
 #include <engine/http.h>
 #include <engine/shared/config.h>
 #include <engine/shared/json.h>
+#include <engine/shared/linereader.h>
+#include <engine/storage.h>
 #include <engine/textrender.h>
 
 #include <generated/client_data.h>
@@ -28,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,6 +60,17 @@ constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
 constexpr int ZERO_GRAV_SPEEDRUN_FAST_CHECKS = 3;
 constexpr int ZERO_GRAV_SPEEDRUN_COOLDOWN_CHECKS = 5;
 constexpr float TELEMETRY_STATS_INTERVAL = 1.0f;
+constexpr float AUTO_KILL_MOVE_TOLERANCE = 8.0f;
+// Same value as CChat's private SERVER_MSG: chat messages sent by the server.
+constexpr int SERVER_CHAT_CLIENT_ID = -1;
+
+enum EInviteStatus
+{
+	INVITE_STATUS_UNKNOWN = -1,
+	INVITE_STATUS_DENY = 0,
+	INVITE_STATUS_ASK = 1,
+	INVITE_STATUS_APPROVE = 2,
+};
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
 constexpr float BESTCLIENT_LIST_REFRESH_SECONDS = 60.0f;
@@ -87,12 +102,33 @@ float MarginFromPing(float Ping)
 {
 	return std::max((float)AUTO_MARGIN_BASE, Ping * 0.25f);
 }
+
+const char *ZoomCommand(int Index)
+{
+	return Index == 0 ? "lc_zoom_in" : "lc_zoom_out";
+}
+
+const char *ZoomKeyName(int Index)
+{
+	return Index == 0 ? g_Config.m_LcZoomInKey : g_Config.m_LcZoomOutKey;
+}
+
+char *ZoomPrevKey(int Index)
+{
+	return Index == 0 ? g_Config.m_LcZoomInKeyPrev : g_Config.m_LcZoomOutKeyPrev;
+}
 } // namespace
 
 void CLazyClient::OnConsoleInit()
 {
 	Console()->Register("+lc_gun", "", CFGFLAG_CLIENT, ConGunFire, this, "Fire the gun in gores mode without using the hammer");
 	Console()->Register("+lc_zerograv_forced", "", CFGFLAG_CLIENT, ConZeroGravForced, this, "Toggle the zero-gravity freeze predictor");
+	Console()->Register("lc_zoom_in", "", CFGFLAG_CLIENT, ConZoomIn, this, "Zoom in by lc_zoom_step levels");
+	Console()->Register("lc_zoom_out", "", CFGFLAG_CLIENT, ConZoomOut, this, "Zoom out by lc_zoom_step levels");
+	Console()->Register("lc_team_lock", "", CFGFLAG_CLIENT, ConTeamLock, this, "Lock your current team immediately");
+	Console()->Register("lc_invite_approve", "r[name]", CFGFLAG_CLIENT, ConInviteApprove, this, "Auto-invite this player when they whisper !invite");
+	Console()->Register("lc_invite_ask", "r[name]", CFGFLAG_CLIENT, ConInviteAsk, this, "Ask before inviting this player (show a chat notice)");
+	Console()->Register("lc_invite_deny", "r[name]", CFGFLAG_CLIENT, ConInviteDeny, this, "Ignore !invite whispers from this player");
 }
 
 void CLazyClient::OnReset()
@@ -121,6 +157,8 @@ void CLazyClient::OnReset()
 	ResetZeroGravityTracking();
 	ResetAutoMarginState();
 	ResetTelemetry();
+	ResetAutoTeamLockState();
+	ResetAutoKillState();
 }
 
 void CLazyClient::OnStateChange(int NewState, int OldState)
@@ -146,6 +184,8 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	ClearZeroGravityWarning(true);
 	ResetZeroGravityTracking();
 	ResetTelemetry();
+	ResetAutoTeamLockState();
+	ResetAutoKillState();
 }
 
 void CLazyClient::ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const
@@ -684,6 +724,447 @@ void CLazyClient::RestoreStaleZeroGravKeyBind()
 	if(str_comp(GameClient()->m_Binds.Get(Key, KeyModifier::NONE), "+lc_zerograv_forced") == 0)
 		GameClient()->m_Binds.Bind(Key, g_Config.m_LcZeroGravForcedKeyPrev);
 	g_Config.m_LcZeroGravForcedKeyPrev[0] = '\0';
+}
+
+void CLazyClient::ConZoomIn(IConsole::IResult *pResult, void *pUserData)
+{
+	((CLazyClient *)pUserData)->ZoomByConfiguredStep(true);
+}
+
+void CLazyClient::ConZoomOut(IConsole::IResult *pResult, void *pUserData)
+{
+	((CLazyClient *)pUserData)->ZoomByConfiguredStep(false);
+}
+
+void CLazyClient::ZoomByConfiguredStep(bool ZoomIn)
+{
+	const float Step = (float)std::clamp(g_Config.m_LcZoomStep, 1, 20);
+	GameClient()->m_Camera.ZoomBySteps(ZoomIn ? Step : -Step);
+}
+
+void CLazyClient::ConTeamLock(IConsole::IResult *pResult, void *pUserData)
+{
+	((CLazyClient *)pUserData)->LockTeamNow();
+}
+
+void CLazyClient::ConInviteApprove(IConsole::IResult *pResult, void *pUserData)
+{
+	CLazyClient *pSelf = (CLazyClient *)pUserData;
+	pSelf->AddInviteEntry("approve", pResult->GetString(0));
+}
+
+void CLazyClient::ConInviteAsk(IConsole::IResult *pResult, void *pUserData)
+{
+	CLazyClient *pSelf = (CLazyClient *)pUserData;
+	pSelf->AddInviteEntry("ask", pResult->GetString(0));
+}
+
+void CLazyClient::ConInviteDeny(IConsole::IResult *pResult, void *pUserData)
+{
+	CLazyClient *pSelf = (CLazyClient *)pUserData;
+	pSelf->AddInviteEntry("deny", pResult->GetString(0));
+}
+
+int CLazyClient::CurrentDDRaceTeam() const
+{
+	const int LocalId = GameClient()->m_aLocalIds[0];
+	if(LocalId < 0 || LocalId >= MAX_CLIENTS)
+		return TEAM_FLOCK;
+	if(Client()->State() != IClient::STATE_ONLINE || !GameClient()->m_Snap.m_pLocalInfo)
+		return TEAM_FLOCK;
+	const int Team = GameClient()->m_Teams.Team(LocalId);
+	if(Team <= TEAM_FLOCK || Team >= NUM_DDRACE_TEAMS)
+		return TEAM_FLOCK;
+	return Team;
+}
+
+void CLazyClient::LockTeamNow()
+{
+	ResetAutoTeamLockState();
+	if(CurrentDDRaceTeam() == TEAM_FLOCK)
+	{
+		GameClient()->m_Chat.Echo("LazyClient: join a team before locking it.");
+		return;
+	}
+	m_AutoTeamLockLocked = true;
+	GameClient()->m_Chat.SendChat(0, "/lock");
+}
+
+void CLazyClient::ResetAutoTeamLockState()
+{
+	m_AutoTeamLockTeam = -1;
+	m_AutoTeamLockPending = false;
+	m_AutoTeamLockSeconds = 0.0f;
+	m_AutoTeamLockLocked = false;
+}
+
+void CLazyClient::ResetAutoKillState()
+{
+	m_AutoKillTeam = -1;
+	m_AutoKillSeconds = 0.0f;
+	m_AutoKillFired = false;
+	m_AutoKillHasPos = false;
+	m_AutoKillAnchorPos = vec2(0.0f, 0.0f);
+}
+
+void CLazyClient::UpdateAutoKill()
+{
+	const bool Enabled = g_Config.m_LcAutoKillFrozen != 0;
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	const int Team = CurrentDDRaceTeam();
+	const bool Online = Client()->State() == IClient::STATE_ONLINE;
+
+	bool Frozen = false;
+	bool Alone = false;
+	bool HasPos = false;
+	vec2 Pos(0.0f, 0.0f);
+	if(Online && Team != TEAM_FLOCK && LocalId >= 0 && LocalId < MAX_CLIENTS &&
+		!GameClient()->m_Snap.m_SpecInfo.m_Active)
+	{
+		Frozen = GameClient()->m_aClients[LocalId].m_FreezeEnd > 0 ||
+			GameClient()->m_aClients[LocalId].m_DeepFrozen;
+
+		int NumInTeam = 0;
+		for(int i = 0; i < MAX_CLIENTS; i++)
+		{
+			if(!GameClient()->m_Snap.m_apPlayerInfos[i])
+				continue;
+			if(GameClient()->m_Teams.Team(i) == Team)
+				NumInTeam++;
+		}
+		Alone = NumInTeam == 1;
+
+		HasPos = GameClient()->m_Snap.m_pLocalCharacter != nullptr;
+		Pos = GameClient()->m_LocalCharacterPos;
+	}
+
+	if(!Enabled || !Online || !Frozen || !Alone || !HasPos)
+	{
+		ResetAutoKillState();
+		return;
+	}
+
+	if(Team != m_AutoKillTeam)
+	{
+		ResetAutoKillState();
+		m_AutoKillTeam = Team;
+	}
+
+	if(!m_AutoKillHasPos)
+	{
+		m_AutoKillAnchorPos = Pos;
+		m_AutoKillHasPos = true;
+		return;
+	}
+
+	// Frozen tees can still slide on ice. Only count time while the position
+	// stays close to the anchor, so real movement restarts the timer.
+	if(distance(Pos, m_AutoKillAnchorPos) > AUTO_KILL_MOVE_TOLERANCE)
+	{
+		m_AutoKillAnchorPos = Pos;
+		m_AutoKillSeconds = 0.0f;
+		return;
+	}
+
+	if(m_AutoKillFired)
+		return;
+
+	m_AutoKillSeconds += Client()->RenderFrameTime();
+	const float Timeout = (float)std::clamp(g_Config.m_LcAutoKillFrozenTime, 1, 120);
+	if(m_AutoKillSeconds < Timeout)
+		return;
+
+	// Kill once per freeze. The next respawn is not frozen, which resets the
+	// state; if the server ignores the kill, do not spam it every tick.
+	m_AutoKillFired = true;
+	GameClient()->SendKill();
+}
+
+int CLazyClient::InviteStatus(const char *pName) const
+{
+	if(pName == nullptr || pName[0] == '\0')
+		return INVITE_STATUS_UNKNOWN;
+
+	CLineReader Reader;
+	if(!Reader.OpenFile(Storage()->OpenFile(INVITES_FILE, IOFLAG_READ, IStorage::TYPE_SAVE)))
+		return INVITE_STATUS_UNKNOWN;
+
+	int Status = INVITE_STATUS_UNKNOWN;
+	while(const char *pLine = Reader.Get())
+	{
+		const char *pTrimmed = str_skip_whitespaces_const(pLine);
+		if(pTrimmed[0] == '\0' || pTrimmed[0] == '#')
+			continue;
+
+		char aStatus[16];
+		if(sscanf(pTrimmed, "%15s", aStatus) != 1)
+			continue;
+		const char *pEntryName = str_trim_words(pTrimmed, 1);
+		if(pEntryName[0] == '\0')
+			continue;
+
+		char aName[MAX_NAME_LENGTH];
+		str_copy(aName, pEntryName, sizeof(aName));
+		str_utf8_trim_right(aName);
+		if(str_comp_nocase(aName, pName) != 0)
+			continue;
+
+		// Later lines win, so appending an entry overrides an older one.
+		if(str_comp_nocase(aStatus, "approve") == 0)
+			Status = INVITE_STATUS_APPROVE;
+		else if(str_comp_nocase(aStatus, "deny") == 0)
+			Status = INVITE_STATUS_DENY;
+		else if(str_comp_nocase(aStatus, "ask") == 0)
+			Status = INVITE_STATUS_ASK;
+	}
+	return Status;
+}
+
+void CLazyClient::AddInviteEntry(const char *pStatus, const char *pName)
+{
+	if(pStatus == nullptr || pName == nullptr)
+		return;
+
+	char aName[MAX_NAME_LENGTH];
+	str_copy(aName, str_skip_whitespaces_const(pName), sizeof(aName));
+	str_utf8_trim_right(aName);
+	if(aName[0] == '\0')
+		return;
+
+	IOHANDLE File = Storage()->OpenFile(INVITES_FILE, IOFLAG_APPEND, IStorage::TYPE_SAVE);
+	if(!File)
+		return;
+	char aLine[MAX_NAME_LENGTH + 32];
+	str_format(aLine, sizeof(aLine), "%s %s\n", pStatus, aName);
+	io_write(File, aLine, str_length(aLine));
+	io_close(File);
+}
+
+void CLazyClient::HandleTeamInvite(int ClientId, const char *pMessage)
+{
+	if(Client()->State() != IClient::STATE_ONLINE || GameClient()->m_Snap.m_SpecInfo.m_Active)
+		return;
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return;
+
+	const int LocalId = GameClient()->m_aLocalIds[0];
+	if(ClientId == LocalId || ClientId == GameClient()->m_aLocalIds[1])
+		return;
+
+	// Only team members can be invited; no need to handle whispers while solo.
+	const int Team = CurrentDDRaceTeam();
+	if(Team == TEAM_FLOCK)
+		return;
+	if(GameClient()->m_Teams.Team(ClientId) == Team)
+		return;
+	if(GameClient()->m_aClients[ClientId].m_ChatIgnore)
+		return;
+
+	char aCommand[16];
+	if(sscanf(str_skip_whitespaces_const(pMessage), "%15s", aCommand) != 1 ||
+		str_comp_nocase(aCommand, "!invite") != 0)
+		return;
+
+	const char *pName = GameClient()->m_aClients[ClientId].m_aName;
+	if(pName[0] == '\0')
+		return;
+
+	const int Status = InviteStatus(pName);
+	char aBuf[256];
+	if(Status == INVITE_STATUS_APPROVE)
+	{
+		str_format(aBuf, sizeof(aBuf), "/invite %s", pName);
+		GameClient()->m_Chat.SendChat(0, aBuf);
+		str_format(aBuf, sizeof(aBuf), Localize("Auto-invited %s to your team"), pName);
+		GameClient()->m_Chat.Echo(aBuf);
+		return;
+	}
+	if(Status == INVITE_STATUS_DENY)
+		return;
+
+	if(Status == INVITE_STATUS_UNKNOWN)
+		AddInviteEntry("ask", pName);
+	str_format(aBuf, sizeof(aBuf), Localize("%s is asking to join your team"), pName);
+	GameClient()->m_Chat.Echo(aBuf);
+}
+
+void CLazyClient::OnChatMessage(int ClientId, int Team, const char *pMessage)
+{
+	if(pMessage == nullptr)
+		return;
+
+	if(Team == TEAM_WHISPER_RECV)
+	{
+		if(g_Config.m_LcInviteManager)
+			HandleTeamInvite(ClientId, pMessage);
+		return;
+	}
+
+	// The client cannot read the server's lock flag, but DDNet announces every
+	// lock and unlock change with a server message in the team chat:
+	//   "'%s' locked your team. ..." / "'%s' unlocked your team."
+	// SendChatTarget marks these as team 0 (all) even though only the team
+	// receives them, so only the server sender matters here. Requiring a server
+	// message also stops players from faking the state in their own chat.
+	if(ClientId != SERVER_CHAT_CLIENT_ID)
+		return;
+
+	const bool Unlocked = str_find(pMessage, " unlocked your team") != nullptr;
+	// " unlocked your team" contains " locked your team", so check unlocked first.
+	const bool Locked = !Unlocked && str_find(pMessage, " locked your team") != nullptr;
+	if(!Locked && !Unlocked)
+		return;
+
+	const int MyTeam = CurrentDDRaceTeam();
+	if(MyTeam == TEAM_FLOCK)
+		return;
+	m_AutoTeamLockTeam = MyTeam;
+
+	if(Unlocked)
+	{
+		// Someone unlocked the team; stop considering it locked so the helper
+		// can lock it again after the delay.
+		m_AutoTeamLockLocked = false;
+		m_AutoTeamLockPending = g_Config.m_LcAutoTeamLock != 0;
+		m_AutoTeamLockSeconds = (float)std::clamp(g_Config.m_LcAutoTeamLockDelay, 5, 600);
+		return;
+	}
+
+	m_AutoTeamLockLocked = true;
+	m_AutoTeamLockPending = false;
+}
+
+void CLazyClient::OnMessage(int MsgType, void *pRawMsg)
+{
+	if(MsgType != NETMSGTYPE_SV_CHAT)
+		return;
+	CNetMsg_Sv_Chat *pMsg = (CNetMsg_Sv_Chat *)pRawMsg;
+	OnChatMessage(pMsg->m_ClientId, pMsg->m_Team, pMsg->m_pMessage);
+}
+
+void CLazyClient::UpdateAutoTeamLock()
+{
+	const bool Enabled = g_Config.m_LcAutoTeamLock != 0;
+	const int Team = CurrentDDRaceTeam();
+
+	if(!Enabled || Client()->State() != IClient::STATE_ONLINE || Team == TEAM_FLOCK)
+	{
+		// Do not keep a countdown across leaving the team or disabling the option.
+		if(m_AutoTeamLockPending || m_AutoTeamLockTeam != Team)
+			ResetAutoTeamLockState();
+		return;
+	}
+
+	if(Team != m_AutoTeamLockTeam)
+	{
+		// Joined a different team: the previous lock state does not apply to it.
+		m_AutoTeamLockTeam = Team;
+		m_AutoTeamLockLocked = false;
+		m_AutoTeamLockPending = true;
+		m_AutoTeamLockSeconds = (float)std::clamp(g_Config.m_LcAutoTeamLockDelay, 5, 600);
+	}
+
+	if(!m_AutoTeamLockPending || m_AutoTeamLockLocked)
+		return;
+
+	m_AutoTeamLockSeconds -= Client()->RenderFrameTime();
+	if(m_AutoTeamLockSeconds > 0.0f)
+		return;
+
+	m_AutoTeamLockPending = false;
+	m_AutoTeamLockLocked = true;
+	GameClient()->m_Chat.SendChat(0, "/lock");
+}
+
+void CLazyClient::BindZoomKey(bool ZoomIn)
+{
+	BindZoomKeyForced(ZoomIn ? 0 : 1);
+}
+
+void CLazyClient::BindZoomKeyForced(int Index)
+{
+	const char *pKeyName = ZoomKeyName(Index);
+	char *pPrevConfig = ZoomPrevKey(Index);
+
+	if(pKeyName[0] == '\0')
+	{
+		if(m_aZoomKeyBound[Index])
+			RestoreZoomKey(Index);
+		else
+			RestoreStaleZoomKeyBind(Index);
+		return;
+	}
+
+	const int Key = Input()->FindKeyByName(pKeyName);
+	if(Key == KEY_UNKNOWN)
+		return;
+
+	if(m_aZoomKeyBound[Index] && m_aZoomBoundKey[Index] == Key)
+		return;
+	if(m_aZoomKeyBound[Index])
+		RestoreZoomKey(Index);
+
+	// One key cannot run both zoom commands.
+	const int Other = 1 - Index;
+	if(m_aZoomKeyBound[Other] && m_aZoomBoundKey[Other] == Key)
+		RestoreZoomKey(Other);
+
+	const char *pCommand = ZoomCommand(Index);
+	const char *pCurrentBind = GameClient()->m_Binds.Get(Key, KeyModifier::NONE);
+	if(str_comp(pCurrentBind, pCommand) == 0)
+	{
+		// Still bound from a previous session; recover the original bind from the config.
+		str_copy(m_aZoomPrevBind[Index], pPrevConfig, sizeof(m_aZoomPrevBind[Index]));
+	}
+	else
+	{
+		str_copy(m_aZoomPrevBind[Index], pCurrentBind, sizeof(m_aZoomPrevBind[Index]));
+		str_copy(pPrevConfig, pCurrentBind, 128);
+		GameClient()->m_Binds.Bind(Key, pCommand);
+	}
+	m_aZoomBoundKey[Index] = Key;
+	m_aZoomKeyBound[Index] = true;
+}
+
+void CLazyClient::RestoreZoomKey(int Index)
+{
+	if(!m_aZoomKeyBound[Index])
+		return;
+	GameClient()->m_Binds.Bind(m_aZoomBoundKey[Index], m_aZoomPrevBind[Index]);
+	ZoomPrevKey(Index)[0] = '\0';
+	m_aZoomPrevBind[Index][0] = '\0';
+	m_aZoomKeyBound[Index] = false;
+	m_aZoomBoundKey[Index] = 0;
+}
+
+void CLazyClient::RestoreStaleZoomKeyBind(int Index)
+{
+	char *pPrevConfig = ZoomPrevKey(Index);
+	if(pPrevConfig[0] == '\0')
+		return;
+
+	const int Key = Input()->FindKeyByName(ZoomKeyName(Index));
+	if(Key == KEY_UNKNOWN)
+	{
+		pPrevConfig[0] = '\0';
+		return;
+	}
+
+	if(str_comp(GameClient()->m_Binds.Get(Key, KeyModifier::NONE), ZoomCommand(Index)) == 0)
+		GameClient()->m_Binds.Bind(Key, pPrevConfig);
+	pPrevConfig[0] = '\0';
+}
+
+void CLazyClient::UpdateZoomKeyBinds()
+{
+	// Restore/bind the configured keys once on startup. Afterwards the
+	// settings button applies changes explicitly, like the zero-gravity key,
+	// so typing in the edit box does not bind half-finished key names.
+	if(m_ZoomKeysInitialized)
+		return;
+	m_ZoomKeysInitialized = true;
+	BindZoomKeyForced(0);
+	BindZoomKeyForced(1);
 }
 
 void CLazyClient::UpdateGoresMode()
@@ -1571,15 +2052,20 @@ void CLazyClient::RenderZeroGravityForcedStatus()
 		return;
 
 	const CScreenRect OldScreen = Graphics()->GetScreen();
-	const float Width = 300.0f * Graphics()->ScreenAspect();
-	Graphics()->MapScreenToSize(Width, 300.0f);
+	const float ScaleX = std::clamp(g_Config.m_LcZeroGravScaleX, 50, 300) / 100.0f;
+	const float ScaleY = std::clamp(g_Config.m_LcZeroGravScaleY, 50, 300) / 100.0f;
+	const float Width = 300.0f * Graphics()->ScreenAspect() / ScaleX;
+	const float Height = 300.0f / ScaleY;
+	Graphics()->MapScreenToSize(Width, Height);
+	const float OffsetX = g_Config.m_LcZeroGravOffsetX / ScaleX;
+	const float OffsetY = g_Config.m_LcZeroGravOffsetY / ScaleY;
 
 	const char *pStatus = m_ZeroGravForcedStatusOn ?
 		Localize("Zero gravity predictor ON") : Localize("Zero gravity predictor OFF");
 	const float FontSize = 10.5f;
 	const float TextWidth = TextRender()->TextWidth(FontSize, pStatus);
 	const float BoxWidth = std::max(TextWidth + 14.0f, 120.0f);
-	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, 32.0f, BoxWidth, 22.0f};
+	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f + OffsetX, 32.0f / ScaleY + OffsetY, BoxWidth, 22.0f};
 	const ColorRGBA Background = m_ZeroGravForcedStatusOn ?
 		ColorRGBA(0.04f, 0.35f, 0.16f, 0.86f) : ColorRGBA(0.32f, 0.08f, 0.08f, 0.86f);
 	const ColorRGBA Outline = m_ZeroGravForcedStatusOn ?
@@ -1602,14 +2088,26 @@ void CLazyClient::RenderZeroGravityWarning()
 		return;
 
 	const CScreenRect OldScreen = Graphics()->GetScreen();
-	const float Width = 300.0f * Graphics()->ScreenAspect();
-	Graphics()->MapScreenToSize(Width, 300.0f);
+	const float ScaleX = std::clamp(g_Config.m_LcZeroGravScaleX, 50, 300) / 100.0f;
+	const float ScaleY = std::clamp(g_Config.m_LcZeroGravScaleY, 50, 300) / 100.0f;
+	const float Width = 300.0f * Graphics()->ScreenAspect() / ScaleX;
+	const float Height = 300.0f / ScaleY;
+	Graphics()->MapScreenToSize(Width, Height);
+	const float OffsetX = g_Config.m_LcZeroGravOffsetX / ScaleX;
+	const float OffsetY = g_Config.m_LcZeroGravOffsetY / ScaleY;
 
-	char aCountdown[96];
+	char aCountdown[160];
 	const bool Freeview = GameClient()->m_Snap.m_SpecInfo.m_Active &&
 		GameClient()->m_Snap.m_SpecInfo.m_SpectatorId == SPEC_FREEVIEW &&
 		m_ZeroGravTarget >= 0 && m_ZeroGravTarget < MAX_CLIENTS;
-	if(Freeview)
+	if(g_Config.m_LcZeroGravText[0] != '\0')
+	{
+		if(Freeview)
+			str_format(aCountdown, sizeof(aCountdown), "%s: %s %.1fs", GameClient()->m_aClients[m_ZeroGravTarget].m_aName, g_Config.m_LcZeroGravText, m_ZeroGravSeconds);
+		else
+			str_format(aCountdown, sizeof(aCountdown), "%s %.1fs", g_Config.m_LcZeroGravText, m_ZeroGravSeconds);
+	}
+	else if(Freeview)
 		str_format(aCountdown, sizeof(aCountdown), Localize("%s: Freeze in %.1fs"), GameClient()->m_aClients[m_ZeroGravTarget].m_aName, m_ZeroGravSeconds);
 	else
 		str_format(aCountdown, sizeof(aCountdown), Localize("Freeze in %.1fs"), m_ZeroGravSeconds);
@@ -1619,11 +2117,11 @@ void CLazyClient::RenderZeroGravityWarning()
 	const float CountdownSize = 10.5f;
 	const float CountdownWidth = TextRender()->TextWidth(CountdownSize, aCountdown);
 	const float BoxWidth = std::max(CountdownWidth + 14.0f, 96.0f);
-	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f, StatusVisible ? 58.0f : 32.0f, BoxWidth, 22.0f};
-	Box.Draw(ColorRGBA(0.55f, 0.04f, 0.03f, 0.86f), IGraphics::CORNER_ALL, 3.0f);
+	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f + OffsetX, (StatusVisible ? 58.0f : 32.0f) / ScaleY + OffsetY, BoxWidth, 22.0f};
+	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcZeroGravBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
 	Box.DrawOutline(ColorRGBA(1.0f, 0.35f, 0.25f, 0.9f));
 
-	TextRender()->TextColor(ColorRGBA(1.0f, 0.92f, 0.88f, 1.0f));
+	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcZeroGravTextColor, false)));
 	Ui()->DoLabel(&Box, aCountdown, CountdownSize, TEXTALIGN_MC);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 
@@ -1810,8 +2308,13 @@ void CLazyClient::RenderTelemetry()
 		return;
 
 	const CScreenRect OldScreen = Graphics()->GetScreen();
-	const float Width = 300.0f * Graphics()->ScreenAspect();
-	Graphics()->MapScreenToSize(Width, 300.0f);
+	const float ScaleX = std::clamp(g_Config.m_LcTelemetryScaleX, 50, 300) / 100.0f;
+	const float ScaleY = std::clamp(g_Config.m_LcTelemetryScaleY, 50, 300) / 100.0f;
+	const float Width = 300.0f * Graphics()->ScreenAspect() / ScaleX;
+	const float Height = 300.0f / ScaleY;
+	Graphics()->MapScreenToSize(Width, Height);
+	const float OffsetX = g_Config.m_LcTelemetryOffsetX / ScaleX;
+	const float OffsetY = g_Config.m_LcTelemetryOffsetY / ScaleY;
 
 	const float FontSize = 9.5f;
 	const float LineHeight = 11.0f;
@@ -1821,11 +2324,11 @@ void CLazyClient::RenderTelemetry()
 
 	const float BoxWidth = MaxTextWidth + 12.0f;
 	const float BoxHeight = NumLines * LineHeight + 8.0f;
-	CUIRect Box = {Width - BoxWidth - 6.0f, 34.0f, BoxWidth, BoxHeight};
-	Box.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.72f), IGraphics::CORNER_ALL, 3.0f);
+	CUIRect Box = {Width - BoxWidth - 6.0f / ScaleX + OffsetX, 34.0f / ScaleY + OffsetY, BoxWidth, BoxHeight};
+	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
 	Box.DrawOutline(ColorRGBA(0.45f, 0.65f, 0.85f, 0.35f));
 
-	TextRender()->TextColor(ColorRGBA(0.9f, 0.95f, 1.0f, 0.95f));
+	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryTextColor, false)));
 	float y = Box.y + 4.0f;
 	for(int i = 0; i < NumLines; i++)
 	{
@@ -1908,6 +2411,9 @@ void CLazyClient::OnUpdate()
 	UpdateAutoMargin();
 	UpdateAntiping();
 	UpdateAspectConfirm();
+	UpdateZoomKeyBinds();
 	UpdateZeroGravityPredictor();
+	UpdateAutoTeamLock();
+	UpdateAutoKill();
 	UpdateTelemetry();
 }

@@ -483,6 +483,26 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 
 			LazyInfoLabel(&MainView, Localize("The bound key only turns the predictor on and off. When it is on, the hold-area, anti-speedrun, warning time and display rules are exactly the same as Prediction mode. The predictor starts off when Forced is selected."), Ui(), TextRender());
 		}
+
+		MainView.HSplitTop(LazyMargin, nullptr, &MainView);
+		LazySectionTitle(&MainView, Localize("Warning Appearance"), Ui());
+		LazyInfoLabel(&MainView, Localize("Move and stretch the warning independently on each axis. Offsets are in pixels; scale changes how many screen pixels one overlay pixel uses."), Ui(), TextRender());
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravOffsetX, &g_Config.m_LcZeroGravOffsetX, &Button, Localize("Horizontal offset"), -300, 300, &CUi::ms_LinearScrollbarScale, 0, " px");
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravOffsetY, &g_Config.m_LcZeroGravOffsetY, &Button, Localize("Vertical offset"), -200, 200, &CUi::ms_LinearScrollbarScale, 0, " px");
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravScaleX, &g_Config.m_LcZeroGravScaleX, &Button, Localize("Horizontal scale"), 50, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravScaleY, &g_Config.m_LcZeroGravScaleY, &Button, Localize("Vertical scale"), 50, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		static CLineInput s_ZeroGravTextInput(g_Config.m_LcZeroGravText, sizeof(g_Config.m_LcZeroGravText));
+		DoEditBoxWithLabel(&s_ZeroGravTextInput, &Button, Localize("Custom warning text"), Localize("Freeze in"), g_Config.m_LcZeroGravText, sizeof(g_Config.m_LcZeroGravText));
+
+		static CButtonContainer s_ZeroGravTextColorReset, s_ZeroGravBgColorReset;
+		DoLine_ColorPicker(&s_ZeroGravTextColorReset, LazyLineSize, 14.0f, 0.0f, &MainView, Localize("Warning text color"), &g_Config.m_LcZeroGravTextColor, color_cast<ColorRGBA>(ColorHSLA(0x0EFFF0, false)), true, nullptr, false);
+		DoLine_ColorPicker(&s_ZeroGravBgColorReset, LazyLineSize, 14.0f, 0.0f, &MainView, Localize("Warning background color"), &g_Config.m_LcZeroGravBgColor, color_cast<ColorRGBA>(ColorHSLA(0xDB01E54A, true)), true, nullptr, true);
 	}
 	else
 	{
@@ -505,19 +525,62 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcTelemetrySnaps, Localize("Snapshots per second"), &g_Config.m_LcTelemetrySnaps, &MainView, LazyLineSize);
 	LazyInfoLabel(&MainView, Localize("Local-only overlay in the top-right. Packet loss is estimated from missing vital network chunks and resend requests over the last few seconds."), Ui(), TextRender());
 
+	MainView.HSplitTop(LazyMargin, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Telemetry Appearance"), Ui());
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcTelemetryOffsetX, &g_Config.m_LcTelemetryOffsetX, &Button, Localize("Horizontal offset"), -300, 300, &CUi::ms_LinearScrollbarScale, 0, " px");
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcTelemetryOffsetY, &g_Config.m_LcTelemetryOffsetY, &Button, Localize("Vertical offset"), -200, 200, &CUi::ms_LinearScrollbarScale, 0, " px");
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcTelemetryScaleX, &g_Config.m_LcTelemetryScaleX, &Button, Localize("Horizontal scale"), 50, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcTelemetryScaleY, &g_Config.m_LcTelemetryScaleY, &Button, Localize("Vertical scale"), 50, 300, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+	static CButtonContainer s_TelemetryTextColorReset, s_TelemetryBgColorReset;
+	DoLine_ColorPicker(&s_TelemetryTextColorReset, LazyLineSize, 14.0f, 0.0f, &MainView, Localize("Telemetry text color"), &g_Config.m_LcTelemetryTextColor, color_cast<ColorRGBA>(ColorHSLA(0x95FFF2, false)), true, nullptr, false);
+	DoLine_ColorPicker(&s_TelemetryBgColorReset, LazyLineSize, 14.0f, 0.0f, &MainView, Localize("Telemetry background color"), &g_Config.m_LcTelemetryBgColor, color_cast<ColorRGBA>(ColorHSLA(0xB89C550B, true)), true, nullptr, true);
+
 	LazyEndScroll(&s_ScrollRegion, MainView);
 }
 
 void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 {
-	CUIRect Label;
+	CUIRect Button;
 	static CScrollRegion s_ScrollRegion;
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
-	LazySectionTitle(&MainView, Localize("Chat Triggers"), Ui());
-	MainView.HSplitTop(20.0f, &Label, &MainView);
-	Ui()->DoLabel(&Label, Localize("No options yet."), 14.0f, TEXTALIGN_ML);
+	LazySectionTitle(&MainView, Localize("Team Invites"), Ui());
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcInviteManager, Localize("Handle !invite whispers"), &g_Config.m_LcInviteManager, &MainView, LazyLineSize);
+	LazyInfoLabel(&MainView, Localize("When a player whispers !invite, the client checks lazy_invites.txt: approve invites them automatically, ask shows a chat notice, deny ignores them. Players not in the file are treated as ask and added to it."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	static CButtonContainer s_OpenInviteListButton;
+	MainView.HSplitTop(LazyLineSize * 1.5f, &Button, &MainView);
+	if(DoButton_Menu(&s_OpenInviteListButton, Localize("Open invite list"), 0, &Button))
+	{
+		char aPath[IO_MAX_PATH_LENGTH];
+		Storage()->GetCompletePath(IStorage::TYPE_SAVE, CLazyClient::INVITES_FILE, aPath, sizeof(aPath));
+		if(!Storage()->FileExists(aPath, IStorage::TYPE_ABSOLUTE))
+		{
+			IOHANDLE File = Storage()->OpenFile(CLazyClient::INVITES_FILE, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+			if(File)
+			{
+				const char *pHeader =
+					"# LazyClient team invite list\n"
+					"# One entry per line: approve <name>, ask <name> or deny <name>.\n"
+					"# Names are case-insensitive. Later entries override earlier ones.\n"
+					"# Unknown players who whisper !invite are appended here as ask.\n";
+				io_write(File, pHeader, str_length(pHeader));
+				io_close(File);
+			}
+		}
+		Client()->ViewFile(aPath);
+	}
+	LazyInfoLabel(&MainView, Localize("The file is stored next to settings_lazy.cfg. Entries apply immediately, no reload needed."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	LazyInfoLabel(&MainView, Localize("Console: lc_invite_approve <name>, lc_invite_ask <name>, lc_invite_deny <name>. Example: lc_invite_approve Nameless Tee."), Ui(), TextRender());
 
 	LazyEndScroll(&s_ScrollRegion, MainView);
 }
@@ -570,8 +633,86 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	if(DoButton_Menu(&s_ReleasesButton, Localize("Open GitHub Releases"), 0, &Button))
 		Client()->ViewLink("https://github.com/DASIEU/LazyClient/releases");
 
-	CUIRect ContentBottom = Left;
-	ContentBottom.y = std::max(Left.y, Right.y);
+	// Continue below the taller of the two columns.
+	const float ColumnsBottom = std::max(Left.y, Right.y);
+	MainView.HSplitTop(std::max(0.0f, ColumnsBottom - MainView.y), nullptr, &MainView);
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Better Zooming"), Ui());
+	LazyInfoLabel(&MainView, Localize("lc_zoom_in and lc_zoom_out change the zoom by the configured number of levels instead of one level like +zoom/-zoom. Bind them to keys below or with the bind command."), Ui(), TextRender());
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcZoomStep, &g_Config.m_LcZoomStep, &Button, Localize("Zoom step"), 1, 20, &CUi::ms_LinearScrollbarScale, 0, " levels");
+
+	static CLineInput s_ZoomInKeyInput(g_Config.m_LcZoomInKey, sizeof(g_Config.m_LcZoomInKey));
+	static CLineInput s_ZoomOutKeyInput(g_Config.m_LcZoomOutKey, sizeof(g_Config.m_LcZoomOutKey));
+	static CButtonContainer s_ZoomInBindButton, s_ZoomOutBindButton;
+	auto ZoomBindRow = [this](CUIRect *pRect, bool ZoomIn) {
+		CUIRect Row, EditBox, BindButton;
+		pRect->HSplitTop(LazyLineSize, &Row, pRect);
+		Row.VSplitRight(64.0f, &EditBox, &BindButton);
+		EditBox.VSplitRight(8.0f, &EditBox, nullptr);
+		if(ZoomIn)
+		{
+			DoEditBoxWithLabel(&s_ZoomInKeyInput, &EditBox, Localize("Zoom in key"), Localize("e.g. o"), g_Config.m_LcZoomInKey, sizeof(g_Config.m_LcZoomInKey));
+			if(DoButton_Menu(&s_ZoomInBindButton, Localize("Bind"), 0, &BindButton))
+				GameClient()->m_Lazy.BindZoomKey(true);
+		}
+		else
+		{
+			DoEditBoxWithLabel(&s_ZoomOutKeyInput, &EditBox, Localize("Zoom out key"), Localize("e.g. p"), g_Config.m_LcZoomOutKey, sizeof(g_Config.m_LcZoomOutKey));
+			if(DoButton_Menu(&s_ZoomOutBindButton, Localize("Bind"), 0, &BindButton))
+				GameClient()->m_Lazy.BindZoomKey(false);
+		}
+	};
+	ZoomBindRow(&MainView, true);
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	ZoomBindRow(&MainView, false);
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	static CButtonContainer s_ResetZoomButton;
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	if(DoButton_Menu(&s_ResetZoomButton, Localize("Reset zoom bindings"), 0, &Button))
+	{
+		g_Config.m_LcZoomStep = 3;
+		g_Config.m_LcZoomInKey[0] = '\0';
+		g_Config.m_LcZoomOutKey[0] = '\0';
+		GameClient()->m_Lazy.BindZoomKey(true);
+		GameClient()->m_Lazy.BindZoomKey(false);
+	}
+	LazyInfoLabel(&MainView, Localize("Each press changes the zoom, so a step of 3 takes the level from 10 to 7 while zooming out. A key can only run one of the two commands."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Auto Team Lock"), Ui());
+	LazyInfoLabel(&MainView, Localize("Locks your team automatically a while after you join it by sending /lock, so you and your team cannot be joined by others mid-run. The team is locked again if someone unlocks it. The delay gives teammates time to join first."), Ui(), TextRender());
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+
+	static CButtonContainer s_AutoTeamLockCheckbox, s_LockTeamNowButton;
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	DoButton_CheckBoxAutoVMarginAndSet(&s_AutoTeamLockCheckbox, Localize("Auto team lock"), &g_Config.m_LcAutoTeamLock, &Button, LazyLineSize);
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcAutoTeamLockDelay, &g_Config.m_LcAutoTeamLockDelay, &Button, Localize("Lock delay"), 5, 600, &CUi::ms_LinearScrollbarScale, 0, " s");
+	LazyInfoLabel(&MainView, Localize("The delay counts from the moment you join the team. Set it long enough for your teammates to join (5-600 seconds)."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	if(DoButton_Menu(&s_LockTeamNowButton, Localize("Lock team now"), 0, &Button))
+		GameClient()->m_Lazy.LockTeamNow();
+	LazyInfoLabel(&MainView, Localize("lc_team_lock does the same from the console or a bind."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Auto Kill While Frozen"), Ui());
+	static CButtonContainer s_AutoKillFrozenCheckbox;
+	DoButton_CheckBoxAutoVMarginAndSet(&s_AutoKillFrozenCheckbox, Localize("Kill when alone and frozen"), &g_Config.m_LcAutoKillFrozen, &MainView, LazyLineSize);
+
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcAutoKillFrozenTime, &g_Config.m_LcAutoKillFrozenTime, &Button, Localize("Kill after"), 1, 120, &CUi::ms_LinearScrollbarScale, 0, " s");
+	LazyInfoLabel(&MainView, Localize("Only active while you are the only player in your team, frozen, and not moving. Sliding or unfreezing restarts the timer, and the kill is sent once per freeze."), Ui(), TextRender());
+
+	CUIRect ContentBottom = MainView;
 	LazyEndScroll(&s_ScrollRegion, ContentBottom);
 }
 

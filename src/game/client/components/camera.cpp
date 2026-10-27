@@ -70,6 +70,17 @@ void CCamera::ScaleZoom(float Factor)
 	m_AutoSpecCamera = false;
 }
 
+void CCamera::ZoomBySteps(float Steps)
+{
+	if(Steps == 0.0f || !ZoomAllowed())
+		return;
+
+	ScaleZoom(ZoomStepsToValue(Steps));
+
+	if(GameClient()->m_MultiViewActivated)
+		GameClient()->m_MultiViewPersonalZoom += Steps;
+}
+
 float CCamera::MaxZoomLevel()
 {
 	return (g_Config.m_ClLimitMaxZoomLevel) ? ((Graphics()->IsTileBufferingEnabled() ? 240 : 30)) : std::numeric_limits<float>::max();
@@ -437,10 +448,7 @@ void CCamera::ConZoomPlus(IConsole::IResult *pResult, void *pUserData)
 
 	float ZoomAmount = pResult->NumArguments() ? pResult->GetFloat(0) : 1.0f;
 
-	pSelf->ScaleZoom(CCamera::ZoomStepsToValue(ZoomAmount));
-
-	if(pSelf->GameClient()->m_MultiViewActivated)
-		pSelf->GameClient()->m_MultiViewPersonalZoom += ZoomAmount;
+	pSelf->ZoomBySteps(ZoomAmount);
 }
 void CCamera::ConZoomMinus(IConsole::IResult *pResult, void *pUserData)
 {
@@ -449,12 +457,8 @@ void CCamera::ConZoomMinus(IConsole::IResult *pResult, void *pUserData)
 		return;
 
 	float ZoomAmount = pResult->NumArguments() ? pResult->GetFloat(0) : 1.0f;
-	ZoomAmount *= -1.0f;
 
-	pSelf->ScaleZoom(CCamera::ZoomStepsToValue(ZoomAmount));
-
-	if(pSelf->GameClient()->m_MultiViewActivated)
-		pSelf->GameClient()->m_MultiViewPersonalZoom += ZoomAmount;
+	pSelf->ZoomBySteps(-ZoomAmount);
 }
 void CCamera::ConZoom(IConsole::IResult *pResult, void *pUserData)
 {

@@ -97,6 +97,7 @@ public:
 	void GotoTele(int Number, int Offset = -1);
 
 	void SetZoom(float Target, int Smoothness, bool IsUser);
+	void ZoomBySteps(float Steps);
 	bool ZoomAllowed() const;
 
 	int Deadzone() const;

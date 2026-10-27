@@ -29,6 +29,7 @@ public:
 	void OnReset() override;
 	void OnStateChange(int NewState, int OldState) override;
 	void OnNewSnapshot() override;
+	void OnMessage(int MsgType, void *pRawMsg) override;
 	void OnUpdate() override;
 	void OnRender() override;
 
@@ -55,9 +56,17 @@ public:
 	void OnWeaponSelectInput();
 	void BindGunKey();
 	void BindZeroGravKey();
+	void BindZoomKey(bool ZoomIn);
 
 	// Antiping
 	void UpdateAntiping();
+
+	// Auto team lock
+	void OnChatMessage(int ClientId, int Team, const char *pMessage);
+	void LockTeamNow();
+
+	// Team invites
+	static constexpr const char *INVITES_FILE = "lazy_invites.txt";
 
 	// Aspect ratio
 	bool AspectConfirmActive() const { return m_AspectConfirm; }
@@ -74,6 +83,17 @@ private:
 	void BindZeroGravKeyForced();
 	void RestoreZeroGravKey();
 	void RestoreStaleZeroGravKeyBind();
+	static void ConZoomIn(IConsole::IResult *pResult, void *pUserData);
+	static void ConZoomOut(IConsole::IResult *pResult, void *pUserData);
+	static void ConTeamLock(IConsole::IResult *pResult, void *pUserData);
+	static void ConInviteApprove(IConsole::IResult *pResult, void *pUserData);
+	static void ConInviteAsk(IConsole::IResult *pResult, void *pUserData);
+	static void ConInviteDeny(IConsole::IResult *pResult, void *pUserData);
+	void ZoomByConfiguredStep(bool ZoomIn);
+	void BindZoomKeyForced(int Index);
+	void RestoreZoomKey(int Index);
+	void RestoreStaleZoomKeyBind(int Index);
+	void UpdateZoomKeyBinds();
 
 	// Gores mode
 	bool m_GoresHeavyWeapon = false;
@@ -90,6 +110,12 @@ private:
 	bool m_GoresWasEnabled = false;
 	int m_GoresBoundKey = 0;
 	char m_aGoresPrevBind[256] = {};
+
+	// Better zooming
+	bool m_ZoomKeysInitialized = false;
+	bool m_aZoomKeyBound[2] = {};
+	int m_aZoomBoundKey[2] = {};
+	char m_aZoomPrevBind[2][128] = {};
 
 	// Snap tap
 	int m_aSnapApplied[NUM_DUMMIES] = {};
@@ -137,6 +163,32 @@ private:
 
 	// Antipiping
 	float m_AntipingSmoothedPing = -1.0f;
+
+	// Auto team lock
+	// The client never receives the server's per-team lock flag (SetTeamLock is
+	// server-side only), so the state is inferred from the team chat messages
+	// the server sends on /lock and /unlock, and from our own join.
+	int m_AutoTeamLockTeam = -1;
+	bool m_AutoTeamLockPending = false;
+	float m_AutoTeamLockSeconds = 0.0f;
+	bool m_AutoTeamLockLocked = false;
+	void ResetAutoTeamLockState();
+	void UpdateAutoTeamLock();
+	int CurrentDDRaceTeam() const;
+
+	// Auto kill while frozen
+	int m_AutoKillTeam = -1;
+	float m_AutoKillSeconds = 0.0f;
+	bool m_AutoKillFired = false;
+	bool m_AutoKillHasPos = false;
+	vec2 m_AutoKillAnchorPos = vec2(0.0f, 0.0f);
+	void ResetAutoKillState();
+	void UpdateAutoKill();
+
+	// Team invites via whispers
+	void HandleTeamInvite(int ClientId, const char *pMessage);
+	void AddInviteEntry(const char *pStatus, const char *pName);
+	int InviteStatus(const char *pName) const;
 
 	// Aspect ratio
 	bool m_AspectSeeded = false;
