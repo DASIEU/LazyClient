@@ -87,6 +87,17 @@ bool IsFreezeTile(int Tile)
 	return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE;
 }
 
+bool IsFreezeTileAt(const CCollision *pCollision, vec2 Pos)
+{
+	if(!pCollision)
+		return false;
+	const int Index = pCollision->GetMapIndex(Pos);
+	if(Index < 0)
+		return false;
+	return IsFreezeTile(pCollision->GetTileIndex(Index)) ||
+		IsFreezeTile(pCollision->GetFrontTileIndex(Index));
+}
+
 bool SameServerAddress(const char *pAddress, const NETADDR &CurrentAddress)
 {
 	NETADDR ParsedAddress;
@@ -817,6 +828,7 @@ void CLazyClient::UpdateAutoKill()
 	bool Frozen = false;
 	bool Alone = false;
 	bool HasPos = false;
+	bool InFreezeTile = false;
 	vec2 Pos(0.0f, 0.0f);
 	if(Online && Team != TEAM_FLOCK && LocalId >= 0 && LocalId < MAX_CLIENTS &&
 		!GameClient()->m_Snap.m_SpecInfo.m_Active)
@@ -836,9 +848,10 @@ void CLazyClient::UpdateAutoKill()
 
 		HasPos = GameClient()->m_Snap.m_pLocalCharacter != nullptr;
 		Pos = GameClient()->m_LocalCharacterPos;
+		InFreezeTile = HasPos && IsFreezeTileAt(Collision(), Pos);
 	}
 
-	if(!Enabled || !Online || !Frozen || !Alone || !HasPos)
+	if(!Enabled || !Online || !Frozen || !Alone || !HasPos || !InFreezeTile)
 	{
 		ResetAutoKillState();
 		return;
@@ -1218,7 +1231,7 @@ void CLazyClient::UpdateGoresMode()
 
 	const int CurWeapon = GameClient()->m_PredictedChar.m_ActiveWeapon;
 	m_GoresHeavyWeapon = IsHeavyWeapon(CurWeapon);
-	if(!g_Config.m_LcGoresIgnoreHeavy && m_GoresHeavyWeapon)
+	if(g_Config.m_LcGoresIgnoreHeavy && m_GoresHeavyWeapon)
 	{
 		m_GoresAttacking = false;
 		m_GoresInjectedFire = false;
@@ -1331,7 +1344,7 @@ void CLazyClient::OnFireInput(int Pressed, bool Changed)
 		return;
 	if(time_get() < m_GoresWeaponSelectUntil)
 		return;
-	if(!g_Config.m_LcGoresIgnoreHeavy && m_GoresHeavyWeapon)
+	if(g_Config.m_LcGoresIgnoreHeavy && m_GoresHeavyWeapon)
 		return;
 
 	if(!Changed)

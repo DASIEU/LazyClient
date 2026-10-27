@@ -710,7 +710,7 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 	Ui()->DoScrollbarOption(&g_Config.m_LcAutoKillFrozenTime, &g_Config.m_LcAutoKillFrozenTime, &Button, Localize("Kill after"), 1, 120, &CUi::ms_LinearScrollbarScale, 0, " s");
-	LazyInfoLabel(&MainView, Localize("Only active while you are the only player in your team, frozen, and not moving. Sliding or unfreezing restarts the timer, and the kill is sent once per freeze."), Ui(), TextRender());
+	LazyInfoLabel(&MainView, Localize("Only active while you are the only player in your team, frozen, standing in a freeze tile, and not moving. Sliding, leaving the freeze tile or unfreezing restarts the timer, and the kill is sent once per freeze."), Ui(), TextRender());
 
 	CUIRect ContentBottom = MainView;
 	LazyEndScroll(&s_ScrollRegion, ContentBottom);
