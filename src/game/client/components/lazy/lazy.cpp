@@ -170,6 +170,9 @@ void CLazyClient::OnReset()
 	ResetTelemetry();
 	ResetAutoTeamLockState();
 	ResetAutoKillState();
+	m_TeamLoadPending = false;
+	m_TeamLoadCommands.clear();
+	m_TeamLoadNextSend = 0;
 }
 
 void CLazyClient::OnStateChange(int NewState, int OldState)
@@ -197,6 +200,9 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	ResetTelemetry();
 	ResetAutoTeamLockState();
 	ResetAutoKillState();
+	m_TeamLoadPending = false;
+	m_TeamLoadCommands.clear();
+	m_TeamLoadNextSend = 0;
 }
 
 void CLazyClient::ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const
@@ -807,6 +813,175 @@ void CLazyClient::ResetAutoTeamLockState()
 	m_AutoTeamLockPending = false;
 	m_AutoTeamLockSeconds = 0.0f;
 	m_AutoTeamLockLocked = false;
+}
+
+void CLazyClient::SaveTeamNow()
+{
+	const int Team = CurrentDDRaceTeam();
+	if(Team == TEAM_FLOCK)
+	{
+		GameClient()->m_Chat.Echo(Localize("LazyClient: join a team before saving it."));
+		return;
+	}
+
+	m_TeamLoadPending = false;
+	m_TeamLoadCommands.clear();
+	m_TeamSaveTeam = Team;
+	m_NumTeamSaveNames = 0;
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+	{
+		if(!GameClient()->m_Snap.m_apPlayerInfos[ClientId])
+			continue;
+		if(GameClient()->m_Teams.Team(ClientId) != Team)
+			continue;
+		const char *pName = GameClient()->m_aClients[ClientId].m_aName;
+		if(pName[0] == '\0')
+			continue;
+		str_copy(m_aaTeamSaveNames[m_NumTeamSaveNames], pName, MAX_NAME_LENGTH);
+		m_NumTeamSaveNames++;
+		if(m_NumTeamSaveNames >= MAX_CLIENTS)
+			break;
+	}
+
+	char aBuf[256];
+	str_format(aBuf, sizeof(aBuf), Localize("LazyClient: saved team %d with %d players. Use /lt to load it."), Team, m_NumTeamSaveNames);
+	GameClient()->m_Chat.Echo(aBuf);
+}
+
+void CLazyClient::StartTeamLoad()
+{
+	if(m_TeamSaveTeam <= TEAM_FLOCK || m_NumTeamSaveNames == 0)
+	{
+		GameClient()->m_Chat.Echo(Localize("LazyClient: no saved team. Use /st while in a team first."));
+		return;
+	}
+
+	m_TeamLoadCommands.clear();
+	m_TeamLoadPending = false;
+
+	const bool InTeam = CurrentDDRaceTeam() != TEAM_FLOCK;
+	const bool Playing = GameClient()->m_Snap.m_pLocalCharacter != nullptr && !GameClient()->m_Snap.m_SpecInfo.m_Active;
+	if(InTeam || Playing)
+	{
+		m_TeamLoadPending = true;
+		m_TeamLoadConfirmUntil = time() + TEAM_LOAD_CONFIRM_SECONDS * time_freq();
+		char aBuf[256];
+		str_format(aBuf, sizeof(aBuf), Localize("LazyClient: loading team %d will restart your run. Type yes to kill and load, or no to cancel."), m_TeamSaveTeam);
+		GameClient()->m_Chat.Echo(aBuf);
+		return;
+	}
+
+	RunTeamLoad(false);
+}
+
+void CLazyClient::RunTeamLoad(bool Kill)
+{
+	m_TeamLoadPending = false;
+	m_TeamLoadCommands.clear();
+
+	if(Kill)
+		QueueTeamLoadCommand("/kill");
+
+	char aBuf[64];
+	str_format(aBuf, sizeof(aBuf), "/team %d", m_TeamSaveTeam);
+	QueueTeamLoadCommand(aBuf);
+
+	const int LocalId = GameClient()->m_aLocalIds[0];
+	const char *pLocalName = LocalId >= 0 && LocalId < MAX_CLIENTS ? GameClient()->m_aClients[LocalId].m_aName : "";
+	for(int i = 0; i < m_NumTeamSaveNames; i++)
+	{
+		const char *pName = m_aaTeamSaveNames[i];
+		if(pLocalName[0] != '\0' && str_comp_nocase(pName, pLocalName) == 0)
+			continue;
+		std::string Command = "/invite ";
+		Command += pName;
+		QueueTeamLoadCommand(Command.c_str());
+	}
+
+	m_TeamLoadNextSend = time();
+	str_format(aBuf, sizeof(aBuf), Localize("LazyClient: loading team %d..."), m_TeamSaveTeam);
+	GameClient()->m_Chat.Echo(aBuf);
+}
+
+void CLazyClient::QueueTeamLoadCommand(const char *pCommand)
+{
+	m_TeamLoadCommands.emplace_back(pCommand);
+}
+
+void CLazyClient::UpdateTeamLoadQueue()
+{
+	if(m_TeamLoadPending && time() > m_TeamLoadConfirmUntil)
+	{
+		m_TeamLoadPending = false;
+		GameClient()->m_Chat.Echo(Localize("LazyClient: load cancelled (timed out)."));
+	}
+
+	if(m_TeamLoadCommands.empty())
+		return;
+
+	if(Client()->State() != IClient::STATE_ONLINE)
+	{
+		m_TeamLoadCommands.clear();
+		return;
+	}
+
+	const int64_t Now = time();
+	if(Now < m_TeamLoadNextSend)
+		return;
+
+	const std::string Command = m_TeamLoadCommands.front();
+	m_TeamLoadCommands.erase(m_TeamLoadCommands.begin());
+	GameClient()->m_Chat.SendChat(0, Command.c_str());
+	// The server rate-limits invites (sv_invite_frequency, 1 s by default), so
+	// leave a little headroom between the queued commands.
+	m_TeamLoadNextSend = Now + time_freq() + time_freq() / 10;
+}
+
+bool CLazyClient::ChatDoTeamSave(const char *pInput)
+{
+	if(pInput == nullptr)
+		return false;
+
+	char aLine[256];
+	str_copy(aLine, pInput, sizeof(aLine));
+	str_utf8_trim_right(aLine);
+	const char *pLine = str_skip_whitespaces_const(aLine);
+
+	if(m_TeamLoadPending)
+	{
+		if(time() > m_TeamLoadConfirmUntil)
+		{
+			m_TeamLoadPending = false;
+			GameClient()->m_Chat.Echo(Localize("LazyClient: load cancelled (timed out)."));
+		}
+		else if(str_comp_nocase(pLine, "yes") == 0)
+		{
+			RunTeamLoad(true);
+			return true;
+		}
+		else if(str_comp_nocase(pLine, "no") == 0)
+		{
+			m_TeamLoadPending = false;
+			GameClient()->m_Chat.Echo(Localize("LazyClient: load cancelled."));
+			return true;
+		}
+	}
+
+	char aCommand[32];
+	if(sscanf(pLine, "%31s", aCommand) != 1)
+		return false;
+
+	if(str_comp_nocase(aCommand, "/st") == 0 || str_comp_nocase(aCommand, "/saveteam") == 0)
+	{
+		SaveTeamNow();
+		return true;
+	}
+	if(str_comp_nocase(aCommand, "/lt") == 0 || str_comp_nocase(aCommand, "/loadteam") == 0)
+	{
+		StartTeamLoad();
+		return true;
+	}
+	return false;
 }
 
 void CLazyClient::ResetAutoKillState()
@@ -2429,4 +2604,5 @@ void CLazyClient::OnUpdate()
 	UpdateAutoTeamLock();
 	UpdateAutoKill();
 	UpdateTelemetry();
+	UpdateTeamLoadQueue();
 }

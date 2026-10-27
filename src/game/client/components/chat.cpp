@@ -275,7 +275,9 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			m_ServerCommandsNeedSorting = false;
 		}
 
-		if(GameClient()->m_BindChat.ChatDoBinds(m_Input.GetString()))
+		if(GameClient()->m_Lazy.ChatDoTeamSave(m_Input.GetString()))
+			; // Do nothing as the team save/load command was handled locally
+		else if(GameClient()->m_BindChat.ChatDoBinds(m_Input.GetString()))
 			; // Do nothing as bindchat was executed
 		else if(GameClient()->m_TClient.ChatDoSpecId(m_Input.GetString()))
 			; // Do nothing as specid was executed

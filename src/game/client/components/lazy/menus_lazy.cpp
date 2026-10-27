@@ -625,6 +625,10 @@ void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 	if(DoButton_Menu(&s_OpenInviteListButton, Localize("Open invite list"), 0, &Button))
 		LazyOpenSaveFile(Client(), Storage(), CLazyClient::INVITES_FILE, LAZY_INVITES_HEADER);
 
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Team Save / Load"), Ui(), GameClient(), Localize("Type /st (or /saveteam) to remember your current team number and every player in it. Type /lt (or /loadteam) to join that team again and invite the saved players. The team number and player list are kept in memory only and are never written to disk. If you are in a team or playing when you load, the client asks in chat: type yes to kill and load, or no to cancel. Joining still follows the server rules, so a locked team needs an invite first."));
+	LazyInfoLabel(&MainView, Localize("Use /st to save and /lt to load. Stored in memory only."), Ui(), TextRender());
+
 	LazyEndScroll(&s_ScrollRegion, MainView);
 }
 

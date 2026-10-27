@@ -16,6 +16,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 class CCollision;
 class IHttpRequest;
@@ -64,6 +65,9 @@ public:
 	// Auto team lock
 	void OnChatMessage(int ClientId, int Team, const char *pMessage);
 	void LockTeamNow();
+
+	// Team save/load (/st and /lt)
+	bool ChatDoTeamSave(const char *pInput);
 
 	// Team invites
 	static constexpr const char *INVITES_FILE = "lazy_invites.txt";
@@ -184,6 +188,21 @@ private:
 	vec2 m_AutoKillAnchorPos = vec2(0.0f, 0.0f);
 	void ResetAutoKillState();
 	void UpdateAutoKill();
+
+	// Team save/load (/st and /lt)
+	static constexpr int TEAM_LOAD_CONFIRM_SECONDS = 30;
+	int m_TeamSaveTeam = -1;
+	char m_aaTeamSaveNames[MAX_CLIENTS][MAX_NAME_LENGTH] = {};
+	int m_NumTeamSaveNames = 0;
+	bool m_TeamLoadPending = false;
+	int64_t m_TeamLoadConfirmUntil = 0;
+	std::vector<std::string> m_TeamLoadCommands;
+	int64_t m_TeamLoadNextSend = 0;
+	void SaveTeamNow();
+	void StartTeamLoad();
+	void RunTeamLoad(bool Kill);
+	void QueueTeamLoadCommand(const char *pCommand);
+	void UpdateTeamLoadQueue();
 
 	// Team invites via whispers
 	void HandleTeamInvite(int ClientId, const char *pMessage);
