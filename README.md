@@ -8,7 +8,8 @@ the upstream client, protocol, and configuration compatibility while adding a
 small set of client-side tools for hook-heavy maps.
 
 LazyClient is built on TClient 10.9.x / DDNet 20.x. The current release is
-**0.1.0** and targets **Linux** first.
+**0.1.0**. Windows builds are provided from 0.1.1 onwards; 0.1.0 was only built
+and tested for Linux.
 
 ## Fair play and privacy
 
@@ -73,6 +74,25 @@ Run the client:
 
 The server target remains `DDNet-Server` for compatibility with existing server
 tooling. More build options are documented in [`docs/BUILDING.md`](docs/BUILDING.md).
+
+### Windows
+
+The same source builds natively on Windows; there is nothing Linux-specific.
+The tested configuration is MSYS2/MinGW-w64, see
+[`docs/BUILDING.md`](docs/BUILDING.md#building-on-windows) for the package list
+and the exact CMake command. The quick version:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPREFER_BUNDLED_LIBS=OFF
+cmake --build build -j"$(nproc)"
+```
+
+This produces `build/LazyClient.exe` and `build/DDNet-Server.exe`. CMake needs
+the Windows dependencies (curl, sqlite3, SDL2, freetype, opus, opusfile, ogg,
+png) either installed for your toolchain or available through the `ddnet-libs`
+submodule, so clone with submodules and note the
+[missing libraries](docs/BUILDING.md#missing-libraries) section if CMake stops
+early.
 
 ## Configuration
 

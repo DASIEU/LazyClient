@@ -750,7 +750,19 @@ if(CLIENT AND VULKAN)
   show_dependency_status("Vulkan" VULKAN)
 endif()
 if(NOT(CURL_FOUND) AND NOT TARGET_OS STREQUAL "emscripten")
-  message(SEND_ERROR "You must install Curl to compile ${CMAKE_PROJECT_NAME}")
+  if(TARGET_OS STREQUAL "windows")
+    message(SEND_ERROR
+      "You must install Curl to compile ${CMAKE_PROJECT_NAME} for Windows.\n"
+      "The bundled Windows libraries are taken from the ddnet-libs submodule, "
+      "which is not checked out:\n"
+      "  git submodule update --init --recursive\n"
+      "This is only a submodule problem when the whole Git tree is empty, e.g. a "
+      "source ZIP or an archive export. Alternatively install Curl for your "
+      "toolchain and re-run CMake with -DPREFER_BUNDLED_LIBS=OFF. See "
+      "docs/BUILDING.md (\"Building on Windows\").")
+  else()
+    message(SEND_ERROR "You must install Curl to compile ${CMAKE_PROJECT_NAME}")
+  endif()
 endif()
 if(NOT(Python3_FOUND))
   message(SEND_ERROR "You must install Python to compile ${CMAKE_PROJECT_NAME}")
@@ -759,7 +771,16 @@ if(NOT(RUST_FOUND))
   message(SEND_ERROR "You must install Rust and Cargo to compile ${CMAKE_PROJECT_NAME}")
 endif()
 if(NOT(SQLite3_FOUND))
-  message(SEND_ERROR "You must install SQLite3 to compile ${CMAKE_PROJECT_NAME}")
+  if(TARGET_OS STREQUAL "windows")
+    message(SEND_ERROR
+      "You must install SQLite3 to compile ${CMAKE_PROJECT_NAME} for Windows.\n"
+      "Run \"git submodule update --init --recursive\" to provide the bundled "
+      "Windows libraries from ddnet-libs, or install SQLite3 for your toolchain "
+      "and re-run CMake with -DPREFER_BUNDLED_LIBS=OFF. See docs/BUILDING.md "
+      "(\"Building on Windows\").")
+  else()
+    message(SEND_ERROR "You must install SQLite3 to compile ${CMAKE_PROJECT_NAME}")
+  endif()
 endif()
 
 if(MYSQL AND NOT(MYSQL_FOUND))

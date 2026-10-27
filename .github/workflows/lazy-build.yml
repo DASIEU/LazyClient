@@ -1,4 +1,4 @@
-name: LazyClient Linux build
+name: LazyClient build
 
 on:
   push:
@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   build-linux:
+    name: Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -49,4 +50,78 @@ jobs:
           path: |
             build/LazyClient
             build/DDNet-Server
+          if-no-files-found: error
+
+  # The Windows build is what LazyClient was missing in 0.1.0: the sources
+  # always supported Windows (see CMakeLists.txt and src/base/windows.*), but
+  # nothing built or tested it, so a regression on Windows could sit unnoticed
+  # on the lazy branch. This job keeps the win64 client building.
+  build-windows:
+    name: Windows (MinGW x86_64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            diffutils
+            ninja
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-sdl2
+            mingw-w64-ucrt-x86_64-freetype
+            mingw-w64-ucrt-x86_64-harfbuzz
+            mingw-w64-ucrt-x86_64-libpng
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-opusfile
+            mingw-w64-ucrt-x86_64-libogg
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-zlib
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPREFER_BUNDLED_LIBS=OFF \
+            -DCLIENT=ON \
+            -DSERVER=ON
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      # The exes link dynamically against the MSYS2 libraries, so the artifact
+      # needs the runtime DLLs next to them to start on a machine without MSYS2.
+      - name: Collect runnable files
+        run: |
+          mkdir -p dist
+          cp build/LazyClient.exe build/DDNet-Server.exe dist/
+          cp -r build/data dist/
+          if [ -f build/storage.cfg ]; then
+            cp build/storage.cfg dist/
+          fi
+          for exe in dist/LazyClient.exe dist/DDNet-Server.exe; do
+            ldd "$exe" | awk '/=> \/ucrt64\// { print $3 }' | while read -r dll; do
+              cp "$dll" dist/
+            done
+          done
+
+      - name: Upload LazyClient
+        uses: actions/upload-artifact@v4
+        with:
+          name: LazyClient-windows-x86_64
+          path: dist/
           if-no-files-found: error

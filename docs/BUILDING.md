@@ -77,6 +77,80 @@ FLUSH PRIVILEGES;
 * **-DMACOS_CODESIGN=[ON|OFF]** <br>
 	Whether to sign code when building the DMG on macOS.
 
+## Building on Windows
+
+Windows is supported natively. The client, the server and the tools all build
+with MSVC or MinGW-w64; the platform code is selected by `CONF_FAMILY_WINDOWS`
+(see `src/base/detect.h`), and the Windows helpers live in
+`src/base/windows.cpp` and `src/base/windows.h`.
+
+### With MSYS2 / MinGW-w64 (UCRT64)
+
+This is the configuration CI builds (`.github/workflows/lazy-build.yml`), so it
+is the one that is verified on every push to `lazy`. The package list below is
+the one that workflow installs.
+
+```sh
+pacman -S --needed git diffutils ninja \
+  mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
+  mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-python \
+  mingw-w64-ucrt-x86_64-rust \
+  mingw-w64-ucrt-x86_64-curl mingw-w64-ucrt-x86_64-sqlite3 \
+  mingw-w64-ucrt-x86_64-sdl2 mingw-w64-ucrt-x86_64-freetype \
+  mingw-w64-ucrt-x86_64-harfbuzz mingw-w64-ucrt-x86_64-libpng \
+  mingw-w64-ucrt-x86_64-opus mingw-w64-ucrt-x86_64-opusfile \
+  mingw-w64-ucrt-x86_64-libogg mingw-w64-ucrt-x86_64-openssl \
+  mingw-w64-ucrt-x86_64-zlib
+
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPREFER_BUNDLED_LIBS=OFF \
+  -DCLIENT=ON \
+  -DSERVER=ON
+cmake --build build -j"$(nproc)"
+```
+
+The result is `build/LazyClient.exe` and `build/DDNet-Server.exe`. Run the
+client from `build/` so it finds `data/` and `storage.cfg`, or copy the `.exe`
+files, `data/` and `storage.cfg` into one folder. The MSYS2 runtime DLLs from
+`C:\msys64\ucrt64\bin` (curl, SDL2, freetype, harfbuzz, and the opus/opusfile/
+ogg stack) are required next to the executables; `ldd build/LazyClient.exe`
+lists the exact set. The CI artifact already contains them, so a binary moved
+to a machine without MSYS2 will not start unless those DLLs are copied too.
+
+### With MSVC
+
+Use the bundled libraries, which are built for MSVC:
+
+```bat
+git submodule update --init --recursive
+cmake -S . -B build -A x64 -DPREFER_BUNDLED_LIBS=ON
+cmake --build build --config Release
+```
+
+### Missing libraries
+
+If CMake stops with `You must install Curl to compile` or `You must install
+SQLite3 to compile` on Windows, it is almost always the `ddnet-libs` submodule
+being empty (a source ZIP has no submodules). Fix it with:
+
+```sh
+git submodule update --init --recursive
+```
+
+The bundled Windows libraries live in `ddnet-libs/<library>/windows/lib64` (and
+`windows/lib32` for 32-bit builds); the `cmake/Find*.cmake` modules look there
+automatically. Without the submodule, install the dependency for your toolchain
+and configure with `-DPREFER_BUNDLED_LIBS=OFF` as shown above.
+
+### Options that do not apply on Windows
+
+- `-DPREFER_BUNDLED_LIBS` defaults to ON on Windows.
+- The Vulkan backend defaults to OFF; pass `-DVULKAN=ON` and install the Vulkan
+  SDK if you want it.
+- `-DDISCORD_DYNAMIC=ON` is Linux only.
+- `-DEXCEPTION_HANDLING=ON` (crash dumps) is only implemented for Windows.
+
 ## Cross-compiling on Linux to Windows x86/x86\_64
 
 Install MinGW cross-compilers of the form `i686-w64-mingw32-gcc` (32 bit) or
@@ -84,6 +158,10 @@ Install MinGW cross-compilers of the form `i686-w64-mingw32-gcc` (32 bit) or
 
 Then add `-DCMAKE_TOOLCHAIN_FILE=../cmake/toolchains/mingw64.toolchain` to the
 **initial** CMake command line.
+
+This path needs the `ddnet-libs` submodule for the Windows libraries
+(`git submodule update --init --recursive`), because the cross toolchain has no
+system curl, sqlite3, SDL2 or freetype to fall back on.
 
 ## Cross-compiling on Linux to macOS
 
