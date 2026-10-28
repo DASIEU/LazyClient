@@ -49,6 +49,7 @@ MACRO_CONFIG_INT(LcAspectHeight, lc_aspect_height, 0, 0, 10000, CFGFLAG_CLIENT |
 
 // Visuals
 MACRO_CONFIG_INT(LcClientLogos, lc_client_logos, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show client logos in nameplates and the scoreboard")
+MACRO_CONFIG_INT(LcDevIcon, lc_dev_icon, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use the developer star LazyClient icon for your own tee (hidden developer option)")
 MACRO_CONFIG_INT(LcBestClientPublicList, lc_bestclient_public_list, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use the BestClient public player list to show BestClient logos (network request)")
 MACRO_CONFIG_INT(LcFriendHeartScoreboard, lc_friend_heart_scoreboard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a heart before friends in the scoreboard")
 MACRO_CONFIG_INT(LcBetterVotes, lc_better_votes, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show vote percentages, the pass threshold and remaining yes votes")
@@ -71,11 +72,11 @@ MACRO_CONFIG_COL(LcZeroGravBgColor, lc_zerograv_bg_color, 0xDB01E54A, CFGFLAG_CL
 
 // Auto team lock
 MACRO_CONFIG_INT(LcAutoTeamLock, lc_auto_team_lock, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically lock your team a while after you join it")
-MACRO_CONFIG_INT(LcAutoTeamLockDelay, lc_auto_team_lock_delay, 10, 5, 600, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Delay in seconds before the team is locked after joining")
+MACRO_CONFIG_INT(LcAutoTeamLockDelay, lc_auto_team_lock_delay, 10, 1, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Delay in seconds before the team is locked after joining")
 
 // Auto kill while frozen
 MACRO_CONFIG_INT(LcAutoKillFrozen, lc_auto_kill_frozen, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kill yourself after being frozen and alone in your team without moving")
-MACRO_CONFIG_INT(LcAutoKillFrozenTime, lc_auto_kill_frozen_time, 10, 1, 120, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Seconds without movement in freeze before the auto kill")
+MACRO_CONFIG_INT(LcAutoKillFrozenTime, lc_auto_kill_frozen_time, 10, 1, 30, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Seconds without movement in freeze before the auto kill")
 
 // Team invites via whispers
 MACRO_CONFIG_INT(LcInviteManager, lc_invite_manager, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Handle !invite whispers using the approve/ask/deny list in lazy_invites.txt")

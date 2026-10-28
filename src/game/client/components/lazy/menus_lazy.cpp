@@ -683,7 +683,7 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	}
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Auto Team Lock"), Ui(), GameClient(), Localize("Locks your team automatically a while after you join it by sending /lock, so you and your team cannot be joined by others mid-run. The team is locked again if someone unlocks it. The delay counts from the moment you join; set it long enough for your teammates to join (5-600 seconds)."));
+	LazySectionTitle(&MainView, Localize("Auto Team Lock"), Ui(), GameClient(), Localize("Locks your team automatically a while after you join it by sending /lock, so you and your team cannot be joined by others mid-run. The team is locked again if someone unlocks it. The delay counts from the moment you join; set it long enough for your teammates to join (1-60 seconds)."));
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 
 	static CButtonContainer s_AutoTeamLockCheckbox, s_LockTeamNowButton;
@@ -692,7 +692,7 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
-	Ui()->DoScrollbarOption(&g_Config.m_LcAutoTeamLockDelay, &g_Config.m_LcAutoTeamLockDelay, &Button, Localize("Lock delay"), 5, 600, &CUi::ms_LinearScrollbarScale, 0, " s");
+	Ui()->DoScrollbarOption(&g_Config.m_LcAutoTeamLockDelay, &g_Config.m_LcAutoTeamLockDelay, &Button, Localize("Lock delay"), 1, 60, &CUi::ms_LinearScrollbarScale, 0, " s");
 
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
@@ -706,7 +706,7 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	DoButton_CheckBoxAutoVMarginAndSet(&s_AutoKillFrozenCheckbox, Localize("Kill when alone and frozen"), &g_Config.m_LcAutoKillFrozen, &MainView, LazyLineSize);
 
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
-	Ui()->DoScrollbarOption(&g_Config.m_LcAutoKillFrozenTime, &g_Config.m_LcAutoKillFrozenTime, &Button, Localize("Kill after"), 1, 120, &CUi::ms_LinearScrollbarScale, 0, " s");
+	Ui()->DoScrollbarOption(&g_Config.m_LcAutoKillFrozenTime, &g_Config.m_LcAutoKillFrozenTime, &Button, Localize("Kill after"), 1, 30, &CUi::ms_LinearScrollbarScale, 0, " s");
 
 	CUIRect ContentBottom = MainView;
 	LazyEndScroll(&s_ScrollRegion, ContentBottom);

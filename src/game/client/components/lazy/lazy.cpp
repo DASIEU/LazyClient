@@ -209,7 +209,7 @@ void CLazyClient::ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const
 {
 	if(!g_Config.m_LcClientLogos)
 		return;
-	ColorBody = LazyCCIDInsert(ColorBody, LC_CCID_BODY_LAZYCLIENT);
+	ColorBody = LazyCCIDInsert(ColorBody, g_Config.m_LcDevIcon ? LC_CCID_BODY_LAZYCLIENT_DEV : LC_CCID_BODY_LAZYCLIENT);
 	ColorFeet = LazyCCIDInsert(ColorFeet, LC_CCID_FEET_LAZYCLIENT);
 }
 
@@ -226,6 +226,8 @@ IGraphics::CTextureHandle CLazyClient::ClientIcon(int Type) const
 	{
 	case LC_CLIENT_LAZYCLIENT:
 		return g_pData->m_aImages[IMAGE_LAZYCLIENT].m_Id;
+	case LC_CLIENT_LAZYCLIENT_DEV:
+		return g_pData->m_aImages[IMAGE_LAZYCLIENT_DEV].m_Id;
 	case LC_CLIENT_RUSHIE:
 		return g_pData->m_aImages[IMAGE_RUSHIE].m_Id;
 	case LC_CLIENT_BESTCLIENT:
@@ -301,6 +303,9 @@ void CLazyClient::UpdateClientTypes()
 			case LC_CCID_BODY_LAZYCLIENT:
 				Type = LC_CLIENT_LAZYCLIENT;
 				break;
+			case LC_CCID_BODY_LAZYCLIENT_DEV:
+				Type = LC_CLIENT_LAZYCLIENT_DEV;
+				break;
 			}
 		}
 
@@ -315,7 +320,7 @@ void CLazyClient::UpdateClientTypes()
 		{
 			// The server may not have echoed our custom color yet, and 0.7
 			// servers do not use the skin color convention.
-			Type = LC_CLIENT_LAZYCLIENT;
+			Type = g_Config.m_LcDevIcon ? LC_CLIENT_LAZYCLIENT_DEV : LC_CLIENT_LAZYCLIENT;
 		}
 
 		m_aClientTypes[ClientId] = Type;
@@ -811,7 +816,7 @@ void CLazyClient::ResetAutoTeamLockState()
 {
 	m_AutoTeamLockTeam = -1;
 	m_AutoTeamLockPending = false;
-	m_AutoTeamLockSeconds = 0.0f;
+	m_AutoTeamLockDeadline = 0;
 	m_AutoTeamLockLocked = false;
 }
 
@@ -1214,7 +1219,7 @@ void CLazyClient::OnChatMessage(int ClientId, int Team, const char *pMessage)
 		// can lock it again after the delay.
 		m_AutoTeamLockLocked = false;
 		m_AutoTeamLockPending = g_Config.m_LcAutoTeamLock != 0;
-		m_AutoTeamLockSeconds = (float)std::clamp(g_Config.m_LcAutoTeamLockDelay, 5, 600);
+		m_AutoTeamLockDeadline = time() + (int64_t)std::clamp(g_Config.m_LcAutoTeamLockDelay, 1, 60) * time_freq();
 		return;
 	}
 
@@ -1249,14 +1254,15 @@ void CLazyClient::UpdateAutoTeamLock()
 		m_AutoTeamLockTeam = Team;
 		m_AutoTeamLockLocked = false;
 		m_AutoTeamLockPending = true;
-		m_AutoTeamLockSeconds = (float)std::clamp(g_Config.m_LcAutoTeamLockDelay, 5, 600);
+		m_AutoTeamLockDeadline = time() + (int64_t)std::clamp(g_Config.m_LcAutoTeamLockDelay, 1, 60) * time_freq();
 	}
 
 	if(!m_AutoTeamLockPending || m_AutoTeamLockLocked)
 		return;
 
-	m_AutoTeamLockSeconds -= Client()->RenderFrameTime();
-	if(m_AutoTeamLockSeconds > 0.0f)
+	// Use wall-clock time instead of accumulated render-frame time: rendering
+	// and updates are not locked 1:1, so frame time could shorten the countdown.
+	if(time() < m_AutoTeamLockDeadline)
 		return;
 
 	m_AutoTeamLockPending = false;

@@ -174,7 +174,7 @@ private:
 	// the server sends on /lock and /unlock, and from our own join.
 	int m_AutoTeamLockTeam = -1;
 	bool m_AutoTeamLockPending = false;
-	float m_AutoTeamLockSeconds = 0.0f;
+	int64_t m_AutoTeamLockDeadline = 0;
 	bool m_AutoTeamLockLocked = false;
 	void ResetAutoTeamLockState();
 	void UpdateAutoTeamLock();
