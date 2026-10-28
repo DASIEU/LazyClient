@@ -38,6 +38,7 @@ public:
 	void ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const;
 	int ClientType(int ClientId) const;
 	IGraphics::CTextureHandle ClientIcon(int Type) const;
+	IGraphics::CTextureHandle DevIconTexture() const;
 	void RenderClientIcon(int Type, vec2 Pos, float Size, float Alpha) const;
 
 	// Input modes
@@ -220,6 +221,7 @@ private:
 
 	// Client identification
 	int m_aClientTypes[MAX_CLIENTS] = {};
+	mutable IGraphics::CTextureHandle m_DevIconTexture;
 	bool m_ClientLogosInitialized = false;
 	bool m_WasClientLogosEnabled = false;
 	std::shared_ptr<IHttpRequest> m_pBestClientListTask;

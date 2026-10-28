@@ -1777,7 +1777,6 @@ set(EXPECTED_DATA
   lazy/clients/bestclient.png
   lazy/clients/rushie.png
   lazy/lazyclient.png
-  lazy/lazyclient_dev.png
   mapres/basic_freeze.png
   mapres/bg_cloud1.png
   mapres/bg_cloud2.png
@@ -2217,7 +2216,6 @@ endforeach()
 set(LAZYCLIENT_DATA_FILES
   lazy/banner.png
   lazy/lazyclient.png
-  lazy/lazyclient_dev.png
   lazy/clients/bestclient.png
   lazy/clients/rushie.png
 )

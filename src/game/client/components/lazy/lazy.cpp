@@ -11,6 +11,7 @@
 
 #include <engine/client.h>
 #include <engine/graphics.h>
+#include <engine/image.h>
 #include <engine/http.h>
 #include <engine/shared/config.h>
 #include <engine/shared/json.h>
@@ -220,6 +221,90 @@ int CLazyClient::ClientType(int ClientId) const
 	return m_aClientTypes[ClientId];
 }
 
+IGraphics::CTextureHandle CLazyClient::DevIconTexture() const
+{
+	if(m_DevIconTexture.IsValid())
+		return m_DevIconTexture;
+
+	// The developer icon is generated in code on purpose: it is not a data file,
+	// so it cannot be swapped by dropping another image next to the other
+	// client icons. Black rounded square with gold "Lz" letters.
+	constexpr int Size = 128;
+	constexpr int Samples = 4;
+	constexpr float Radius = 30.0f;
+	constexpr ColorRGBA Gold(1.0f, 0.84f, 0.25f, 1.0f);
+
+	auto InsideMask = [&](float x, float y) {
+		const float NearestX = std::clamp(x, Radius, (float)Size - Radius);
+		const float NearestY = std::clamp(y, Radius, (float)Size - Radius);
+		const float DX = x - NearestX;
+		const float DY = y - NearestY;
+		return DX * DX + DY * DY <= Radius * Radius;
+	};
+	auto InRect = [](float x, float y, float X0, float Y0, float X1, float Y1) {
+		return x >= X0 && x <= X1 && y >= Y0 && y <= Y1;
+	};
+	auto InQuad = [](float x, float y, float Ax, float Ay, float Bx, float By, float Cx, float Cy, float Dx, float Dy) {
+		auto Cross = [](float Px, float Py, float Qx, float Qy, float Rx, float Ry) {
+			return (Qx - Px) * (Ry - Py) - (Qy - Py) * (Rx - Px);
+		};
+		const float C1 = Cross(Ax, Ay, Bx, By, x, y);
+		const float C2 = Cross(Bx, By, Cx, Cy, x, y);
+		const float C3 = Cross(Cx, Cy, Dx, Dy, x, y);
+		const float C4 = Cross(Dx, Dy, Ax, Ay, x, y);
+		return (C1 >= 0.0f && C2 >= 0.0f && C3 >= 0.0f && C4 >= 0.0f) ||
+			(C1 <= 0.0f && C2 <= 0.0f && C3 <= 0.0f && C4 <= 0.0f);
+	};
+	auto InsideGold = [&](float x, float y) {
+		const bool LetterL = InRect(x, y, 28.0f, 30.0f, 42.0f, 96.0f) ||
+			InRect(x, y, 28.0f, 82.0f, 62.0f, 96.0f);
+		const bool LetterZ = InRect(x, y, 68.0f, 30.0f, 100.0f, 44.0f) ||
+			InRect(x, y, 64.0f, 82.0f, 96.0f, 96.0f) ||
+			InQuad(x, y, 86.0f, 44.0f, 100.0f, 44.0f, 78.0f, 82.0f, 64.0f, 82.0f);
+		return LetterL || LetterZ;
+	};
+
+	CImageInfo Info;
+	Info.m_Width = Size;
+	Info.m_Height = Size;
+	Info.m_Format = CImageInfo::FORMAT_RGBA;
+	Info.AllocateFillZero();
+
+	for(int y = 0; y < Size; y++)
+	{
+		for(int x = 0; x < Size; x++)
+		{
+			int MaskSamples = 0;
+			int GoldSamples = 0;
+			for(int sy = 0; sy < Samples; sy++)
+			{
+				for(int sx = 0; sx < Samples; sx++)
+				{
+					const float Px = x + (sx + 0.5f) / Samples;
+					const float Py = y + (sy + 0.5f) / Samples;
+					if(!InsideMask(Px, Py))
+						continue;
+					MaskSamples++;
+					if(InsideGold(Px, Py))
+						GoldSamples++;
+				}
+			}
+			if(MaskSamples == 0)
+				continue;
+
+			uint8_t *pPixel = &Info.m_pData[(y * Size + x) * 4];
+			const float GoldMix = (float)GoldSamples / MaskSamples;
+			pPixel[0] = (uint8_t)(Gold.r * GoldMix * 255.0f);
+			pPixel[1] = (uint8_t)(Gold.g * GoldMix * 255.0f);
+			pPixel[2] = (uint8_t)(Gold.b * GoldMix * 255.0f);
+			pPixel[3] = (uint8_t)(255 * MaskSamples / (Samples * Samples));
+		}
+	}
+
+	m_DevIconTexture = Graphics()->LoadTextureRaw(Info, 0, "lazyclient_dev");
+	return m_DevIconTexture;
+}
+
 IGraphics::CTextureHandle CLazyClient::ClientIcon(int Type) const
 {
 	switch(Type)
@@ -227,7 +312,7 @@ IGraphics::CTextureHandle CLazyClient::ClientIcon(int Type) const
 	case LC_CLIENT_LAZYCLIENT:
 		return g_pData->m_aImages[IMAGE_LAZYCLIENT].m_Id;
 	case LC_CLIENT_LAZYCLIENT_DEV:
-		return g_pData->m_aImages[IMAGE_LAZYCLIENT_DEV].m_Id;
+		return DevIconTexture();
 	case LC_CLIENT_RUSHIE:
 		return g_pData->m_aImages[IMAGE_RUSHIE].m_Id;
 	case LC_CLIENT_BESTCLIENT:
@@ -2601,6 +2686,8 @@ void CLazyClient::OnUpdate()
 		m_ZeroGravForcedBindHeld = false;
 
 	UpdateClientLogoState();
+	if(g_Config.m_LcDevIcon)
+		DevIconTexture(); // Load before the first nameplate/scoreboard render.
 	UpdateBestClientList();
 	UpdateAutoMargin();
 	UpdateAntiping();
