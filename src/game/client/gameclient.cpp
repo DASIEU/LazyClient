@@ -241,6 +241,7 @@ void CGameClient::OnConsoleInit()
 	Console()->Chain("player_color_body", ConchainSpecialInfoupdate, this);
 	Console()->Chain("player_color_feet", ConchainSpecialInfoupdate, this);
 	Console()->Chain("player_skin", ConchainSpecialInfoupdate, this);
+	Console()->Chain("lc_dev_icon", ConchainSpecialInfoupdate, this);
 
 	Console()->Chain("player7_skin", ConchainSpecialInfoupdate, this);
 	Console()->Chain("player7_skin_body", ConchainSpecialInfoupdate, this);
