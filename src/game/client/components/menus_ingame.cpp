@@ -1145,26 +1145,15 @@ void CMenus::RenderServerControl(CUIRect MainView)
 	Bottom.HMargin(5.0f, &Bottom);
 	Bottom.HSplitTop(5.0f, nullptr, &Bottom);
 
-	// render quick search
-	CUIRect QuickSearch;
-	Bottom.VSplitLeft(5.0f, nullptr, &Bottom);
-	Bottom.VSplitLeft(250.0f, &QuickSearch, &Bottom);
-	if(m_ControlPageOpening)
-	{
-		m_ControlPageOpening = false;
-		Ui()->SetActiveItem(&m_FilterInput);
-		m_FilterInput.SelectAll();
-	}
-	bool Searching = Ui()->DoEditBox_Search(&m_FilterInput, &QuickSearch, 14.0f, !Ui()->IsPopupOpen() && !GameClient()->m_GameConsole.IsActive());
-
-	// vote filters (difficulty and map length)
+	// vote filters (difficulty and map length), above the vote list
 	if(s_ControlPage == EServerControlTab::SETTINGS)
 	{
-		CUIRect FilterStars, FilterLength;
-		Bottom.VSplitLeft(10.0f, nullptr, &Bottom);
-		Bottom.VSplitLeft(105.0f, &FilterStars, &Bottom);
-		Bottom.VSplitLeft(5.0f, nullptr, &Bottom);
-		Bottom.VSplitLeft(115.0f, &FilterLength, &Bottom);
+		CUIRect FilterRow, FilterStars, FilterLength;
+		MainView.HSplitTop(25.0f, &FilterRow, &MainView);
+		FilterRow.VSplitLeft(5.0f, nullptr, &FilterRow);
+		FilterRow.VSplitLeft(190.0f, &FilterStars, &FilterRow);
+		FilterRow.VSplitLeft(5.0f, nullptr, &FilterRow);
+		FilterRow.VSplitLeft(190.0f, &FilterLength, &FilterRow);
 
 		char aStarsLabel[64];
 		if(g_Config.m_LcVoteFilterStars <= 0)
@@ -1184,6 +1173,19 @@ void CMenus::RenderServerControl(CUIRect MainView)
 		if(DoButton_Menu(&s_VoteFilterLengthButton, aLengthLabel, 0, &FilterLength))
 			g_Config.m_LcVoteFilterLength = (g_Config.m_LcVoteFilterLength + 1) % 8;
 	}
+
+	// render quick search
+	CUIRect QuickSearch;
+	Bottom.VSplitLeft(5.0f, nullptr, &Bottom);
+	Bottom.VSplitLeft(250.0f, &QuickSearch, &Bottom);
+	if(m_ControlPageOpening)
+	{
+		m_ControlPageOpening = false;
+		Ui()->SetActiveItem(&m_FilterInput);
+		m_FilterInput.SelectAll();
+	}
+	bool Searching = Ui()->DoEditBox_Search(&m_FilterInput, &QuickSearch, 14.0f, !Ui()->IsPopupOpen() && !GameClient()->m_GameConsole.IsActive());
+
 
 	// vote menu
 	bool Call = false;
