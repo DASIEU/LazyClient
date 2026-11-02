@@ -69,6 +69,8 @@ public:
 
 	// Team save/load (/st and /lt)
 	bool ChatDoTeamSave(const char *pInput);
+	// Chat triggers (/r, auto GG, auto greeting)
+	bool ChatDoReply(const char *pInput);
 
 	// Team invites
 	static constexpr const char *INVITES_FILE = "lazy_invites.txt";
@@ -190,6 +192,13 @@ private:
 	void ResetAutoKillState();
 	void UpdateAutoKill();
 
+	// Chat triggers
+	bool m_AutoGGArmed = false;
+	void UpdateAutoGG();
+	char m_aLastWhisperName[MAX_NAME_LENGTH] = {};
+	std::unordered_map<std::string, int64_t> m_AutoHiCooldowns;
+	void HandleAutoHi(int ClientId, int Team, const char *pMessage);
+
 	// Team save/load (/st and /lt)
 	static constexpr int TEAM_LOAD_CONFIRM_SECONDS = 30;
 	int m_TeamSaveTeam = -1;
@@ -225,8 +234,11 @@ private:
 	bool m_ClientLogosInitialized = false;
 	bool m_WasClientLogosEnabled = false;
 	std::shared_ptr<IHttpRequest> m_pBestClientListTask;
-	float m_BestClientListRefreshTimer = 0.0f;
+	int64_t m_BestClientListNextFetch = 0;
+	bool m_BestClientListFetchPending = false;
+	bool m_BestClientListWanted = false;
 	bool m_BestClientListLoaded = false;
+	int m_BestClientListPlayerCount = -1;
 	std::unordered_map<std::string, std::unordered_set<std::string>> m_BestClientPlayers;
 
 	// Hooked freeze predictor

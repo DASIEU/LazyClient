@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string>
 
 using namespace std::chrono_literals;
 
@@ -852,6 +853,151 @@ void CMenus::RenderServerInfoMotd(CUIRect Motd)
 	s_ScrollRegion.End();
 }
 
+namespace {
+const char *const s_apVoteLengthNames[] = {"", "XXS", "XS", "S", "M", "L", "XL", "XXL"};
+
+bool VoteOptionTokenBoundary(char c)
+{
+	return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'));
+}
+
+// Returns the difficulty rating (0-5) embedded in a vote description, or -1
+// when the description does not contain one. Handles the common DDNet form
+// "4/5 ★", star bars such as "★★✰✰✰" and compact "4★" / "★4" forms.
+int ParseVoteStars(const char *pDescription)
+{
+	for(const char *p = pDescription; *p; p++)
+	{
+		if(*p < '0' || *p > '5')
+			continue;
+		if(p != pDescription && p[-1] >= '0' && p[-1] <= '9')
+			continue;
+		if(p[1] == '/' && p[2] == '5')
+			return *p - '0';
+	}
+
+	int Best = -1;
+	for(const char *p = pDescription; *p;)
+	{
+		const char *pStart = p;
+		const int Codepoint = str_utf8_decode(&p);
+		if(Codepoint != 0x2605 && Codepoint != 0x2730)
+			continue;
+
+		// A single star next to a digit, e.g. "4★".
+		const char *pBefore = pStart;
+		while(pBefore > pDescription && pBefore[-1] == ' ')
+			pBefore--;
+		if(pBefore > pDescription && pBefore[-1] >= '0' && pBefore[-1] <= '5')
+			return pBefore[-1] - '0';
+
+		const char *pAfter = p;
+		while(*pAfter == ' ')
+			pAfter++;
+		if(*pAfter >= '0' && *pAfter <= '5' && !(pAfter[1] >= '0' && pAfter[1] <= '9'))
+			return *pAfter - '0';
+
+		// A star bar; count filled stars in the whole run.
+		int Filled = 0;
+		const char *pRun = pStart;
+		while(*pRun)
+		{
+			const int RunCodepoint = str_utf8_decode(&pRun);
+			if(RunCodepoint == 0x2605)
+				Filled++;
+			else if(RunCodepoint != 0x2730 && RunCodepoint != ' ')
+				break;
+		}
+		if(Filled > Best)
+			Best = Filled;
+	}
+	return std::min(Best, 5);
+}
+
+// Returns the map length token index (1 = XXS ... 7 = XXL), or 0 if none.
+int ParseVoteLength(const char *pDescription)
+{
+	for(int Length = 1; Length <= 7; Length++)
+	{
+		const char *pToken = s_apVoteLengthNames[Length];
+		const size_t TokenLength = str_length(pToken);
+		for(const char *p = pDescription; (p = str_find_nocase(p, pToken)) != nullptr; p++)
+		{
+			if((p == pDescription || VoteOptionTokenBoundary(p[-1])) &&
+				VoteOptionTokenBoundary(p[TokenLength]))
+				return Length;
+		}
+	}
+	return 0;
+}
+
+bool VoteOptionMatchesFilter(const char *pDescription)
+{
+	if(g_Config.m_LcVoteFilterStars > 0 && ParseVoteStars(pDescription) < g_Config.m_LcVoteFilterStars)
+		return false;
+	if(g_Config.m_LcVoteFilterLength > 0)
+	{
+		const int Length = ParseVoteLength(pDescription);
+		if(Length == 0 || Length > g_Config.m_LcVoteFilterLength)
+			return false;
+	}
+	return true;
+}
+
+// Replaces the verbose "4/5 ★" rating with the compact "4★" form and appends
+// the parsed length, so filtered lists read like "4★ M  MapName".
+void FormatVoteOptionLabel(const char *pDescription, char *pOut, int OutSize)
+{
+	std::string Label(pDescription);
+	const int Stars = ParseVoteStars(pDescription);
+	if(Stars >= 0)
+	{
+		char aRating[16];
+		str_format(aRating, sizeof(aRating), "%d/5", Stars);
+		const size_t RatingPos = Label.find(aRating);
+		if(RatingPos != std::string::npos)
+		{
+			size_t EraseEnd = RatingPos + str_length(aRating);
+			while(Label[EraseEnd] == ' ')
+				EraseEnd++;
+			const char *pStar = Label.c_str() + EraseEnd;
+			if(str_length(pStar) >= str_length("★") && str_comp_num(pStar, "★", str_length("★")) == 0)
+				EraseEnd += str_length("★");
+			Label.erase(RatingPos, EraseEnd - RatingPos);
+		}
+		while(!Label.empty() && (Label.back() == ' ' || Label.back() == '|'))
+			Label.pop_back();
+		size_t Start = 0;
+		while(Start < Label.size() && (Label[Start] == ' ' || Label[Start] == '|'))
+			Start++;
+		Label.erase(0, Start);
+	}
+
+	// Don't append metadata the description already shows in compact form
+	// (e.g. "1★ XXS MapName").
+	std::string Tag;
+	if(Stars >= 0 && Label.find("★") == std::string::npos && Label.find("✰") == std::string::npos)
+	{
+		Tag = std::to_string(Stars);
+		Tag += "★";
+	}
+	const int Length = ParseVoteLength(pDescription);
+	if(Length > 0 && ParseVoteLength(Label.c_str()) == 0)
+	{
+		if(!Tag.empty())
+			Tag += ' ';
+		Tag += s_apVoteLengthNames[Length];
+	}
+	if(!Tag.empty())
+	{
+		if(!Label.empty())
+			Label += " | ";
+		Label += Tag;
+	}
+	str_copy(pOut, Label.c_str(), OutSize);
+}
+} // namespace
+
 bool CMenus::RenderServerControlServer(CUIRect MainView, bool UpdateScroll)
 {
 	CUIRect List = MainView;
@@ -864,6 +1010,8 @@ bool CMenus::RenderServerControlServer(CUIRect MainView, bool UpdateScroll)
 	for(const CVoteOptionClient *pOption = GameClient()->m_Voting.FirstOption(); pOption; pOption = pOption->m_pNext, i++)
 	{
 		if(!m_FilterInput.IsEmpty() && !str_utf8_find_nocase(pOption->m_aDescription, m_FilterInput.GetString()))
+			continue;
+		if(!VoteOptionMatchesFilter(pOption->m_aDescription))
 			continue;
 		if(i == m_CallvoteSelectedOption)
 			Selected = TotalShown;
@@ -878,6 +1026,8 @@ bool CMenus::RenderServerControlServer(CUIRect MainView, bool UpdateScroll)
 	{
 		if(!m_FilterInput.IsEmpty() && !str_utf8_find_nocase(pOption->m_aDescription, m_FilterInput.GetString()))
 			continue;
+		if(!VoteOptionMatchesFilter(pOption->m_aDescription))
+			continue;
 		aIndices[NumVoteOptions] = i;
 		NumVoteOptions++;
 
@@ -887,7 +1037,9 @@ bool CMenus::RenderServerControlServer(CUIRect MainView, bool UpdateScroll)
 
 		CUIRect Label;
 		Item.m_Rect.VMargin(2.0f, &Label);
-		Ui()->DoLabel(&Label, pOption->m_aDescription, 13.0f, TEXTALIGN_ML);
+		char aLabel[VOTE_DESC_LENGTH + 32];
+		FormatVoteOptionLabel(pOption->m_aDescription, aLabel, sizeof(aLabel));
+		Ui()->DoLabel(&Label, aLabel, 13.0f, TEXTALIGN_ML);
 	}
 
 	Selected = s_ListBox.DoEnd();
@@ -1004,6 +1156,34 @@ void CMenus::RenderServerControl(CUIRect MainView)
 		m_FilterInput.SelectAll();
 	}
 	bool Searching = Ui()->DoEditBox_Search(&m_FilterInput, &QuickSearch, 14.0f, !Ui()->IsPopupOpen() && !GameClient()->m_GameConsole.IsActive());
+
+	// vote filters (difficulty and map length)
+	if(s_ControlPage == EServerControlTab::SETTINGS)
+	{
+		CUIRect FilterStars, FilterLength;
+		Bottom.VSplitLeft(10.0f, nullptr, &Bottom);
+		Bottom.VSplitLeft(105.0f, &FilterStars, &Bottom);
+		Bottom.VSplitLeft(5.0f, nullptr, &Bottom);
+		Bottom.VSplitLeft(115.0f, &FilterLength, &Bottom);
+
+		char aStarsLabel[64];
+		if(g_Config.m_LcVoteFilterStars <= 0)
+			str_copy(aStarsLabel, Localize("Stars: off"));
+		else
+			str_format(aStarsLabel, sizeof(aStarsLabel), "%s ≥ %d★", Localize("Stars"), g_Config.m_LcVoteFilterStars);
+		static CButtonContainer s_VoteFilterStarsButton;
+		if(DoButton_Menu(&s_VoteFilterStarsButton, aStarsLabel, 0, &FilterStars))
+			g_Config.m_LcVoteFilterStars = (g_Config.m_LcVoteFilterStars + 1) % 6;
+
+		char aLengthLabel[64];
+		if(g_Config.m_LcVoteFilterLength <= 0)
+			str_copy(aLengthLabel, Localize("Length: off"));
+		else
+			str_format(aLengthLabel, sizeof(aLengthLabel), "%s ≤ %s", Localize("Length"), s_apVoteLengthNames[g_Config.m_LcVoteFilterLength]);
+		static CButtonContainer s_VoteFilterLengthButton;
+		if(DoButton_Menu(&s_VoteFilterLengthButton, aLengthLabel, 0, &FilterLength))
+			g_Config.m_LcVoteFilterLength = (g_Config.m_LcVoteFilterLength + 1) % 8;
+	}
 
 	// vote menu
 	bool Call = false;

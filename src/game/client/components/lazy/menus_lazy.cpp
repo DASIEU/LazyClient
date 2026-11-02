@@ -629,6 +629,49 @@ void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 	LazySectionTitle(&MainView, Localize("Team Save / Load"), Ui(), GameClient(), Localize("Type /st (or /saveteam) to remember your current team number and every player in it. Type /lt (or /loadteam) to join that team again and invite the saved players. The team number and player list are kept in memory only and are never written to disk. If you are in a team or playing when you load, the client asks in chat: type yes to kill and load, or no to cancel. Joining still follows the server rules, so a locked team needs an invite first."));
 	LazyInfoLabel(&MainView, Localize("Use /st to save and /lt to load. Stored in memory only."), Ui(), TextRender());
 
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Auto GG"), Ui(), GameClient(), Localize("Sends a message when your own race time is received, which happens only after your whole team finishes. Crossing the finish line early does not trigger it. Choose team or all chat and edit the message below. The message is sent once per finished run."));
+	static CButtonContainer s_AutoGGCheckbox;
+	DoButton_CheckBoxAutoVMarginAndSet(&s_AutoGGCheckbox, Localize("Send GG after the team finishes"), &g_Config.m_LcAutoGG, &MainView, LazyLineSize);
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	static CButtonContainer s_AutoGGChatButton;
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	if(DoButton_Menu(&s_AutoGGChatButton, g_Config.m_LcAutoGGChat ? Localize("Chat: all") : Localize("Chat: team"), 0, &Button))
+		g_Config.m_LcAutoGGChat = g_Config.m_LcAutoGGChat ? 0 : 1;
+
+	static CLineInput s_AutoGGMessageInput(g_Config.m_LcAutoGGMessage, sizeof(g_Config.m_LcAutoGGMessage));
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	DoEditBoxWithLabel(&s_AutoGGMessageInput, &Button, Localize("Message"), Localize("gg"), g_Config.m_LcAutoGGMessage, sizeof(g_Config.m_LcAutoGGMessage));
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Whisper Reply"), Ui(), GameClient(), Localize("Type /r <message> in chat to answer the last player who whispered you with /w automatically. The reply is sent as a whisper, so you do not have to type the name again."));
+	LazyInfoLabel(&MainView, Localize("Type /r <message> to reply to the last whisper."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Auto Greeting"), Ui(), GameClient(), Localize("Replies once when another player says hi, hello, hey, yo, qq or hai. The reply can stay in the same chat, mention the player, or be sent as a whisper. Messages are separated by | and one is picked at random. Each player can only get one reply per minute, so two LazyClients cannot greet each other forever."));
+	static CButtonContainer s_AutoHiCheckbox;
+	DoButton_CheckBoxAutoVMarginAndSet(&s_AutoHiCheckbox, Localize("Reply to greetings"), &g_Config.m_LcAutoHi, &MainView, LazyLineSize);
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	static CButtonContainer s_AutoHiModeButton;
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	const char *pAutoHiMode;
+	switch(g_Config.m_LcAutoHiMode)
+	{
+	case 1: pAutoHiMode = Localize("Mode: reply + mention"); break;
+	case 2: pAutoHiMode = Localize("Mode: whisper"); break;
+	default: pAutoHiMode = Localize("Mode: reply"); break;
+	}
+	if(DoButton_Menu(&s_AutoHiModeButton, pAutoHiMode, 0, &Button))
+		g_Config.m_LcAutoHiMode = (g_Config.m_LcAutoHiMode + 1) % 3;
+
+	static CLineInput s_AutoHiMessagesInput(g_Config.m_LcAutoHiMessages, sizeof(g_Config.m_LcAutoHiMessages));
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	DoEditBoxWithLabel(&s_AutoHiMessagesInput, &Button, Localize("Replies (separated by |)"), Localize("hi|hello|hey"), g_Config.m_LcAutoHiMessages, sizeof(g_Config.m_LcAutoHiMessages));
+
 	LazyEndScroll(&s_ScrollRegion, MainView);
 }
 

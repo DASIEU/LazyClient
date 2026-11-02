@@ -54,6 +54,8 @@ MACRO_CONFIG_INT(LcBestClientPublicList, lc_bestclient_public_list, 1, 0, 1, CFG
 MACRO_CONFIG_INT(LcFriendHeartScoreboard, lc_friend_heart_scoreboard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a heart before friends in the scoreboard")
 MACRO_CONFIG_INT(LcBetterVotes, lc_better_votes, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show vote percentages, the pass threshold and remaining yes votes")
 MACRO_CONFIG_INT(LcVotePassPercentage, lc_vote_pass_percentage, 50, 1, 99, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Vote yes percentage required to pass (match the server setting)")
+MACRO_CONFIG_INT(LcVoteFilterStars, lc_vote_filter_stars, 0, 0, 5, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only show map votes with at least this many difficulty stars (0 = off)")
+MACRO_CONFIG_INT(LcVoteFilterLength, lc_vote_filter_length, 0, 0, 7, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only show map votes up to this length: 0 = off, 1 = XXS, 2 = XS, 3 = S, 4 = M, 5 = L, 6 = XL, 7 = XXL")
 MACRO_CONFIG_INT(LcZeroGravPredict, lc_zerograv_predict, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict freeze tiles after holding a zero-gravity wall position")
 MACRO_CONFIG_INT(LcZeroGravMode, lc_zerograv_mode, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity predictor mode: 0 = always on, 1 = key toggles it")
 MACRO_CONFIG_INT(LcZeroGravPredictTime, lc_zerograv_predict_time, 5, 1, 10, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity freeze warning time in seconds")
@@ -80,6 +82,12 @@ MACRO_CONFIG_INT(LcAutoKillFrozenTime, lc_auto_kill_frozen_time, 10, 1, 30, CFGF
 
 // Team invites via whispers
 MACRO_CONFIG_INT(LcInviteManager, lc_invite_manager, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Handle !invite whispers using the approve/ask/deny list in lazy_invites.txt")
+MACRO_CONFIG_INT(LcAutoGG, lc_auto_gg, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Send a GG message once your team's race time is received")
+MACRO_CONFIG_INT(LcAutoGGChat, lc_auto_gg_chat, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto GG chat: 0 = team chat, 1 = all chat")
+MACRO_CONFIG_STR(LcAutoGGMessage, lc_auto_gg_message, 64, "gg", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Message sent by auto GG")
+MACRO_CONFIG_INT(LcAutoHi, lc_auto_hi, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Reply automatically to incoming greetings")
+MACRO_CONFIG_INT(LcAutoHiMode, lc_auto_hi_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto greeting reply mode: 0 = same chat, 1 = same chat with mention, 2 = whisper")
+MACRO_CONFIG_STR(LcAutoHiMessages, lc_auto_hi_messages, 128, "hi|hello|hey", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto greeting replies separated by | (one is picked at random)")
 
 // Telemetry
 MACRO_CONFIG_INT(LcTelemetry, lc_telemetry, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the LazyClient telemetry overlay")

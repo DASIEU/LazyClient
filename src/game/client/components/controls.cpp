@@ -260,6 +260,11 @@ int CControls::SnapInput(int *pData)
 
 		mem_copy(pData, &m_aInputData[g_Config.m_ClDummy], sizeof(m_aInputData[0]));
 
+		// Don't keep an old action aim around while chat or menus are open: it
+		// would otherwise be used for the first shot or hook after closing them.
+		if(g_Config.m_ClSubTickAiming)
+			m_aMousePosOnAction[g_Config.m_ClDummy] = vec2(0.0f, 0.0f);
+
 		// set the target anyway though so that we can keep seeing our surroundings,
 		// even if chat or menu are activated
 		vec2 Pos = GameClient()->m_Controls.m_aMousePos[g_Config.m_ClDummy];
@@ -589,8 +594,21 @@ bool CControls::CheckNewInput()
 
 		if(SetMousePos)
 		{
-			TestInput.m_TargetX = (int)m_aMousePos[Dummy].x;
-			TestInput.m_TargetY = (int)m_aMousePos[Dummy].y;
+			// On the tick that a hook or fire action starts, use the target that
+			// SnapInput actually sent (captured at the input event) instead of
+			// the current mouse position. Using the current position here made
+			// the prediction fire the hook at a different angle than the server,
+			// which felt like delayed or debounced hooks.
+			if(m_FastInputHookAction || m_FastInputFireAction)
+			{
+				TestInput.m_TargetX = m_aInputData[Dummy].m_TargetX;
+				TestInput.m_TargetY = m_aInputData[Dummy].m_TargetY;
+			}
+			else
+			{
+				TestInput.m_TargetX = (int)m_aMousePos[Dummy].x;
+				TestInput.m_TargetY = (int)m_aMousePos[Dummy].y;
+			}
 			if(RefreshHookAim && (TestInput.m_TargetX != m_aFastInput[Dummy].m_TargetX || TestInput.m_TargetY != m_aFastInput[Dummy].m_TargetY))
 				NewInput[Dummy] = true;
 		}

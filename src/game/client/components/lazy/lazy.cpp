@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -74,8 +75,10 @@ enum EInviteStatus
 };
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
-constexpr float BESTCLIENT_LIST_REFRESH_SECONDS = 60.0f;
-constexpr float BESTCLIENT_LIST_RETRY_SECONDS = 10.0f;
+// The public list only needs to be refreshed when the set of players on the
+// server changes, never continuously. Keep a hard floor between requests so a
+// burst of joins cannot turn into a burst of downloads.
+constexpr int64_t BESTCLIENT_LIST_MIN_INTERVAL_SECONDS = 30;
 constexpr int64_t BESTCLIENT_LIST_MAX_RESPONSE_SIZE = 4 * 1024 * 1024;
 
 bool IsHeavyWeapon(int Weapon)
@@ -128,6 +131,35 @@ const char *ZoomKeyName(int Index)
 char *ZoomPrevKey(int Index)
 {
 	return Index == 0 ? g_Config.m_LcZoomInKeyPrev : g_Config.m_LcZoomOutKeyPrev;
+}
+
+bool IsGreetingMessage(const char *pMessage)
+{
+	const char *p = str_skip_whitespaces_const(pMessage);
+	char aToken[32];
+	size_t Length = 0;
+	while(*p != '\0' && Length + 1 < sizeof(aToken))
+	{
+		char c = *p;
+		if(c >= 'A' && c <= 'Z')
+			c += 'a' - 'A';
+		if(!((c >= 'a' && c <= 'z') || c == '\''))
+			break;
+		aToken[Length++] = c;
+		p++;
+	}
+	aToken[Length] = '\0';
+	if(Length == 0)
+		return false;
+
+	static const char *const s_apGreetings[] = {
+		"hi", "hii", "hiii", "hello", "helo", "hey", "heya", "yo", "qq", "qqq", "hai", "hola"};
+	for(const char *pGreeting : s_apGreetings)
+	{
+		if(str_comp(aToken, pGreeting) == 0)
+			return true;
+	}
+	return false;
 }
 } // namespace
 
@@ -193,6 +225,11 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	m_AntipingSmoothedPing = -1.0f;
 	std::fill(std::begin(m_aClientTypes), std::end(m_aClientTypes), LC_CLIENT_NONE);
 	ResetBestClientList();
+	m_AutoGGArmed = false;
+	m_aLastWhisperName[0] = '\0';
+	m_AutoHiCooldowns.clear();
+	if(NewState == IClient::STATE_ONLINE)
+		m_BestClientListFetchPending = true;
 	m_ZeroGravForcedEnabled = false;
 	m_ZeroGravForcedStatusOn = false;
 	m_ZeroGravForcedStatusUntil = 0.0f;
@@ -440,8 +477,9 @@ void CLazyClient::ResetBestClientList()
 		m_pBestClientListTask->Abort();
 		m_pBestClientListTask = nullptr;
 	}
-	m_BestClientListRefreshTimer = 0.0f;
+	m_BestClientListFetchPending = false;
 	m_BestClientListLoaded = false;
+	m_BestClientListPlayerCount = -1;
 	m_BestClientPlayers.clear();
 }
 
@@ -501,6 +539,9 @@ void CLazyClient::FinishBestClientList()
 void CLazyClient::UpdateBestClientList()
 {
 	const bool Wanted = g_Config.m_LcClientLogos && g_Config.m_LcBestClientPublicList;
+	if(Wanted && !m_BestClientListWanted)
+		m_BestClientListFetchPending = true;
+	m_BestClientListWanted = Wanted;
 	if(!Wanted)
 	{
 		if(m_pBestClientListTask)
@@ -514,7 +555,9 @@ void CLazyClient::UpdateBestClientList()
 			m_BestClientPlayers.clear();
 			UpdateClientTypes();
 		}
-		m_BestClientListRefreshTimer = 0.0f;
+		m_BestClientListNextFetch = 0;
+		m_BestClientListFetchPending = false;
+		m_BestClientListPlayerCount = -1;
 		return;
 	}
 
@@ -539,7 +582,9 @@ void CLazyClient::UpdateBestClientList()
 		{
 			log_debug("lazy", "BestClient public list request failed");
 			m_pBestClientListTask = nullptr;
-			m_BestClientListRefreshTimer = BESTCLIENT_LIST_RETRY_SECONDS;
+			// Keep the request pending so a later join can retry, but respect
+			// the same minimum interval as a successful download.
+			m_BestClientListFetchPending = true;
 		}
 		else
 		{
@@ -547,10 +592,22 @@ void CLazyClient::UpdateBestClientList()
 		}
 	}
 
-	m_BestClientListRefreshTimer -= Client()->RenderFrameTime();
-	if(m_BestClientListRefreshTimer > 0.0f)
+	if(!m_BestClientListFetchPending)
+	{
+		// Initial fetch or a reset while already online: there is no join event
+		// to wait for in that case.
+		if(!m_BestClientListLoaded && !m_pBestClientListTask)
+			m_BestClientListFetchPending = true;
+		else
+			return;
+	}
+
+	const int64_t Now = time();
+	if(Now < m_BestClientListNextFetch)
 		return;
-	m_BestClientListRefreshTimer = BESTCLIENT_LIST_REFRESH_SECONDS;
+
+	m_BestClientListFetchPending = false;
+	m_BestClientListNextFetch = Now + BESTCLIENT_LIST_MIN_INTERVAL_SECONDS * time_freq();
 
 	m_pBestClientListTask = HttpGet(BESTCLIENT_USERS_URL);
 	if(!m_pBestClientListTask)
@@ -1074,6 +1131,116 @@ bool CLazyClient::ChatDoTeamSave(const char *pInput)
 	return false;
 }
 
+bool CLazyClient::ChatDoReply(const char *pInput)
+{
+	if(pInput == nullptr)
+		return false;
+
+	char aLine[256];
+	str_copy(aLine, pInput, sizeof(aLine));
+	str_utf8_trim_right(aLine);
+	const char *pLine = str_skip_whitespaces_const(aLine);
+
+	if(str_comp_nocase_num(pLine, "/r", 2) != 0 || (pLine[2] != '\0' && pLine[2] != ' '))
+		return false;
+
+	const char *pMessage = str_skip_whitespaces_const(pLine + 2);
+	if(m_aLastWhisperName[0] == '\0')
+	{
+		GameClient()->m_Chat.Echo(Localize("LazyClient: nobody has whispered you yet."));
+		return true;
+	}
+	if(*pMessage == '\0')
+	{
+		GameClient()->m_Chat.Echo(Localize("LazyClient: usage: /r <message>"));
+		return true;
+	}
+
+	char aBuf[MAX_CHAT_LENGTH + MAX_NAME_LENGTH + 8];
+	str_format(aBuf, sizeof(aBuf), "/w %s %s", m_aLastWhisperName, pMessage);
+	GameClient()->m_Chat.SendChat(0, aBuf);
+	return true;
+}
+
+void CLazyClient::HandleAutoHi(int ClientId, int Team, const char *pMessage)
+{
+	if(!g_Config.m_LcAutoHi || pMessage == nullptr)
+		return;
+	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
+		return;
+	if(ClientId == GameClient()->m_Snap.m_LocalClientId)
+		return;
+	for(const int LocalId : GameClient()->m_aLocalIds)
+	{
+		if(LocalId >= 0 && ClientId == LocalId)
+			return;
+	}
+
+	const CGameClient::CClientData &Client = GameClient()->m_aClients[ClientId];
+	if(!Client.m_Active || Client.m_aName[0] == '\0' || Client.m_ChatIgnore || Client.m_Foe)
+		return;
+	if(!IsGreetingMessage(pMessage))
+		return;
+
+	auto Cooldown = m_AutoHiCooldowns.find(Client.m_aName);
+	const int64_t Now = time();
+	if(Cooldown != m_AutoHiCooldowns.end() && Now < Cooldown->second + 60 * time_freq())
+		return;
+	m_AutoHiCooldowns[Client.m_aName] = Now;
+
+	std::vector<std::string> vReplies;
+	const char *pCursor = g_Config.m_LcAutoHiMessages;
+	char aToken[128];
+	while((pCursor = str_next_token(pCursor, "|", aToken, sizeof(aToken))) != nullptr)
+	{
+		char *pReply = str_skip_whitespaces(aToken);
+		str_utf8_trim_right(pReply);
+		if(*pReply != '\0')
+			vReplies.emplace_back(pReply);
+	}
+	if(vReplies.empty())
+		return;
+
+	const std::string &Reply = vReplies[rand() % vReplies.size()];
+	char aBuf[MAX_CHAT_LENGTH + MAX_NAME_LENGTH + 8];
+	if(g_Config.m_LcAutoHiMode == 2 || Team == TEAM_WHISPER_RECV)
+	{
+		// Never answer a whisper in public chat.
+		str_format(aBuf, sizeof(aBuf), "/w %s %s", Client.m_aName, Reply.c_str());
+		GameClient()->m_Chat.SendChat(0, aBuf);
+	}
+	else if(g_Config.m_LcAutoHiMode == 1)
+	{
+		str_format(aBuf, sizeof(aBuf), "%s: %s", Client.m_aName, Reply.c_str());
+		GameClient()->m_Chat.SendChat(Team == 1 ? 1 : 0, aBuf);
+	}
+	else
+	{
+		GameClient()->m_Chat.SendChat(Team == 1 ? 1 : 0, Reply.c_str());
+	}
+}
+
+void CLazyClient::UpdateAutoGG()
+{
+	if(!g_Config.m_LcAutoGG || GameClient()->m_Snap.m_pLocalInfo == nullptr)
+		return;
+
+	if(GameClient()->m_Snap.m_pLocalInfo->m_Score == FinishTime::NOT_FINISHED_TIMESCORE)
+	{
+		// The team is still running; a time can arrive later.
+		m_AutoGGArmed = true;
+		return;
+	}
+
+	if(!m_AutoGGArmed)
+		return;
+	m_AutoGGArmed = false;
+
+	if(g_Config.m_LcAutoGGMessage[0] == '\0')
+		return;
+	GameClient()->m_Chat.SendChat(g_Config.m_LcAutoGGChat ? 0 : 1, g_Config.m_LcAutoGGMessage);
+}
+
 void CLazyClient::ResetAutoKillState()
 {
 	m_AutoKillTeam = -1;
@@ -1273,10 +1440,16 @@ void CLazyClient::OnChatMessage(int ClientId, int Team, const char *pMessage)
 
 	if(Team == TEAM_WHISPER_RECV)
 	{
+		if(ClientId >= 0 && ClientId < MAX_CLIENTS && GameClient()->m_aClients[ClientId].m_aName[0] != '\0')
+			str_copy(m_aLastWhisperName, GameClient()->m_aClients[ClientId].m_aName, sizeof(m_aLastWhisperName));
 		if(g_Config.m_LcInviteManager)
 			HandleTeamInvite(ClientId, pMessage);
+		HandleAutoHi(ClientId, Team, pMessage);
 		return;
 	}
+
+	if(Team <= 1)
+		HandleAutoHi(ClientId, Team, pMessage);
 
 	// The client cannot read the server's lock flag, but DDNet announces every
 	// lock and unlock change with a server message in the team chat:
@@ -1678,6 +1851,16 @@ void CLazyClient::OnNewSnapshot()
 {
 	UpdateClientTypes();
 
+	// The BestClient public list is only relevant when unknown players join.
+	// Refresh it on joins instead of polling it every few frames.
+	if(Client()->State() == IClient::STATE_ONLINE)
+	{
+		const int NumPlayers = GameClient()->m_Snap.m_NumPlayers;
+		if(m_BestClientListPlayerCount >= 0 && NumPlayers > m_BestClientListPlayerCount)
+			m_BestClientListFetchPending = true;
+		m_BestClientListPlayerCount = NumPlayers;
+	}
+
 	if(g_Config.m_LcTelemetry && Client()->State() == IClient::STATE_ONLINE && GameClient()->m_Snap.m_pLocalInfo)
 	{
 		const float Ping = (float)std::max(0, GameClient()->m_Snap.m_pLocalInfo->m_Latency);
@@ -1700,6 +1883,8 @@ void CLazyClient::OnNewSnapshot()
 		ResetAutoMarginState();
 		return;
 	}
+
+	UpdateAutoGG();
 
 	const float CurrentPing = (float)std::max(0, GameClient()->m_Snap.m_pLocalInfo->m_Latency);
 	m_LatestPing = CurrentPing;
