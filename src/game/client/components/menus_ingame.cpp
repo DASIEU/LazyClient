@@ -933,12 +933,18 @@ int ParseVoteLength(const char *pDescription)
 
 bool VoteOptionMatchesFilter(const char *pDescription)
 {
-	if(g_Config.m_LcVoteFilterStars > 0 && ParseVoteStars(pDescription) < g_Config.m_LcVoteFilterStars)
-		return false;
-	if(g_Config.m_LcVoteFilterLength > 0)
+	const int StarMask = g_Config.m_LcVoteFilterStars & 0x1f;
+	if(StarMask != 0)
+	{
+		const int Stars = ParseVoteStars(pDescription);
+		if(Stars < 1 || Stars > 5 || (StarMask & (1 << (Stars - 1))) == 0)
+			return false;
+	}
+	const int LengthMask = g_Config.m_LcVoteFilterLength & 0x7f;
+	if(LengthMask != 0)
 	{
 		const int Length = ParseVoteLength(pDescription);
-		if(Length == 0 || Length > g_Config.m_LcVoteFilterLength)
+		if(Length < 1 || Length > 7 || (LengthMask & (1 << (Length - 1))) == 0)
 			return false;
 	}
 	return true;
@@ -995,6 +1001,46 @@ void FormatVoteOptionLabel(const char *pDescription, char *pOut, int OutSize)
 		Label += Tag;
 	}
 	str_copy(pOut, Label.c_str(), OutSize);
+}
+
+struct SVoteFilterPopupContext
+{
+	CMenus *m_pMenus;
+	bool m_Length;
+};
+
+static const char *const s_apVoteStarFilterNames[] = {"1★", "2★", "3★", "4★", "5★"};
+static CButtonContainer s_aVoteStarFilterCheckboxes[5];
+static CButtonContainer s_aVoteLengthFilterCheckboxes[7];
+static CButtonContainer s_VoteFilterClearButton;
+
+CUi::EPopupMenuFunctionResult PopupVoteFilter(void *pContext, CUIRect View, bool Active)
+{
+	(void)Active;
+	SVoteFilterPopupContext *pPopupContext = static_cast<SVoteFilterPopupContext *>(pContext);
+	CMenus *pMenus = pPopupContext->m_pMenus;
+	const int Count = pPopupContext->m_Length ? 7 : 5;
+	int *pMask = pPopupContext->m_Length ? &g_Config.m_LcVoteFilterLength : &g_Config.m_LcVoteFilterStars;
+	const int MaxMask = pPopupContext->m_Length ? 0x7f : 0x1f;
+	*pMask &= MaxMask;
+
+	for(int i = 0; i < Count; i++)
+	{
+		CUIRect Row;
+		View.HSplitTop(21.0f, &Row, &View);
+		const char *pLabel = pPopupContext->m_Length ? s_apVoteLengthNames[i + 1] : s_apVoteStarFilterNames[i];
+		CButtonContainer *pId = pPopupContext->m_Length ? &s_aVoteLengthFilterCheckboxes[i] : &s_aVoteStarFilterCheckboxes[i];
+		if(pMenus->DoButton_CheckBox(pId, pLabel, (*pMask & (1 << i)) != 0, &Row))
+			*pMask ^= 1 << i;
+	}
+
+	CUIRect ClearRow;
+	View.HSplitTop(4.0f, nullptr, &View);
+	View.HSplitTop(20.0f, &ClearRow, &View);
+	if(pMenus->DoButton_Menu(&s_VoteFilterClearButton, Localize("Show all"), 0, &ClearRow))
+		*pMask = 0;
+
+	return CUi::POPUP_KEEP_OPEN;
 }
 } // namespace
 
@@ -1145,7 +1191,7 @@ void CMenus::RenderServerControl(CUIRect MainView)
 	Bottom.HMargin(5.0f, &Bottom);
 	Bottom.HSplitTop(5.0f, nullptr, &Bottom);
 
-	// vote filters (difficulty and map length), right-aligned above the vote list
+	// Vote filters (difficulty and map length), right-aligned above the vote list.
 	if(s_ControlPage == EServerControlTab::SETTINGS)
 	{
 		CUIRect FilterRow, FilterStars, FilterLength;
@@ -1155,25 +1201,83 @@ void CMenus::RenderServerControl(CUIRect MainView)
 		FilterRow.VSplitRight(5.0f, &FilterRow, nullptr);
 		FilterRow.VSplitRight(78.0f, &FilterRow, &FilterStars);
 
-		static const char *s_apVoteStarNames[] = {"★ Any", "1★", "2★", "3★", "4★", "5★"};
-		static CUi::SDropDownState s_VoteFilterStarsDropDownState;
-		static CScrollRegion s_VoteFilterStarsScrollRegion;
-		s_VoteFilterStarsDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_VoteFilterStarsScrollRegion;
-		g_Config.m_LcVoteFilterStars = Ui()->DoDropDown(&FilterStars,
-			std::clamp(g_Config.m_LcVoteFilterStars, 0, 5), s_apVoteStarNames, 6,
-			s_VoteFilterStarsDropDownState);
-		GameClient()->m_Tooltips.DoToolTip(&s_VoteFilterStarsDropDownState.m_ButtonContainer, &FilterStars,
-			Localize("Only show map votes with at least this many difficulty stars."));
+		const int StarMask = g_Config.m_LcVoteFilterStars & 0x1f;
+		int StarCount = 0;
+		int LastStar = 0;
+		for(int i = 0; i < 5; i++)
+		{
+			if(StarMask & (1 << i))
+			{
+				StarCount++;
+				LastStar = i + 1;
+			}
+		}
+		char aStarsLabel[32];
+		if(StarCount == 0)
+			str_copy(aStarsLabel, Localize("★ Any"));
+		else if(StarCount == 1)
+			str_format(aStarsLabel, sizeof(aStarsLabel), "★ %d", LastStar);
+		else
+			str_format(aStarsLabel, sizeof(aStarsLabel), "★ %d×", StarCount);
 
-		static const char *s_apVoteLengthFilterNames[] = {"Any", "XXS", "XS", "S", "M", "L", "XL", "XXL"};
-		static CUi::SDropDownState s_VoteFilterLengthDropDownState;
-		static CScrollRegion s_VoteFilterLengthScrollRegion;
-		s_VoteFilterLengthDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_VoteFilterLengthScrollRegion;
-		g_Config.m_LcVoteFilterLength = Ui()->DoDropDown(&FilterLength,
-			std::clamp(g_Config.m_LcVoteFilterLength, 0, 7), s_apVoteLengthFilterNames, 8,
-			s_VoteFilterLengthDropDownState);
-		GameClient()->m_Tooltips.DoToolTip(&s_VoteFilterLengthDropDownState.m_ButtonContainer, &FilterLength,
-			Localize("Only show map votes up to this map length."));
+		static CButtonContainer s_VoteFilterStarsButton;
+		if(DoButton_Menu(&s_VoteFilterStarsButton, aStarsLabel, 0, &FilterStars))
+		{
+			static SPopupMenuId s_VoteFilterStarsPopupId;
+			static SVoteFilterPopupContext s_VoteFilterStarsContext;
+			if(Ui()->IsPopupOpen(&s_VoteFilterStarsPopupId))
+			{
+				Ui()->ClosePopupMenu(&s_VoteFilterStarsPopupId);
+			}
+			else
+			{
+				s_VoteFilterStarsContext.m_pMenus = this;
+				s_VoteFilterStarsContext.m_Length = false;
+				Ui()->DoPopupMenu(&s_VoteFilterStarsPopupId, FilterStars.x, FilterStars.y + FilterStars.h,
+					100.0f, 139.0f, &s_VoteFilterStarsContext, PopupVoteFilter);
+			}
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_VoteFilterStarsButton, &FilterStars,
+			Localize("Choose the exact difficulty stars to show. No selection shows every map."));
+
+		const int LengthMask = g_Config.m_LcVoteFilterLength & 0x7f;
+		int LengthCount = 0;
+		int LastLength = 0;
+		for(int i = 0; i < 7; i++)
+		{
+			if(LengthMask & (1 << i))
+			{
+				LengthCount++;
+				LastLength = i + 1;
+			}
+		}
+		char aLengthLabel[32];
+		if(LengthCount == 0)
+			str_copy(aLengthLabel, Localize("Any"));
+		else if(LengthCount == 1)
+			str_copy(aLengthLabel, s_apVoteLengthNames[LastLength]);
+		else
+			str_format(aLengthLabel, sizeof(aLengthLabel), "%d×", LengthCount);
+
+		static CButtonContainer s_VoteFilterLengthButton;
+		if(DoButton_Menu(&s_VoteFilterLengthButton, aLengthLabel, 0, &FilterLength))
+		{
+			static SPopupMenuId s_VoteFilterLengthPopupId;
+			static SVoteFilterPopupContext s_VoteFilterLengthContext;
+			if(Ui()->IsPopupOpen(&s_VoteFilterLengthPopupId))
+			{
+				Ui()->ClosePopupMenu(&s_VoteFilterLengthPopupId);
+			}
+			else
+			{
+				s_VoteFilterLengthContext.m_pMenus = this;
+				s_VoteFilterLengthContext.m_Length = true;
+				Ui()->DoPopupMenu(&s_VoteFilterLengthPopupId, FilterLength.x, FilterLength.y + FilterLength.h,
+					100.0f, 181.0f, &s_VoteFilterLengthContext, PopupVoteFilter);
+			}
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_VoteFilterLengthButton, &FilterLength,
+			Localize("Choose the exact map lengths to show. No selection shows every map."));
 	}
 
 	// render quick search
