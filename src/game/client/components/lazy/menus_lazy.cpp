@@ -507,6 +507,25 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	}
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Swap Requests"), Ui(), GameClient(), Localize("Shows a 30 second countdown while a /swap request is pending. Multiple requests are stacked; finished, canceled and timed out requests disappear automatically."));
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcSwapTimer, Localize("Show swap request timers"), &g_Config.m_LcSwapTimer, &MainView, LazyLineSize);
+	if(g_Config.m_LcSwapTimer)
+	{
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		static CUi::SDropDownState s_SwapTimerModeDropDownState;
+		static CScrollRegion s_SwapTimerModeDropDownScrollRegion;
+		s_SwapTimerModeDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_SwapTimerModeDropDownScrollRegion;
+		const char *apSwapTimerModes[] = {Localize("All players"), Localize("My team"), Localize("Only mine")};
+		const int NewSwapTimerMode = Ui()->DoDropDown(&Button, std::clamp(g_Config.m_LcSwapTimerMode, 0, 2), apSwapTimerModes, 3, s_SwapTimerModeDropDownState);
+		if(NewSwapTimerMode != g_Config.m_LcSwapTimerMode)
+			g_Config.m_LcSwapTimerMode = NewSwapTimerMode;
+	}
+	else
+	{
+		LazyInfoLabel(&MainView, Localize("Swap request countdowns are hidden."), Ui(), TextRender());
+	}
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
 	const char *pZeroGravInfo = nullptr;
 	if(g_Config.m_LcZeroGravPredict)
 	{

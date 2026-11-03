@@ -49,7 +49,6 @@ MACRO_CONFIG_INT(LcAspectHeight, lc_aspect_height, 0, 0, 10000, CFGFLAG_CLIENT |
 
 // Visuals
 MACRO_CONFIG_INT(LcClientLogos, lc_client_logos, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show client logos in nameplates and the scoreboard")
-MACRO_CONFIG_INT(LcDevIcon, lc_dev_icon, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use the developer star LazyClient icon for your own tee (hidden developer option)")
 MACRO_CONFIG_INT(LcBestClientPublicList, lc_bestclient_public_list, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use the BestClient public player list to show BestClient logos (network request)")
 MACRO_CONFIG_INT(LcFriendHeartScoreboard, lc_friend_heart_scoreboard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a heart before friends in the scoreboard")
 MACRO_CONFIG_INT(LcBetterVotes, lc_better_votes, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show vote percentages, the pass threshold and remaining yes votes")
@@ -88,6 +87,10 @@ MACRO_CONFIG_STR(LcAutoGGMessage, lc_auto_gg_message, 64, "gg", CFGFLAG_CLIENT |
 MACRO_CONFIG_INT(LcAutoHi, lc_auto_hi, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Reply automatically to incoming greetings")
 MACRO_CONFIG_INT(LcAutoHiMode, lc_auto_hi_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto greeting reply mode: 0 = same chat, 1 = same chat with mention, 2 = whisper")
 MACRO_CONFIG_STR(LcAutoHiMessages, lc_auto_hi_messages, 128, "hi|hello|hey", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto greeting replies separated by | (one is picked at random)")
+
+// Swap request timer
+MACRO_CONFIG_INT(LcSwapTimer, lc_swap_timer, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a countdown for pending swap requests")
+MACRO_CONFIG_INT(LcSwapTimerMode, lc_swap_timer_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Which swap requests to show: 0 = all, 1 = your team, 2 = only yours")
 
 // Telemetry
 MACRO_CONFIG_INT(LcTelemetry, lc_telemetry, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the LazyClient telemetry overlay")

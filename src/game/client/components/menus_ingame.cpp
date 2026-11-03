@@ -1145,33 +1145,35 @@ void CMenus::RenderServerControl(CUIRect MainView)
 	Bottom.HMargin(5.0f, &Bottom);
 	Bottom.HSplitTop(5.0f, nullptr, &Bottom);
 
-	// vote filters (difficulty and map length), above the vote list
+	// vote filters (difficulty and map length), right-aligned above the vote list
 	if(s_ControlPage == EServerControlTab::SETTINGS)
 	{
 		CUIRect FilterRow, FilterStars, FilterLength;
 		MainView.HSplitTop(25.0f, &FilterRow, &MainView);
-		FilterRow.VSplitLeft(5.0f, nullptr, &FilterRow);
-		FilterRow.VSplitLeft(190.0f, &FilterStars, &FilterRow);
-		FilterRow.VSplitLeft(5.0f, nullptr, &FilterRow);
-		FilterRow.VSplitLeft(190.0f, &FilterLength, &FilterRow);
+		FilterRow.VSplitRight(5.0f, &FilterRow, nullptr);
+		FilterRow.VSplitRight(78.0f, &FilterRow, &FilterLength);
+		FilterRow.VSplitRight(5.0f, &FilterRow, nullptr);
+		FilterRow.VSplitRight(78.0f, &FilterRow, &FilterStars);
 
-		char aStarsLabel[64];
-		if(g_Config.m_LcVoteFilterStars <= 0)
-			str_copy(aStarsLabel, Localize("Stars: off"));
-		else
-			str_format(aStarsLabel, sizeof(aStarsLabel), "%s ≥ %d★", Localize("Stars"), g_Config.m_LcVoteFilterStars);
-		static CButtonContainer s_VoteFilterStarsButton;
-		if(DoButton_Menu(&s_VoteFilterStarsButton, aStarsLabel, 0, &FilterStars))
-			g_Config.m_LcVoteFilterStars = (g_Config.m_LcVoteFilterStars + 1) % 6;
+		static const char *s_apVoteStarNames[] = {"★ Any", "1★", "2★", "3★", "4★", "5★"};
+		static CUi::SDropDownState s_VoteFilterStarsDropDownState;
+		static CScrollRegion s_VoteFilterStarsScrollRegion;
+		s_VoteFilterStarsDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_VoteFilterStarsScrollRegion;
+		g_Config.m_LcVoteFilterStars = Ui()->DoDropDown(&FilterStars,
+			std::clamp(g_Config.m_LcVoteFilterStars, 0, 5), s_apVoteStarNames, 6,
+			s_VoteFilterStarsDropDownState);
+		GameClient()->m_Tooltips.DoToolTip(&s_VoteFilterStarsDropDownState.m_ButtonContainer, &FilterStars,
+			Localize("Only show map votes with at least this many difficulty stars."));
 
-		char aLengthLabel[64];
-		if(g_Config.m_LcVoteFilterLength <= 0)
-			str_copy(aLengthLabel, Localize("Length: off"));
-		else
-			str_format(aLengthLabel, sizeof(aLengthLabel), "%s ≤ %s", Localize("Length"), s_apVoteLengthNames[g_Config.m_LcVoteFilterLength]);
-		static CButtonContainer s_VoteFilterLengthButton;
-		if(DoButton_Menu(&s_VoteFilterLengthButton, aLengthLabel, 0, &FilterLength))
-			g_Config.m_LcVoteFilterLength = (g_Config.m_LcVoteFilterLength + 1) % 8;
+		static const char *s_apVoteLengthFilterNames[] = {"Any", "XXS", "XS", "S", "M", "L", "XL", "XXL"};
+		static CUi::SDropDownState s_VoteFilterLengthDropDownState;
+		static CScrollRegion s_VoteFilterLengthScrollRegion;
+		s_VoteFilterLengthDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_VoteFilterLengthScrollRegion;
+		g_Config.m_LcVoteFilterLength = Ui()->DoDropDown(&FilterLength,
+			std::clamp(g_Config.m_LcVoteFilterLength, 0, 7), s_apVoteLengthFilterNames, 8,
+			s_VoteFilterLengthDropDownState);
+		GameClient()->m_Tooltips.DoToolTip(&s_VoteFilterLengthDropDownState.m_ButtonContainer, &FilterLength,
+			Localize("Only show map votes up to this map length."));
 	}
 
 	// render quick search

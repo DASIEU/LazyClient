@@ -144,6 +144,23 @@ private:
 	bool m_WasAutoMarginEnabled = false;
 	int m_SavedMargin = -1;
 
+	// Swap request timer
+	struct SSwapTimerEntry
+	{
+		char m_aFrom[MAX_NAME_LENGTH];
+		char m_aTo[MAX_NAME_LENGTH];
+		int64_t m_Deadline;
+	};
+	std::vector<SSwapTimerEntry> m_SwapTimers;
+	void ResetSwapTimers();
+	void HandleSwapChatMessage(const char *pMessage);
+	void AddOrRefreshSwapTimer(const char *pFrom, const char *pTo, int Seconds);
+	void RemoveSwapTimer(const char *pA, const char *pB);
+	int ClientIdByName(const char *pName) const;
+	bool IsLocalName(const char *pName) const;
+	bool IsNameInLocalTeam(const char *pName) const;
+	void RenderSwapTimers();
+
 	// Telemetry
 	static constexpr int TELEMETRY_FRAME_SAMPLES = 4096;
 	static constexpr int TELEMETRY_LOSS_SAMPLES = 5;
@@ -229,6 +246,7 @@ private:
 	int m_AspectPrevHeight = 0;
 
 	// Client identification
+	bool UseDevIcon() const;
 	int m_aClientTypes[MAX_CLIENTS] = {};
 	mutable IGraphics::CTextureHandle m_DevIconTexture;
 	bool m_ClientLogosInitialized = false;

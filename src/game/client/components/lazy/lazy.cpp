@@ -75,11 +75,32 @@ enum EInviteStatus
 };
 
 constexpr const char *BESTCLIENT_USERS_URL = "https://150.241.70.188:8779/users.json";
+// The developer icon is intentionally not configurable: only this player name
+// receives it, so it cannot be discovered and equipped from the console.
+constexpr const char *DEV_ICON_NAME = "DASI";
 // The public list only needs to be refreshed when the set of players on the
 // server changes, never continuously. Keep a hard floor between requests so a
 // burst of joins cannot turn into a burst of downloads.
 constexpr int64_t BESTCLIENT_LIST_MIN_INTERVAL_SECONDS = 30;
 constexpr int64_t BESTCLIENT_LIST_MAX_RESPONSE_SIZE = 4 * 1024 * 1024;
+
+bool CopyMessageBetween(const char *pMessage, const char *pPrefix, const char *pSuffix, char *pOut, int OutSize)
+{
+	if(pMessage == nullptr || pPrefix == nullptr || pSuffix == nullptr || OutSize <= 0)
+		return false;
+	const char *pStart = str_find(pMessage, pPrefix);
+	if(pStart == nullptr)
+		return false;
+	pStart += str_length(pPrefix);
+	const char *pEnd = str_find(pStart, pSuffix);
+	if(pEnd == nullptr || pEnd <= pStart)
+		return false;
+	const int Length = (int)(pEnd - pStart);
+	if(Length >= OutSize)
+		return false;
+	str_copy(pOut, pStart, Length + 1);
+	return true;
+}
 
 bool IsHeavyWeapon(int Weapon)
 {
@@ -203,6 +224,7 @@ void CLazyClient::OnReset()
 	ResetTelemetry();
 	ResetAutoTeamLockState();
 	ResetAutoKillState();
+	ResetSwapTimers();
 	m_TeamLoadPending = false;
 	m_TeamLoadCommands.clear();
 	m_TeamLoadNextSend = 0;
@@ -238,16 +260,328 @@ void CLazyClient::OnStateChange(int NewState, int OldState)
 	ResetTelemetry();
 	ResetAutoTeamLockState();
 	ResetAutoKillState();
+	ResetSwapTimers();
 	m_TeamLoadPending = false;
 	m_TeamLoadCommands.clear();
 	m_TeamLoadNextSend = 0;
+}
+
+bool CLazyClient::UseDevIcon() const
+{
+	// Both the main and dummy connection can be the active local client, so
+	// keep the icon when switching between them.
+	for(const int LocalId : GameClient()->m_aLocalIds)
+	{
+		if(LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_aName[0] != '\0' &&
+			str_comp_nocase(GameClient()->m_aClients[LocalId].m_aName, DEV_ICON_NAME) == 0)
+			return true;
+	}
+	const int ActiveId = GameClient()->m_Snap.m_LocalClientId;
+	if(ActiveId >= 0 && ActiveId < MAX_CLIENTS && GameClient()->m_aClients[ActiveId].m_aName[0] != '\0' &&
+		str_comp_nocase(GameClient()->m_aClients[ActiveId].m_aName, DEV_ICON_NAME) == 0)
+		return true;
+	return str_comp_nocase(g_Config.m_PlayerName, DEV_ICON_NAME) == 0;
+}
+
+void CLazyClient::ResetSwapTimers()
+{
+	m_SwapTimers.clear();
+}
+
+int CLazyClient::ClientIdByName(const char *pName) const
+{
+	if(pName == nullptr || pName[0] == '\0')
+		return -1;
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(GameClient()->m_aClients[i].m_aName[0] != '\0' &&
+			str_comp_nocase(GameClient()->m_aClients[i].m_aName, pName) == 0)
+			return i;
+	}
+	return -1;
+}
+
+bool CLazyClient::IsLocalName(const char *pName) const
+{
+	if(pName == nullptr || pName[0] == '\0')
+		return false;
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	if(LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_aName[0] != '\0')
+		return str_comp_nocase(GameClient()->m_aClients[LocalId].m_aName, pName) == 0;
+	return str_comp_nocase(g_Config.m_PlayerName, pName) == 0;
+}
+
+bool CLazyClient::IsNameInLocalTeam(const char *pName) const
+{
+	const int MyTeam = CurrentDDRaceTeam();
+	if(MyTeam == TEAM_FLOCK)
+		return false;
+	const int ClientId = ClientIdByName(pName);
+	if(ClientId < 0)
+		return false;
+	return GameClient()->m_Teams.Team(ClientId) == MyTeam;
+}
+
+void CLazyClient::AddOrRefreshSwapTimer(const char *pFrom, const char *pTo, int Seconds)
+{
+	if(pFrom == nullptr || pTo == nullptr || pFrom[0] == '\0' || pTo[0] == '\0')
+		return;
+	Seconds = std::clamp(Seconds, 1, 600);
+	const int64_t Deadline = time() + (int64_t)Seconds;
+
+	for(auto &Entry : m_SwapTimers)
+	{
+		const bool SameDirection = str_comp_nocase(Entry.m_aFrom, pFrom) == 0 &&
+			str_comp_nocase(Entry.m_aTo, pTo) == 0;
+		const bool ReverseDirection = str_comp_nocase(Entry.m_aFrom, pTo) == 0 &&
+			str_comp_nocase(Entry.m_aTo, pFrom) == 0;
+		if(!SameDirection && !ReverseDirection)
+			continue;
+		Entry.m_Deadline = Deadline;
+		if(SameDirection)
+		{
+			str_copy(Entry.m_aFrom, pFrom, sizeof(Entry.m_aFrom));
+			str_copy(Entry.m_aTo, pTo, sizeof(Entry.m_aTo));
+		}
+		return;
+	}
+
+	constexpr size_t MaxEntries = 12;
+	if(m_SwapTimers.size() >= MaxEntries)
+		m_SwapTimers.erase(m_SwapTimers.begin());
+
+	SSwapTimerEntry Entry;
+	str_copy(Entry.m_aFrom, pFrom, sizeof(Entry.m_aFrom));
+	str_copy(Entry.m_aTo, pTo, sizeof(Entry.m_aTo));
+	Entry.m_Deadline = Deadline;
+	m_SwapTimers.push_back(Entry);
+}
+
+void CLazyClient::RemoveSwapTimer(const char *pA, const char *pB)
+{
+	if(pA == nullptr || pB == nullptr)
+		return;
+	for(auto It = m_SwapTimers.begin(); It != m_SwapTimers.end();)
+	{
+		const bool Same = (str_comp_nocase(It->m_aFrom, pA) == 0 && str_comp_nocase(It->m_aTo, pB) == 0) ||
+			(str_comp_nocase(It->m_aFrom, pB) == 0 && str_comp_nocase(It->m_aTo, pA) == 0);
+		if(Same)
+			It = m_SwapTimers.erase(It);
+		else
+			++It;
+	}
+}
+
+void CLazyClient::HandleSwapChatMessage(const char *pMessage)
+{
+	if(pMessage == nullptr)
+		return;
+
+	char aLocal[MAX_NAME_LENGTH];
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	if(LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_aName[0] != '\0')
+		str_copy(aLocal, GameClient()->m_aClients[LocalId].m_aName, sizeof(aLocal));
+	else
+		str_copy(aLocal, g_Config.m_PlayerName, sizeof(aLocal));
+
+	char aFirst[MAX_NAME_LENGTH];
+	char aSecond[MAX_NAME_LENGTH];
+
+	// "You have requested to swap with <name>. Use /cancelswap ..."
+	// "You have already requested to swap with <name>."
+	if(CopyMessageBetween(pMessage, "You have already requested to swap with ", ".", aSecond, sizeof(aSecond)) ||
+		CopyMessageBetween(pMessage, "You have requested to swap with ", ". Use /cancelswap", aSecond, sizeof(aSecond)))
+	{
+		AddOrRefreshSwapTimer(aLocal, aSecond, 30);
+		return;
+	}
+
+	// "<name> has requested to swap with you. ... wait <N> seconds ..."
+	const char *pRequestedWithYou = str_find(pMessage, " has requested to swap with you.");
+	if(pRequestedWithYou != nullptr)
+	{
+		const int Length = (int)(pRequestedWithYou - pMessage);
+		if(Length > 0 && Length < (int)sizeof(aFirst))
+		{
+			str_copy(aFirst, pMessage, Length + 1);
+			int Seconds = 30;
+			const char *pWait = str_find(pMessage, "please wait ");
+			if(pWait != nullptr)
+				Seconds = str_toint(pWait + str_length("please wait "));
+			AddOrRefreshSwapTimer(aFirst, aLocal, Seconds);
+		}
+		return;
+	}
+
+	// "<a> has requested to swap with <b>."
+	const char *pRequested = str_find(pMessage, " has requested to swap with ");
+	if(pRequested != nullptr)
+	{
+		const int FirstLength = (int)(pRequested - pMessage);
+		const char *pTarget = pRequested + str_length(" has requested to swap with ");
+		const char *pEnd = str_find(pTarget, ".");
+		const int SecondLength = pEnd != nullptr ? (int)(pEnd - pTarget) : (int)str_length(pTarget);
+		if(FirstLength > 0 && FirstLength < (int)sizeof(aFirst) &&
+			SecondLength > 0 && SecondLength < (int)sizeof(aSecond))
+		{
+			str_copy(aFirst, pMessage, FirstLength + 1);
+			str_copy(aSecond, pTarget, SecondLength + 1);
+			AddOrRefreshSwapTimer(aFirst, aSecond, 30);
+		}
+		return;
+	}
+
+	// Cancellations, including the different "you" variants.
+	if(CopyMessageBetween(pMessage, "You have canceled swap with ", ".", aSecond, sizeof(aSecond)) ||
+		CopyMessageBetween(pMessage, "You have cancelled swap with ", ".", aSecond, sizeof(aSecond)))
+	{
+		RemoveSwapTimer(aLocal, aSecond);
+		return;
+	}
+	const char *pCanceledWithYou = str_find(pMessage, " has canceled swap with you.");
+	if(pCanceledWithYou == nullptr)
+		pCanceledWithYou = str_find(pMessage, " has cancelled swap with you.");
+	if(pCanceledWithYou != nullptr)
+	{
+		const int Length = (int)(pCanceledWithYou - pMessage);
+		if(Length > 0 && Length < (int)sizeof(aFirst))
+		{
+			str_copy(aFirst, pMessage, Length + 1);
+			RemoveSwapTimer(aFirst, aLocal);
+		}
+		return;
+	}
+	const char *pCanceledMarker = " has canceled swap with ";
+	const char *pCanceled = str_find(pMessage, pCanceledMarker);
+	if(pCanceled == nullptr)
+	{
+		pCanceledMarker = " has cancelled swap with ";
+		pCanceled = str_find(pMessage, pCanceledMarker);
+	}
+	if(pCanceled != nullptr)
+	{
+		const int FirstLength = (int)(pCanceled - pMessage);
+		const char *pTarget = pCanceled + str_length(pCanceledMarker);
+		const char *pEnd = str_find(pTarget, ".");
+		const int SecondLength = pEnd != nullptr ? (int)(pEnd - pTarget) : (int)str_length(pTarget);
+		if(FirstLength > 0 && FirstLength < (int)sizeof(aFirst) &&
+			SecondLength > 0 && SecondLength < (int)sizeof(aSecond))
+		{
+			str_copy(aFirst, pMessage, FirstLength + 1);
+			str_copy(aSecond, pTarget, SecondLength + 1);
+			RemoveSwapTimer(aFirst, aSecond);
+		}
+		return;
+	}
+
+	// "<a> has swapped with <b>."
+	const char *pSwapped = str_find(pMessage, " has swapped with ");
+	if(pSwapped != nullptr)
+	{
+		const int FirstLength = (int)(pSwapped - pMessage);
+		const char *pTarget = pSwapped + str_length(" has swapped with ");
+		const char *pEnd = str_find(pTarget, ".");
+		const int SecondLength = pEnd != nullptr ? (int)(pEnd - pTarget) : (int)str_length(pTarget);
+		if(FirstLength > 0 && FirstLength < (int)sizeof(aFirst) &&
+			SecondLength > 0 && SecondLength < (int)sizeof(aSecond))
+		{
+			str_copy(aFirst, pMessage, FirstLength + 1);
+			str_copy(aSecond, pTarget, SecondLength + 1);
+			RemoveSwapTimer(aFirst, aSecond);
+		}
+		return;
+	}
+
+	// "Your swap request timed out ..." clears the local player's requests.
+	if(str_find(pMessage, "Your swap request timed out") != nullptr)
+	{
+		for(auto It = m_SwapTimers.begin(); It != m_SwapTimers.end();)
+		{
+			if(IsLocalName(It->m_aFrom) || IsLocalName(It->m_aTo))
+				It = m_SwapTimers.erase(It);
+			else
+				++It;
+		}
+	}
+}
+
+void CLazyClient::RenderSwapTimers()
+{
+	if(!g_Config.m_LcSwapTimer || Client()->State() != IClient::STATE_ONLINE ||
+		GameClient()->m_Menus.IsActive())
+		return;
+
+	const int64_t Now = time();
+	for(auto It = m_SwapTimers.begin(); It != m_SwapTimers.end();)
+	{
+		if(It->m_Deadline <= Now)
+			It = m_SwapTimers.erase(It);
+		else
+			++It;
+	}
+	if(m_SwapTimers.empty())
+		return;
+
+	const int Mode = std::clamp(g_Config.m_LcSwapTimerMode, 0, 2);
+	char aaRows[12][192];
+	int RowSeconds[12] = {};
+	int NumRows = 0;
+	for(const auto &Entry : m_SwapTimers)
+	{
+		if(NumRows >= (int)(sizeof(aaRows) / sizeof(aaRows[0])))
+			break;
+		if(Mode == 2 && !IsLocalName(Entry.m_aFrom) && !IsLocalName(Entry.m_aTo))
+			continue;
+		if(Mode == 1 && !IsNameInLocalTeam(Entry.m_aFrom) && !IsNameInLocalTeam(Entry.m_aTo))
+			continue;
+		str_format(aaRows[NumRows], sizeof(aaRows[NumRows]), "%s ↔ %s", Entry.m_aFrom, Entry.m_aTo);
+		RowSeconds[NumRows] = (int)std::max<int64_t>(0, Entry.m_Deadline - Now);
+		NumRows++;
+	}
+	if(NumRows == 0)
+		return;
+
+	const CScreenRect OldScreen = Graphics()->GetScreen();
+	const float Width = 300.0f * Graphics()->ScreenAspect();
+	const float Height = 300.0f;
+	Graphics()->MapScreenToSize(Width, Height);
+
+	const float FontSize = 9.5f;
+	const float LineHeight = 11.0f;
+	const char *pTitle = Localize("Swap requests");
+	float MaxNameWidth = TextRender()->TextWidth(FontSize, pTitle);
+	for(int i = 0; i < NumRows; i++)
+		MaxNameWidth = std::max(MaxNameWidth, TextRender()->TextWidth(FontSize, aaRows[i]));
+	const float SecondsWidth = TextRender()->TextWidth(FontSize, "999s");
+	const float BoxWidth = MaxNameWidth + SecondsWidth + 20.0f;
+	const float BoxHeight = (NumRows + 1) * LineHeight + 8.0f;
+	CUIRect Box = {6.0f, 34.0f, BoxWidth, BoxHeight};
+	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
+	Box.DrawOutline(ColorRGBA(0.85f, 0.65f, 0.30f, 0.40f));
+
+	TextRender()->TextColor(ColorRGBA(1.0f, 0.82f, 0.38f, 1.0f));
+	TextRender()->Text(Box.x + 6.0f, Box.y + 4.0f, FontSize, pTitle);
+	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryTextColor, false)));
+	float y = Box.y + 4.0f + LineHeight;
+	for(int i = 0; i < NumRows; i++)
+	{
+		TextRender()->Text(Box.x + 6.0f, y, FontSize, aaRows[i]);
+		char aSeconds[16];
+		str_format(aSeconds, sizeof(aSeconds), "%ds", RowSeconds[i]);
+		const float SecondsX = Box.x + Box.w - 6.0f - TextRender()->TextWidth(FontSize, aSeconds);
+		TextRender()->Text(SecondsX, y, FontSize, aSeconds);
+		y += LineHeight;
+	}
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+	Graphics()->MapScreen(OldScreen);
 }
 
 void CLazyClient::ApplyClientTypeToColor(int &ColorBody, int &ColorFeet) const
 {
 	if(!g_Config.m_LcClientLogos)
 		return;
-	ColorBody = LazyCCIDInsert(ColorBody, g_Config.m_LcDevIcon ? LC_CCID_BODY_LAZYCLIENT_DEV : LC_CCID_BODY_LAZYCLIENT);
+	ColorBody = LazyCCIDInsert(ColorBody, UseDevIcon() ? LC_CCID_BODY_LAZYCLIENT_DEV : LC_CCID_BODY_LAZYCLIENT);
 	ColorFeet = LazyCCIDInsert(ColorFeet, LC_CCID_FEET_LAZYCLIENT);
 }
 
@@ -265,40 +599,52 @@ IGraphics::CTextureHandle CLazyClient::DevIconTexture() const
 
 	// The developer icon is generated in code on purpose: it is not a data file,
 	// so it cannot be swapped by dropping another image next to the other
-	// client icons. Black rounded square with gold "Lz" letters.
+	// client icons. It mirrors the normal LazyClient icon (same 128 px size and
+	// rounded "Lz" lettering) with a black smoky gradient and gold letters.
 	constexpr int Size = 128;
 	constexpr int Samples = 4;
-	constexpr float Radius = 30.0f;
-	constexpr ColorRGBA Gold(1.0f, 0.84f, 0.25f, 1.0f);
+	constexpr float Radius = 27.0f;
+	constexpr float Stroke = 4.5f;
+	constexpr float OutlineWidth = 1.2f;
 
-	auto InsideMask = [&](float x, float y) {
-		const float NearestX = std::clamp(x, Radius, (float)Size - Radius);
-		const float NearestY = std::clamp(y, Radius, (float)Size - Radius);
-		const float DX = x - NearestX;
-		const float DY = y - NearestY;
-		return DX * DX + DY * DY <= Radius * Radius;
+	auto Clamp01 = [](float Value) {
+		return std::clamp(Value, 0.0f, 1.0f);
 	};
-	auto InRect = [](float x, float y, float X0, float Y0, float X1, float Y1) {
-		return x >= X0 && x <= X1 && y >= Y0 && y <= Y1;
+	auto Smooth = [&](float Value) {
+		Value = Clamp01(Value);
+		return Value * Value * (3.0f - 2.0f * Value);
 	};
-	auto InQuad = [](float x, float y, float Ax, float Ay, float Bx, float By, float Cx, float Cy, float Dx, float Dy) {
-		auto Cross = [](float Px, float Py, float Qx, float Qy, float Rx, float Ry) {
-			return (Qx - Px) * (Ry - Py) - (Qy - Py) * (Rx - Px);
-		};
-		const float C1 = Cross(Ax, Ay, Bx, By, x, y);
-		const float C2 = Cross(Bx, By, Cx, Cy, x, y);
-		const float C3 = Cross(Cx, Cy, Dx, Dy, x, y);
-		const float C4 = Cross(Dx, Dy, Ax, Ay, x, y);
-		return (C1 >= 0.0f && C2 >= 0.0f && C3 >= 0.0f && C4 >= 0.0f) ||
-			(C1 <= 0.0f && C2 <= 0.0f && C3 <= 0.0f && C4 <= 0.0f);
+	auto RoundedRectDistance = [&](float x, float y) {
+		const float Qx = std::abs(x - Size * 0.5f) - (Size * 0.5f - Radius);
+		const float Qy = std::abs(y - Size * 0.5f) - (Size * 0.5f - Radius);
+		const float OutsideX = std::max(Qx, 0.0f);
+		const float OutsideY = std::max(Qy, 0.0f);
+		return std::sqrt(OutsideX * OutsideX + OutsideY * OutsideY) + std::min(std::max(Qx, Qy), 0.0f) - Radius;
 	};
-	auto InsideGold = [&](float x, float y) {
-		const bool LetterL = InRect(x, y, 28.0f, 30.0f, 42.0f, 96.0f) ||
-			InRect(x, y, 28.0f, 82.0f, 62.0f, 96.0f);
-		const bool LetterZ = InRect(x, y, 68.0f, 30.0f, 100.0f, 44.0f) ||
-			InRect(x, y, 64.0f, 82.0f, 96.0f, 96.0f) ||
-			InQuad(x, y, 86.0f, 44.0f, 100.0f, 44.0f, 78.0f, 82.0f, 64.0f, 82.0f);
-		return LetterL || LetterZ;
+	auto SegmentDistance = [](float x, float y, float Ax, float Ay, float Bx, float By) {
+		const float Pax = x - Ax;
+		const float Pay = y - Ay;
+		const float Bax = Bx - Ax;
+		const float Bay = By - Ay;
+		const float LengthSq = Bax * Bax + Bay * Bay;
+		const float t = LengthSq > 0.0f ? std::clamp((Pax * Bax + Pay * Bay) / LengthSq, 0.0f, 1.0f) : 0.0f;
+		const float Dx = Pax - Bax * t;
+		const float Dy = Pay - Bay * t;
+		return std::sqrt(Dx * Dx + Dy * Dy);
+	};
+	// Distance to the middle line of the rounded "Lz"; negative inside.
+	// The geometry mirrors the normal LazyClient icon: a full-height L and a
+	// smaller lower-case z sitting on the same baseline.
+	auto LetterDistance = [&](float x, float y) {
+		const float L = std::min(
+			SegmentDistance(x, y, 40.0f, 44.0f, 40.0f, 78.0f),
+			SegmentDistance(x, y, 40.0f, 78.0f, 62.0f, 78.0f));
+		const float Z = std::min(
+			SegmentDistance(x, y, 74.0f, 57.0f, 92.0f, 57.0f),
+			std::min(
+				SegmentDistance(x, y, 74.0f, 78.0f, 92.0f, 78.0f),
+				SegmentDistance(x, y, 90.0f, 61.0f, 76.0f, 74.0f)));
+		return std::min(L, Z) - Stroke;
 	};
 
 	CImageInfo Info;
@@ -311,30 +657,108 @@ IGraphics::CTextureHandle CLazyClient::DevIconTexture() const
 	{
 		for(int x = 0; x < Size; x++)
 		{
+			float Red = 0.0f;
+			float Green = 0.0f;
+			float Blue = 0.0f;
 			int MaskSamples = 0;
-			int GoldSamples = 0;
+			const int SampleCount = Samples * Samples;
 			for(int sy = 0; sy < Samples; sy++)
 			{
 				for(int sx = 0; sx < Samples; sx++)
 				{
 					const float Px = x + (sx + 0.5f) / Samples;
 					const float Py = y + (sy + 0.5f) / Samples;
-					if(!InsideMask(Px, Py))
+					const float MaskDistance = RoundedRectDistance(Px, Py);
+					if(MaskDistance > 0.0f)
 						continue;
 					MaskSamples++;
-					if(InsideGold(Px, Py))
-						GoldSamples++;
+
+					// Black to smoky gray diagonal gradient with a soft
+					// highlight, a very faint smoke ripple and a dark vignette.
+					const float Gradient = Smooth((Px * 0.60f + Py * 0.50f) / Size);
+					float R = 0.015f + (0.30f - 0.015f) * Gradient;
+					float G = 0.015f + (0.30f - 0.015f) * Gradient;
+					float B = 0.020f + (0.35f - 0.020f) * Gradient;
+					const float GlowX = (Px - 36.0f) / 82.0f;
+					const float GlowY = (Py - 28.0f) / 94.0f;
+					const float Glow = Smooth(1.0f - std::sqrt(GlowX * GlowX + GlowY * GlowY));
+					R += Glow * 0.060f;
+					G += Glow * 0.060f;
+					B += Glow * 0.068f;
+					const float Smoke = std::sin(Px * 0.055f + std::sin(Py * 0.090f) * 2.1f);
+					R += Smoke * 0.014f;
+					G += Smoke * 0.014f;
+					B += Smoke * 0.017f;
+					const float Vx = (Px - Size * 0.5f) / (Size * 0.5f);
+					const float Vy = (Py - Size * 0.5f) / (Size * 0.5f);
+					const float Vignette = 0.80f + 0.20f * Smooth(1.0f - std::sqrt(Vx * Vx + Vy * Vy));
+					R *= Vignette;
+					G *= Vignette;
+					B *= Vignette;
+
+					// A light inner rim keeps the rounded edge readable
+					// against dark maps.
+					if(MaskDistance > -1.7f)
+					{
+						const float Rim = 0.22f;
+						R += (0.62f - R) * Rim;
+						G += (0.62f - G) * Rim;
+						B += (0.68f - B) * Rim;
+					}
+
+					const float Letter = LetterDistance(Px, Py);
+					const float Shadow = LetterDistance(Px - 1.8f, Py - 2.4f);
+					if(Shadow <= 0.0f)
+					{
+						R *= 0.42f;
+						G *= 0.42f;
+						B *= 0.42f;
+					}
+
+					if(Letter <= OutlineWidth)
+					{
+						R = 0.30f;
+						G = 0.17f;
+						B = 0.025f;
+					}
+					if(Letter <= 0.0f)
+					{
+						// Gold gradient from pale top to deep amber bottom.
+						const float GoldT = Clamp01((Py - 35.0f) / 58.0f);
+						float GoldR, GoldG, GoldB;
+						if(GoldT < 0.55f)
+						{
+							const float t = GoldT / 0.55f;
+							GoldR = 1.0f + (1.0f - 1.0f) * t;
+							GoldG = 0.95f + (0.78f - 0.95f) * t;
+							GoldB = 0.66f + (0.22f - 0.66f) * t;
+						}
+						else
+						{
+							const float t = (GoldT - 0.55f) / 0.45f;
+							GoldR = 1.0f + (0.70f - 1.0f) * t;
+							GoldG = 0.78f + (0.42f - 0.78f) * t;
+							GoldB = 0.22f + (0.035f - 0.22f) * t;
+						}
+						const float Sheen = 0.10f * (1.0f - Clamp01((Px - 28.0f) / 74.0f));
+						R = GoldR + Sheen;
+						G = GoldG + Sheen;
+						B = GoldB + Sheen * 0.7f;
+					}
+
+					Red += R;
+					Green += G;
+					Blue += B;
 				}
 			}
 			if(MaskSamples == 0)
 				continue;
 
 			uint8_t *pPixel = &Info.m_pData[(y * Size + x) * 4];
-			const float GoldMix = (float)GoldSamples / MaskSamples;
-			pPixel[0] = (uint8_t)(Gold.r * GoldMix * 255.0f);
-			pPixel[1] = (uint8_t)(Gold.g * GoldMix * 255.0f);
-			pPixel[2] = (uint8_t)(Gold.b * GoldMix * 255.0f);
-			pPixel[3] = (uint8_t)(255 * MaskSamples / (Samples * Samples));
+			pPixel[0] = (uint8_t)(std::clamp(Red / MaskSamples, 0.0f, 1.0f) * 255.0f);
+			pPixel[1] = (uint8_t)(std::clamp(Green / MaskSamples, 0.0f, 1.0f) * 255.0f);
+			pPixel[2] = (uint8_t)(std::clamp(Blue / MaskSamples, 0.0f, 1.0f) * 255.0f);
+			pPixel[3] = (uint8_t)(255 * MaskSamples / SampleCount);
 		}
 	}
 
@@ -442,7 +866,7 @@ void CLazyClient::UpdateClientTypes()
 		{
 			// The server may not have echoed our custom color yet, and 0.7
 			// servers do not use the skin color convention.
-			Type = g_Config.m_LcDevIcon ? LC_CLIENT_LAZYCLIENT_DEV : LC_CLIENT_LAZYCLIENT;
+			Type = UseDevIcon() ? LC_CLIENT_LAZYCLIENT_DEV : LC_CLIENT_LAZYCLIENT;
 		}
 
 		m_aClientTypes[ClientId] = Type;
@@ -1459,6 +1883,8 @@ void CLazyClient::OnChatMessage(int ClientId, int Team, const char *pMessage)
 	// message also stops players from faking the state in their own chat.
 	if(ClientId != SERVER_CHAT_CLIENT_ID)
 		return;
+
+	HandleSwapChatMessage(pMessage);
 
 	const bool Unlocked = str_find(pMessage, " unlocked your team") != nullptr;
 	// " unlocked your team" contains " locked your team", so check unlocked first.
@@ -2809,6 +3235,7 @@ void CLazyClient::OnRender()
 	RenderZeroGravityForcedStatus();
 	RenderZeroGravityWarning();
 	RenderTelemetry();
+	RenderSwapTimers();
 }
 
 void CLazyClient::OnUpdate()
@@ -2871,7 +3298,7 @@ void CLazyClient::OnUpdate()
 		m_ZeroGravForcedBindHeld = false;
 
 	UpdateClientLogoState();
-	if(g_Config.m_LcDevIcon)
+	if(UseDevIcon())
 		DevIconTexture(); // Load before the first nameplate/scoreboard render.
 	UpdateBestClientList();
 	UpdateAutoMargin();
