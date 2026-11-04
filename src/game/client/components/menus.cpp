@@ -2318,6 +2318,10 @@ bool CMenus::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 
 bool CMenus::OnInput(const IInput::CEvent &Event)
 {
+	// The HUD editor owns input while it is open.
+	if(GameClient()->m_Lazy.HudEditorActive())
+		return true;
+
 	// Escape key is always handled to activate/deactivate menu
 	if((Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE) || IsActive())
 	{
@@ -2377,6 +2381,15 @@ void CMenus::OnWindowResize()
 
 void CMenus::OnRender()
 {
+	// The HUD editor renders and handles its input above everything else, so
+	// keep the menu out of the way even when no server is connected.
+	if(GameClient()->m_Lazy.HudEditorActive())
+	{
+		SetActive(false);
+		Ui()->ClearHotkeys();
+		return;
+	}
+
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
 		SetActive(true);
 

@@ -849,6 +849,10 @@ void CGameClient::OnRender()
 	for(auto &pComponent : m_vpAll)
 		pComponent->OnRender();
 
+	// The HUD editor is a modal overlay, so draw it above menus and chat.
+	if(m_Lazy.HudEditorActive())
+		m_Lazy.RenderHudEditor();
+
 	// clear all events/input for this frame
 	Input()->Clear();
 

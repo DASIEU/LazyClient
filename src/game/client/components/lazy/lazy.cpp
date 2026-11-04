@@ -3434,12 +3434,16 @@ void CLazyClient::OpenHudEditor()
 	};
 	for(int i = 0; i < 6; i++)
 		m_aHudEditorColorBackup[i] = *apColors[i];
+	m_HudEditorMenuWasActive = GameClient()->m_Menus.IsActive();
 	m_HudEditorActive = true;
 	m_HudEditorDragging = -1;
 	m_HudEditorSettings = -1;
 	m_HudEditorConfirm = false;
-	if(Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK)
-		GameClient()->m_Menus.SetActive(false);
+
+	// The editor owns the cursor, so release it from the game's relative mouse
+	// mode and keep the menu from fighting the editor for input.
+	Input()->MouseModeAbsolute();
+	GameClient()->m_Menus.SetActive(false);
 }
 
 void CLazyClient::CloseHudEditor(bool Save)
@@ -3466,6 +3470,15 @@ void CLazyClient::CloseHudEditor(bool Save)
 	m_HudEditorDragging = -1;
 	m_HudEditorSettings = -1;
 	m_HudEditorConfirm = false;
+
+	// Go back to the menu if that is where the editor was opened from, otherwise
+	// resume the game with a grabbed cursor.
+	if(m_HudEditorMenuWasActive || Client()->State() == IClient::STATE_OFFLINE || Client()->State() == IClient::STATE_LOADING)
+		GameClient()->m_Menus.SetActive(true);
+	m_HudEditorMenuWasActive = false;
+
+	if(!GameClient()->m_GameConsole.IsActive())
+		Input()->MouseModeRelative();
 }
 
 void CLazyClient::ConHudEditor(IConsole::IResult *pResult, void *pUserData)
@@ -3528,18 +3541,28 @@ void CLazyClient::EndHudModule()
 
 void CLazyClient::RenderHudEditor()
 {
-	if(!m_HudEditorActive)
-		return;
-	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
-		return;
-	if(GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive())
+	if(!m_HudEditorActive || GameClient()->m_Scoreboard.IsActive())
 		return;
 
 	if(!m_HudLayoutLoaded)
 		LoadHudLayout();
 
+	const bool LiveHud = Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK;
+
 	const CScreenRect OldScreen = Graphics()->GetScreen();
 	Ui()->MapScreen();
+
+	// The editor runs in absolute mouse mode so the OS cursor is free. Feed the
+	// native cursor position into the UI and update it here because the menu is
+	// inactive while the editor is open.
+	const vec2 WindowSize = vec2(Graphics()->WindowWidth(), Graphics()->WindowHeight());
+	const vec2 ScreenSize = Ui()->Screen()->Size();
+	const vec2 CurrentWindow = Ui()->MousePos() * WindowSize / ScreenSize;
+	const vec2 TargetWindow = Input()->NativeMousePos();
+	Ui()->DisableMouseLock();
+	Ui()->OnCursorMove(TargetWindow.x - CurrentWindow.x, TargetWindow.y - CurrentWindow.y);
+	Ui()->StartCheck();
+	Ui()->Update();
 
 	const float UiWidth = Ui()->Screen()->w;
 	const float UiHeight = Ui()->Screen()->h;
@@ -3550,7 +3573,8 @@ void CLazyClient::RenderHudEditor()
 
 	auto ModuleRect = [&](int ModuleId) {
 		const CUIRect &StoredRect = m_aHudModuleRects[ModuleId];
-		const CUIRect HudRect = StoredRect.w > 0.0f && StoredRect.h > 0.0f ? StoredRect :
+		const bool UseStored = LiveHud && StoredRect.w > 0.0f && StoredRect.h > 0.0f;
+		const CUIRect HudRect = UseStored ? StoredRect :
 			HudModuleRect(m_aHudModules[ModuleId], s_aHudModuleDefs[ModuleId], HudWidth, HudHeight);
 		CUIRect UiRect = {HudRect.x * Scale, HudRect.y * Scale, HudRect.w * Scale, HudRect.h * Scale};
 		return UiRect;
@@ -3639,6 +3663,13 @@ void CLazyClient::RenderHudEditor()
 	HelpBar.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.90f), IGraphics::CORNER_ALL, 6.0f);
 	HelpBar.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.75f));
 	Ui()->DoLabel(&HelpBar, Localize("HUD Editor  —  drag to move  •  right-click a module for settings  •  Shift+left-click to hide/show  •  right-click empty space to save/discard"), 8.5f, TEXTALIGN_MC);
+
+	if(!LiveHud)
+	{
+		CUIRect PreviewHint = {UiWidth / 2.0f - 360.0f, 48.0f, 720.0f, 20.0f};
+		PreviewHint.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.80f), IGraphics::CORNER_ALL, 4.0f);
+		Ui()->DoLabel(&PreviewHint, Localize("Preview mode  —  connect to a server to see the live HUD behind these outlines"), 8.0f, TEXTALIGN_MC);
+	}
 
 	static CButtonContainer s_SaveAndCloseButton;
 	CUIRect CloseButton = {UiWidth - 190.0f, 10.0f, 180.0f, 24.0f};
@@ -3787,6 +3818,8 @@ void CLazyClient::RenderHudEditor()
 			m_HudEditorSettings = -1;
 	}
 
+	Ui()->FinishCheck();
+
 	Graphics()->MapScreen(OldScreen);
 }
 
@@ -3796,7 +3829,6 @@ void CLazyClient::OnRender()
 	RenderZeroGravityWarning();
 	RenderTelemetry();
 	RenderSwapTimers();
-	RenderHudEditor();
 }
 
 void CLazyClient::OnUpdate()

@@ -127,6 +127,7 @@ public:
 	void OpenHudEditor();
 	void CloseHudEditor(bool Save);
 	void ResetHudLayout();
+	void RenderHudEditor();
 
 private:
 	static void ConGunFire(IConsole::IResult *pResult, void *pUserData);
@@ -307,13 +308,13 @@ private:
 	int m_HudScreenStackDepth = 0;
 	bool m_HudLayoutLoaded = false;
 	bool m_HudEditorActive = false;
+	bool m_HudEditorMenuWasActive = false;
 	int m_HudEditorDragging = -1;
 	vec2 m_HudEditorDragLast = vec2(0.0f, 0.0f);
 	int m_HudEditorSettings = -1;
 	bool m_HudEditorConfirm = false;
 	void LoadHudLayout();
 	void SaveHudLayout();
-	void RenderHudEditor();
 	static void ConHudEditor(IConsole::IResult *pResult, void *pUserData);
 	static void ConHudReset(IConsole::IResult *pResult, void *pUserData);
 
