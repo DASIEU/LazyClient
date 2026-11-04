@@ -9,6 +9,7 @@
 
 // LazyClient settings page
 MACRO_CONFIG_INT(LcUiSettingsTab, lc_ui_settings_tab, 0, 0, 4, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Selected LazyClient settings tab")
+MACRO_CONFIG_STR(LcHudLayout, lc_hud_layout, 1024, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Saved HUD editor layout: module:offset_x:offset_y:hidden entries separated by semicolons (internal)")
 
 // Input modes
 MACRO_CONFIG_INT(LcInputMode, lc_input_mode, 0, 0, 4, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Input prediction mode (0 = off, 1 = fast, 2 = best, 3 = saiko, 4 = cloud)")

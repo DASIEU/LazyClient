@@ -701,6 +701,16 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	CScrollRegionParams ScrollParams;
 	LazyBeginScroll(&MainView, &s_ScrollRegion, &ScrollParams);
 
+	LazySectionTitle(&MainView, Localize("HUD Editor"), Ui(), GameClient(), Localize("Move and hide HUD elements without editing sliders. Open the editor in-game, drag a module with the left mouse button, right-click it for offsets and colors, Shift+left-click to hide or show it, and right-click empty space to save or discard. The existing per-overlay offset and scale sliders keep working underneath."));
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+
+	static CButtonContainer s_OpenHudEditorButton;
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	if(DoButton_Menu(&s_OpenHudEditorButton, Localize("Open GUI editor"), 0, &Button))
+		GameClient()->m_Lazy.OpenHudEditor();
+	LazyInfoLabel(&MainView, Localize("The editor can also be toggled with lc_hud_editor and reset with lc_hud_reset."), Ui(), TextRender());
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
 	LazySectionTitle(&MainView, Localize("Better Zooming"), Ui(), GameClient(), Localize("lc_zoom_in and lc_zoom_out change the zoom by the configured number of levels instead of one level like +zoom/-zoom. A step of 3 takes the level from 10 to 7 while zooming out. Bind them to keys below or with the bind command; a key can only run one of the two commands."));
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 

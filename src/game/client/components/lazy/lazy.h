@@ -10,6 +10,7 @@
 #include <engine/shared/protocol.h>
 
 #include <game/client/component.h>
+#include <game/client/ui_rect.h>
 #include <game/gamecore.h>
 
 #include <memory>
@@ -20,6 +21,37 @@
 
 class CCollision;
 class IHttpRequest;
+
+// Every HUD group that the editor can move. Keep this list in sync with
+// s_aHudModuleDefs in lazy.cpp.
+enum EHudModule
+{
+	HUD_MODULE_HEALTH_AMMO = 0,
+	HUD_MODULE_PLAYER_STATE,
+	HUD_MODULE_SPECTATOR_COUNT,
+	HUD_MODULE_MOVEMENT_INFO,
+	HUD_MODULE_DDRACE_EFFECTS,
+	HUD_MODULE_SPECTATOR_HUD,
+	HUD_MODULE_GAME_TIMER,
+	HUD_MODULE_PAUSE_NOTIFICATION,
+	HUD_MODULE_SUDDEN_DEATH,
+	HUD_MODULE_SCORE_HUD,
+	HUD_MODULE_DUMMY_ACTIONS,
+	HUD_MODULE_WARMUP_TIMER,
+	HUD_MODULE_TEXT_INFO,
+	HUD_MODULE_LOCAL_TIME,
+	HUD_MODULE_CONNECTION_WARNING,
+	HUD_MODULE_TEAM_BALANCE,
+	HUD_MODULE_VOTING,
+	HUD_MODULE_RECORD,
+	HUD_MODULE_CENTER_LINES,
+	HUD_MODULE_STATUS_BAR,
+	HUD_MODULE_TELEMETRY,
+	HUD_MODULE_SWAP_TIMERS,
+	HUD_MODULE_ZERO_GRAV_WARNING,
+	HUD_MODULE_ZERO_GRAV_STATUS,
+	HUD_MODULE_COUNT,
+};
 
 class CLazyClient : public CComponent
 {
@@ -80,6 +112,21 @@ public:
 	int AspectSecondsLeft() const;
 	void KeepAspect();
 	void RevertAspect();
+
+	// HUD editor
+	struct SHudModuleState
+	{
+		int m_OffsetX = 0;
+		int m_OffsetY = 0;
+		bool m_Hidden = false;
+	};
+	bool BeginHudModule(int ModuleId);
+	void EndHudModule();
+	bool HudModuleHidden(int ModuleId) const;
+	bool HudEditorActive() const { return m_HudEditorActive; }
+	void OpenHudEditor();
+	void CloseHudEditor(bool Save);
+	void ResetHudLayout();
 
 private:
 	static void ConGunFire(IConsole::IResult *pResult, void *pUserData);
@@ -244,6 +291,31 @@ private:
 	int m_AspectLastHeight = 0;
 	int m_AspectPrevWidth = 0;
 	int m_AspectPrevHeight = 0;
+
+	// HUD editor
+	static constexpr int HUD_SCREEN_STACK_SIZE = 16;
+	struct SHudSavedScreen
+	{
+		vec2 m_TopLeft = vec2(0.0f, 0.0f);
+		vec2 m_BottomRight = vec2(0.0f, 0.0f);
+	};
+	SHudModuleState m_aHudModules[HUD_MODULE_COUNT];
+	SHudModuleState m_aHudEditorBackup[HUD_MODULE_COUNT];
+	unsigned int m_aHudEditorColorBackup[6] = {};
+	CUIRect m_aHudModuleRects[HUD_MODULE_COUNT] = {};
+	SHudSavedScreen m_aHudScreenStack[HUD_SCREEN_STACK_SIZE];
+	int m_HudScreenStackDepth = 0;
+	bool m_HudLayoutLoaded = false;
+	bool m_HudEditorActive = false;
+	int m_HudEditorDragging = -1;
+	vec2 m_HudEditorDragLast = vec2(0.0f, 0.0f);
+	int m_HudEditorSettings = -1;
+	bool m_HudEditorConfirm = false;
+	void LoadHudLayout();
+	void SaveHudLayout();
+	void RenderHudEditor();
+	static void ConHudEditor(IConsole::IResult *pResult, void *pUserData);
+	static void ConHudReset(IConsole::IResult *pResult, void *pUserData);
 
 	// Client identification
 	bool UseDevIcon() const;

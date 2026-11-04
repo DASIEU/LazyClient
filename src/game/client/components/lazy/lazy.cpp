@@ -24,7 +24,9 @@
 
 #include <game/client/components/binds.h>
 #include <game/client/components/controls.h>
+#include <game/client/components/menus.h>
 #include <game/client/gameclient.h>
+#include <game/client/ui.h>
 #include <game/collision.h>
 #include <game/gamecore.h>
 #include <game/localization.h>
@@ -33,6 +35,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <string>
 #include <utility>
@@ -182,6 +185,123 @@ bool IsGreetingMessage(const char *pMessage)
 	}
 	return false;
 }
+
+enum EHudAlign
+{
+	HUD_ALIGN_LEFT = 0,
+	HUD_ALIGN_CENTER,
+	HUD_ALIGN_RIGHT,
+	HUD_ALIGN_FRACTION,
+	HUD_ALIGN_FULL,
+};
+
+struct SHudModuleDef
+{
+	const char *m_pName;
+	int m_Align;
+	float m_X;
+	float m_Y;
+	float m_W;
+	float m_H;
+};
+
+// Approximate on-screen bounds in the standard 300-unit-high HUD space. The
+// editor uses these as drag handles and outlines; the actual drawing is moved
+// by translating the render target, so the bounds only need to be close.
+const SHudModuleDef s_aHudModuleDefs[HUD_MODULE_COUNT] = {
+	{"Health and ammo", HUD_ALIGN_LEFT, 0.0f, 0.0f, 62.0f, 52.0f},
+	{"Player state", HUD_ALIGN_LEFT, 0.0f, 0.0f, 150.0f, 76.0f},
+	{"Spectator count", HUD_ALIGN_RIGHT, 0.0f, 250.0f, 46.0f, 16.0f},
+	{"Movement information", HUD_ALIGN_RIGHT, 0.0f, 222.0f, 72.0f, 62.0f},
+	{"DDRace effects", HUD_ALIGN_CENTER, 0.0f, 22.0f, 160.0f, 24.0f},
+	{"Spectating bar", HUD_ALIGN_RIGHT, 0.0f, 272.0f, 190.0f, 16.0f},
+	{"Game timer", HUD_ALIGN_CENTER, 0.0f, 0.0f, 100.0f, 14.0f},
+	{"Pause notification", HUD_ALIGN_CENTER, 0.0f, 48.0f, 150.0f, 26.0f},
+	{"Sudden death", HUD_ALIGN_CENTER, 0.0f, 0.0f, 110.0f, 14.0f},
+	{"Score HUD", HUD_ALIGN_RIGHT, 0.0f, 224.0f, 170.0f, 60.0f},
+	{"Dummy actions", HUD_ALIGN_RIGHT, 0.0f, 218.0f, 20.0f, 32.0f},
+	{"Warmup timer", HUD_ALIGN_CENTER, 0.0f, 46.0f, 130.0f, 30.0f},
+	{"FPS and debug info", HUD_ALIGN_RIGHT, 0.0f, 0.0f, 90.0f, 44.0f},
+	{"Local time", HUD_ALIGN_FRACTION, 0.42f, 0.0f, 34.0f, 14.0f},
+	{"Connection warning", HUD_ALIGN_CENTER, 0.0f, 48.0f, 220.0f, 26.0f},
+	{"Team balance warning", HUD_ALIGN_LEFT, 5.0f, 50.0f, 130.0f, 14.0f},
+	{"Vote HUD", HUD_ALIGN_LEFT, 0.0f, 58.0f, 122.0f, 52.0f},
+	{"Best times", HUD_ALIGN_LEFT, 0.0f, 72.0f, 110.0f, 22.0f},
+	{"Center lines", HUD_ALIGN_CENTER, 0.0f, 138.0f, 48.0f, 24.0f},
+	{"Status bar", HUD_ALIGN_FULL, 0.0f, -16.0f, 0.0f, 16.0f},
+	{"Telemetry", HUD_ALIGN_RIGHT, 0.0f, 34.0f, 112.0f, 72.0f},
+	{"Swap timers", HUD_ALIGN_LEFT, 0.0f, 34.0f, 150.0f, 90.0f},
+	{"Zero-gravity warning", HUD_ALIGN_CENTER, 0.0f, 32.0f, 170.0f, 24.0f},
+	{"Zero-gravity status", HUD_ALIGN_CENTER, 0.0f, 32.0f, 170.0f, 24.0f},
+};
+
+static_assert(sizeof(s_aHudModuleDefs) / sizeof(s_aHudModuleDefs[0]) == HUD_MODULE_COUNT, "HUD module table out of sync");
+
+CUIRect HudModuleRect(const CLazyClient::SHudModuleState &State, const SHudModuleDef &Def, float Width, float Height)
+{
+	float X = 0.0f;
+	switch(Def.m_Align)
+	{
+	case HUD_ALIGN_CENTER:
+		X = Width / 2.0f - Def.m_W / 2.0f + Def.m_X;
+		break;
+	case HUD_ALIGN_RIGHT:
+		X = Width - Def.m_W - Def.m_X;
+		break;
+	case HUD_ALIGN_FRACTION:
+		X = Width * Def.m_X;
+		break;
+	case HUD_ALIGN_FULL:
+		X = 0.0f;
+		break;
+	case HUD_ALIGN_LEFT:
+	default:
+		X = Def.m_X;
+		break;
+	}
+
+	const float Y = Def.m_Y < 0.0f ? Height + Def.m_Y : Def.m_Y;
+	const float W = Def.m_Align == HUD_ALIGN_FULL ? Width : Def.m_W;
+	CUIRect Rect = {X + State.m_OffsetX, Y + State.m_OffsetY, W, Def.m_H};
+	return Rect;
+}
+
+void CycleHudColor(unsigned int *pColor, bool HasAlpha, bool Background)
+{
+	static const ColorRGBA s_aPresets[] = {
+		ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f),
+		ColorRGBA(0.95f, 0.85f, 0.35f, 1.0f),
+		ColorRGBA(0.40f, 0.95f, 0.55f, 1.0f),
+		ColorRGBA(0.35f, 0.80f, 1.0f, 1.0f),
+		ColorRGBA(0.85f, 0.50f, 1.0f, 1.0f),
+		ColorRGBA(1.0f, 0.45f, 0.45f, 1.0f),
+		ColorRGBA(1.0f, 0.60f, 0.25f, 1.0f),
+		ColorRGBA(0.15f, 0.15f, 0.18f, 1.0f),
+	};
+
+	const ColorHSLA Current(*pColor, HasAlpha);
+	int Best = 0;
+	float BestDistance = 1000.0f;
+	for(int i = 0; i < (int)(sizeof(s_aPresets) / sizeof(s_aPresets[0])); i++)
+	{
+		const ColorRGBA Preset = Background ? s_aPresets[i].WithAlpha(0.75f) : s_aPresets[i];
+		const ColorHSLA Candidate = color_cast<ColorHSLA>(Preset);
+		const float Distance = absolute(Candidate.h - Current.h) + absolute(Candidate.s - Current.s) + absolute(Candidate.l - Current.l);
+		if(Distance < BestDistance)
+		{
+			BestDistance = Distance;
+			Best = i;
+		}
+	}
+
+	ColorRGBA Next = s_aPresets[(Best + 1) % (int)(sizeof(s_aPresets) / sizeof(s_aPresets[0]))];
+	if(Background)
+		Next = Next.WithAlpha(0.75f);
+	ColorHSLA NextHsla = color_cast<ColorHSLA>(Next);
+	if(HasAlpha)
+		NextHsla.a = Current.a;
+	*pColor = NextHsla.Pack(HasAlpha);
+}
 } // namespace
 
 void CLazyClient::OnConsoleInit()
@@ -194,6 +314,8 @@ void CLazyClient::OnConsoleInit()
 	Console()->Register("lc_invite_approve", "r[name]", CFGFLAG_CLIENT, ConInviteApprove, this, "Auto-invite this player when they whisper !invite");
 	Console()->Register("lc_invite_ask", "r[name]", CFGFLAG_CLIENT, ConInviteAsk, this, "Ask before inviting this player (show a chat notice)");
 	Console()->Register("lc_invite_deny", "r[name]", CFGFLAG_CLIENT, ConInviteDeny, this, "Ignore !invite whispers from this player");
+	Console()->Register("lc_hud_editor", "?i", CFGFLAG_CLIENT, ConHudEditor, this, "Open or close the HUD editor");
+	Console()->Register("lc_hud_reset", "", CFGFLAG_CLIENT, ConHudReset, this, "Reset the HUD editor layout to the defaults");
 }
 
 void CLazyClient::OnReset()
@@ -541,6 +663,9 @@ void CLazyClient::RenderSwapTimers()
 	if(NumRows == 0)
 		return;
 
+	if(m_aHudModules[HUD_MODULE_SWAP_TIMERS].m_Hidden)
+		return;
+
 	const CScreenRect OldScreen = Graphics()->GetScreen();
 	const float Width = 300.0f * Graphics()->ScreenAspect();
 	const float Height = 300.0f;
@@ -556,6 +681,9 @@ void CLazyClient::RenderSwapTimers()
 	const float BoxWidth = MaxNameWidth + SecondsWidth + 20.0f;
 	const float BoxHeight = (NumRows + 1) * LineHeight + 8.0f;
 	CUIRect Box = {6.0f, 34.0f, BoxWidth, BoxHeight};
+	Box.x += m_aHudModules[HUD_MODULE_SWAP_TIMERS].m_OffsetX;
+	Box.y += m_aHudModules[HUD_MODULE_SWAP_TIMERS].m_OffsetY;
+	m_aHudModuleRects[HUD_MODULE_SWAP_TIMERS] = Box;
 	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
 	Box.DrawOutline(ColorRGBA(0.85f, 0.65f, 0.30f, 0.40f));
 
@@ -2938,7 +3066,8 @@ void CLazyClient::RenderZeroGravityForcedStatus()
 	if(g_Config.m_LcZeroGravMode != 1 ||
 		Client()->LocalTime() >= m_ZeroGravForcedStatusUntil ||
 		Client()->State() != IClient::STATE_ONLINE ||
-		GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive())
+		GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive() ||
+		m_aHudModules[HUD_MODULE_ZERO_GRAV_STATUS].m_Hidden)
 		return;
 
 	const CScreenRect OldScreen = Graphics()->GetScreen();
@@ -2947,8 +3076,8 @@ void CLazyClient::RenderZeroGravityForcedStatus()
 	const float Width = 300.0f * Graphics()->ScreenAspect() / ScaleX;
 	const float Height = 300.0f / ScaleY;
 	Graphics()->MapScreenToSize(Width, Height);
-	const float OffsetX = g_Config.m_LcZeroGravOffsetX / ScaleX;
-	const float OffsetY = g_Config.m_LcZeroGravOffsetY / ScaleY;
+	const float OffsetX = g_Config.m_LcZeroGravOffsetX / ScaleX + m_aHudModules[HUD_MODULE_ZERO_GRAV_STATUS].m_OffsetX / ScaleX;
+	const float OffsetY = g_Config.m_LcZeroGravOffsetY / ScaleY + m_aHudModules[HUD_MODULE_ZERO_GRAV_STATUS].m_OffsetY / ScaleY;
 
 	const char *pStatus = m_ZeroGravForcedStatusOn ?
 		Localize("Zero gravity predictor ON") : Localize("Zero gravity predictor OFF");
@@ -2956,6 +3085,7 @@ void CLazyClient::RenderZeroGravityForcedStatus()
 	const float TextWidth = TextRender()->TextWidth(FontSize, pStatus);
 	const float BoxWidth = std::max(TextWidth + 14.0f, 120.0f);
 	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f + OffsetX, 32.0f / ScaleY + OffsetY, BoxWidth, 22.0f};
+	m_aHudModuleRects[HUD_MODULE_ZERO_GRAV_STATUS] = {Box.x * ScaleX, Box.y * ScaleY, Box.w * ScaleX, Box.h * ScaleY};
 	const ColorRGBA Background = m_ZeroGravForcedStatusOn ?
 		ColorRGBA(0.04f, 0.35f, 0.16f, 0.86f) : ColorRGBA(0.32f, 0.08f, 0.08f, 0.86f);
 	const ColorRGBA Outline = m_ZeroGravForcedStatusOn ?
@@ -2974,7 +3104,8 @@ void CLazyClient::RenderZeroGravityWarning()
 {
 	if(!g_Config.m_LcZeroGravPredict || !m_ZeroGravWarning ||
 		Client()->State() != IClient::STATE_ONLINE ||
-		GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive())
+		GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive() ||
+		m_aHudModules[HUD_MODULE_ZERO_GRAV_WARNING].m_Hidden)
 		return;
 
 	const CScreenRect OldScreen = Graphics()->GetScreen();
@@ -2983,8 +3114,8 @@ void CLazyClient::RenderZeroGravityWarning()
 	const float Width = 300.0f * Graphics()->ScreenAspect() / ScaleX;
 	const float Height = 300.0f / ScaleY;
 	Graphics()->MapScreenToSize(Width, Height);
-	const float OffsetX = g_Config.m_LcZeroGravOffsetX / ScaleX;
-	const float OffsetY = g_Config.m_LcZeroGravOffsetY / ScaleY;
+	const float OffsetX = g_Config.m_LcZeroGravOffsetX / ScaleX + m_aHudModules[HUD_MODULE_ZERO_GRAV_WARNING].m_OffsetX / ScaleX;
+	const float OffsetY = g_Config.m_LcZeroGravOffsetY / ScaleY + m_aHudModules[HUD_MODULE_ZERO_GRAV_WARNING].m_OffsetY / ScaleY;
 
 	char aCountdown[160];
 	const bool Freeview = GameClient()->m_Snap.m_SpecInfo.m_Active &&
@@ -3008,6 +3139,7 @@ void CLazyClient::RenderZeroGravityWarning()
 	const float CountdownWidth = TextRender()->TextWidth(CountdownSize, aCountdown);
 	const float BoxWidth = std::max(CountdownWidth + 14.0f, 96.0f);
 	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f + OffsetX, (StatusVisible ? 58.0f : 32.0f) / ScaleY + OffsetY, BoxWidth, 22.0f};
+	m_aHudModuleRects[HUD_MODULE_ZERO_GRAV_WARNING] = {Box.x * ScaleX, Box.y * ScaleY, Box.w * ScaleX, Box.h * ScaleY};
 	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcZeroGravBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
 	Box.DrawOutline(ColorRGBA(1.0f, 0.35f, 0.25f, 0.9f));
 
@@ -3197,14 +3329,17 @@ void CLazyClient::RenderTelemetry()
 	if(NumLines == 0)
 		return;
 
+	if(m_aHudModules[HUD_MODULE_TELEMETRY].m_Hidden)
+		return;
+
 	const CScreenRect OldScreen = Graphics()->GetScreen();
 	const float ScaleX = std::clamp(g_Config.m_LcTelemetryScaleX, 50, 300) / 100.0f;
 	const float ScaleY = std::clamp(g_Config.m_LcTelemetryScaleY, 50, 300) / 100.0f;
 	const float Width = 300.0f * Graphics()->ScreenAspect() / ScaleX;
 	const float Height = 300.0f / ScaleY;
 	Graphics()->MapScreenToSize(Width, Height);
-	const float OffsetX = g_Config.m_LcTelemetryOffsetX / ScaleX;
-	const float OffsetY = g_Config.m_LcTelemetryOffsetY / ScaleY;
+	const float OffsetX = g_Config.m_LcTelemetryOffsetX / ScaleX + m_aHudModules[HUD_MODULE_TELEMETRY].m_OffsetX / ScaleX;
+	const float OffsetY = g_Config.m_LcTelemetryOffsetY / ScaleY + m_aHudModules[HUD_MODULE_TELEMETRY].m_OffsetY / ScaleY;
 
 	const float FontSize = 9.5f;
 	const float LineHeight = 11.0f;
@@ -3215,6 +3350,7 @@ void CLazyClient::RenderTelemetry()
 	const float BoxWidth = MaxTextWidth + 12.0f;
 	const float BoxHeight = NumLines * LineHeight + 8.0f;
 	CUIRect Box = {Width - BoxWidth - 6.0f / ScaleX + OffsetX, 34.0f / ScaleY + OffsetY, BoxWidth, BoxHeight};
+	m_aHudModuleRects[HUD_MODULE_TELEMETRY] = {Box.x * ScaleX, Box.y * ScaleY, Box.w * ScaleX, Box.h * ScaleY};
 	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
 	Box.DrawOutline(ColorRGBA(0.45f, 0.65f, 0.85f, 0.35f));
 
@@ -3230,12 +3366,437 @@ void CLazyClient::RenderTelemetry()
 	Graphics()->MapScreen(OldScreen);
 }
 
+void CLazyClient::LoadHudLayout()
+{
+	for(auto &Module : m_aHudModules)
+		Module = SHudModuleState();
+
+	const char *pEntry = g_Config.m_LcHudLayout;
+	while(pEntry != nullptr && *pEntry != '\0')
+	{
+		int ModuleId = -1;
+		int OffsetX = 0;
+		int OffsetY = 0;
+		int Hidden = 0;
+		if(sscanf(pEntry, "%d:%d:%d:%d", &ModuleId, &OffsetX, &OffsetY, &Hidden) == 4 &&
+			ModuleId >= 0 && ModuleId < HUD_MODULE_COUNT)
+		{
+			m_aHudModules[ModuleId].m_OffsetX = std::clamp(OffsetX, -400, 400);
+			m_aHudModules[ModuleId].m_OffsetY = std::clamp(OffsetY, -300, 300);
+			m_aHudModules[ModuleId].m_Hidden = Hidden != 0;
+		}
+		pEntry = str_find(pEntry, ";");
+		if(pEntry != nullptr)
+			pEntry++;
+	}
+	m_HudLayoutLoaded = true;
+}
+
+void CLazyClient::SaveHudLayout()
+{
+	char aBuffer[1024] = "";
+	for(int i = 0; i < HUD_MODULE_COUNT; i++)
+	{
+		const SHudModuleState &Module = m_aHudModules[i];
+		if(Module.m_OffsetX == 0 && Module.m_OffsetY == 0 && !Module.m_Hidden)
+			continue;
+		char aEntry[64];
+		str_format(aEntry, sizeof(aEntry), "%d:%d:%d:%d;", i, Module.m_OffsetX, Module.m_OffsetY, Module.m_Hidden ? 1 : 0);
+		str_append(aBuffer, aEntry, sizeof(aBuffer));
+	}
+	str_copy(g_Config.m_LcHudLayout, aBuffer, sizeof(g_Config.m_LcHudLayout));
+	ConfigManager()->Save();
+}
+
+void CLazyClient::ResetHudLayout()
+{
+	for(auto &Module : m_aHudModules)
+		Module = SHudModuleState();
+	g_Config.m_LcHudLayout[0] = '\0';
+	m_HudLayoutLoaded = true;
+	if(m_HudEditorActive)
+		memcpy(m_aHudEditorBackup, m_aHudModules, sizeof(m_aHudModules));
+	ConfigManager()->Save();
+}
+
+void CLazyClient::OpenHudEditor()
+{
+	if(!m_HudLayoutLoaded)
+		LoadHudLayout();
+	memcpy(m_aHudEditorBackup, m_aHudModules, sizeof(m_aHudModules));
+	unsigned int *const apColors[6] = {
+		&g_Config.m_LcTelemetryTextColor,
+		&g_Config.m_LcTelemetryBgColor,
+		&g_Config.m_LcZeroGravTextColor,
+		&g_Config.m_LcZeroGravBgColor,
+		&g_Config.m_TcStatusBarTextColor,
+		&g_Config.m_TcStatusBarColor,
+	};
+	for(int i = 0; i < 6; i++)
+		m_aHudEditorColorBackup[i] = *apColors[i];
+	m_HudEditorActive = true;
+	m_HudEditorDragging = -1;
+	m_HudEditorSettings = -1;
+	m_HudEditorConfirm = false;
+	if(Client()->State() == IClient::STATE_ONLINE || Client()->State() == IClient::STATE_DEMOPLAYBACK)
+		GameClient()->m_Menus.SetActive(false);
+}
+
+void CLazyClient::CloseHudEditor(bool Save)
+{
+	if(!m_HudEditorActive)
+		return;
+	if(Save)
+		SaveHudLayout();
+	else
+	{
+		memcpy(m_aHudModules, m_aHudEditorBackup, sizeof(m_aHudModules));
+		unsigned int *const apColors[6] = {
+			&g_Config.m_LcTelemetryTextColor,
+			&g_Config.m_LcTelemetryBgColor,
+			&g_Config.m_LcZeroGravTextColor,
+			&g_Config.m_LcZeroGravBgColor,
+			&g_Config.m_TcStatusBarTextColor,
+			&g_Config.m_TcStatusBarColor,
+		};
+		for(int i = 0; i < 6; i++)
+			*apColors[i] = m_aHudEditorColorBackup[i];
+	}
+	m_HudEditorActive = false;
+	m_HudEditorDragging = -1;
+	m_HudEditorSettings = -1;
+	m_HudEditorConfirm = false;
+}
+
+void CLazyClient::ConHudEditor(IConsole::IResult *pResult, void *pUserData)
+{
+	CLazyClient *pThis = static_cast<CLazyClient *>(pUserData);
+	if(pResult->NumArguments() > 0 && pResult->GetInteger(0) == 0)
+		pThis->CloseHudEditor(false);
+	else if(pThis->m_HudEditorActive)
+		pThis->CloseHudEditor(false);
+	else
+		pThis->OpenHudEditor();
+}
+
+void CLazyClient::ConHudReset(IConsole::IResult *pResult, void *pUserData)
+{
+	CLazyClient *pThis = static_cast<CLazyClient *>(pUserData);
+	pThis->ResetHudLayout();
+}
+
+bool CLazyClient::HudModuleHidden(int ModuleId) const
+{
+	if(ModuleId < 0 || ModuleId >= HUD_MODULE_COUNT)
+		return false;
+	return m_aHudModules[ModuleId].m_Hidden;
+}
+
+bool CLazyClient::BeginHudModule(int ModuleId)
+{
+	if(ModuleId < 0 || ModuleId >= HUD_MODULE_COUNT)
+		return false;
+	if(!m_HudLayoutLoaded)
+		LoadHudLayout();
+	if(m_aHudModules[ModuleId].m_Hidden)
+		return false;
+
+	const CScreenRect Screen = Graphics()->GetScreen();
+	if(m_HudScreenStackDepth < HUD_SCREEN_STACK_SIZE)
+	{
+		SHudSavedScreen &Saved = m_aHudScreenStack[m_HudScreenStackDepth++];
+		Saved.m_TopLeft = Screen.m_TopLeft;
+		Saved.m_BottomRight = Screen.m_BottomRight;
+	}
+
+	// Offsets are stored in standard 300-unit HUD space. Scale them to the
+	// current mapping so scaled overlays move by the same visual distance.
+	const float Factor = Screen.Height() / 300.0f;
+	const SHudModuleState &Module = m_aHudModules[ModuleId];
+	Graphics()->MapScreen(Screen.Move(vec2(Module.m_OffsetX * Factor, Module.m_OffsetY * Factor)));
+	return true;
+}
+
+void CLazyClient::EndHudModule()
+{
+	if(m_HudScreenStackDepth > 0)
+	{
+		const SHudSavedScreen &Saved = m_aHudScreenStack[--m_HudScreenStackDepth];
+		Graphics()->MapScreen(CScreenRect(Saved.m_TopLeft, Saved.m_BottomRight));
+	}
+}
+
+void CLazyClient::RenderHudEditor()
+{
+	if(!m_HudEditorActive)
+		return;
+	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
+		return;
+	if(GameClient()->m_Menus.IsActive() || GameClient()->m_Scoreboard.IsActive())
+		return;
+
+	if(!m_HudLayoutLoaded)
+		LoadHudLayout();
+
+	const CScreenRect OldScreen = Graphics()->GetScreen();
+	Ui()->MapScreen();
+
+	const float UiWidth = Ui()->Screen()->w;
+	const float UiHeight = Ui()->Screen()->h;
+	const float HudWidth = 300.0f * Graphics()->ScreenAspect();
+	const float HudHeight = 300.0f;
+	const float Scale = UiHeight / HudHeight;
+	const vec2 MouseHud = Ui()->MousePos() / Scale;
+
+	auto ModuleRect = [&](int ModuleId) {
+		const CUIRect &StoredRect = m_aHudModuleRects[ModuleId];
+		const CUIRect HudRect = StoredRect.w > 0.0f && StoredRect.h > 0.0f ? StoredRect :
+			HudModuleRect(m_aHudModules[ModuleId], s_aHudModuleDefs[ModuleId], HudWidth, HudHeight);
+		CUIRect UiRect = {HudRect.x * Scale, HudRect.y * Scale, HudRect.w * Scale, HudRect.h * Scale};
+		return UiRect;
+	};
+
+	int Hovered = -1;
+	if(m_HudEditorSettings < 0 && !m_HudEditorConfirm)
+	{
+		for(int i = HUD_MODULE_COUNT - 1; i >= 0; i--)
+		{
+			CUIRect Rect = ModuleRect(i);
+			if(Ui()->MouseInside(&Rect))
+			{
+				Hovered = i;
+				break;
+			}
+		}
+	}
+
+	if(m_HudEditorSettings < 0 && !m_HudEditorConfirm)
+	{
+		if(m_HudEditorDragging >= 0)
+		{
+			if(Ui()->MouseButton(0))
+			{
+				const vec2 Delta = MouseHud - m_HudEditorDragLast;
+				m_aHudModules[m_HudEditorDragging].m_OffsetX = std::clamp(m_aHudModules[m_HudEditorDragging].m_OffsetX + round_to_int(Delta.x), -400, 400);
+				m_aHudModules[m_HudEditorDragging].m_OffsetY = std::clamp(m_aHudModules[m_HudEditorDragging].m_OffsetY + round_to_int(Delta.y), -300, 300);
+				m_HudEditorDragLast = MouseHud;
+			}
+			else
+			{
+				m_HudEditorDragging = -1;
+			}
+		}
+		else if(Hovered >= 0 && Ui()->MouseButtonClicked(0))
+		{
+			if(Input()->ShiftIsPressed())
+				m_aHudModules[Hovered].m_Hidden = !m_aHudModules[Hovered].m_Hidden;
+			else
+			{
+				m_HudEditorDragging = Hovered;
+				m_HudEditorDragLast = MouseHud;
+			}
+		}
+		else if(Hovered >= 0 && Ui()->MouseButtonClicked(1))
+		{
+			m_HudEditorSettings = Hovered;
+			m_HudEditorConfirm = false;
+		}
+		else if(Hovered < 0 && Ui()->MouseButtonClicked(1))
+		{
+			m_HudEditorConfirm = true;
+			m_HudEditorSettings = -1;
+		}
+	}
+
+	CUIRect Overlay = {0.0f, 0.0f, UiWidth, UiHeight};
+	Overlay.Draw(ColorRGBA(0.02f, 0.03f, 0.05f, 0.22f), IGraphics::CORNER_NONE, 0.0f);
+
+	for(int i = 0; i < HUD_MODULE_COUNT; i++)
+	{
+		CUIRect Rect = ModuleRect(i);
+		const bool Hidden = m_aHudModules[i].m_Hidden;
+		const bool Highlight = i == Hovered || i == m_HudEditorSettings;
+		const ColorRGBA Fill = Hidden ?
+			ColorRGBA(0.55f, 0.12f, 0.12f, Highlight ? 0.36f : 0.20f) :
+			ColorRGBA(0.16f, 0.48f, 0.90f, Highlight ? 0.36f : 0.18f);
+		const ColorRGBA Outline = Hidden ? ColorRGBA(1.0f, 0.38f, 0.38f, 0.95f) : ColorRGBA(0.48f, 0.80f, 1.0f, 0.95f);
+		Rect.Draw(Fill, IGraphics::CORNER_ALL, 3.0f);
+		Rect.DrawOutline(Outline);
+
+		CUIRect Label = Rect;
+		Label.h = std::min(Label.h, 26.0f);
+		Label.Draw(ColorRGBA(0.02f, 0.03f, 0.05f, 0.78f), IGraphics::CORNER_T, 3.0f);
+		char aLabel[128];
+		if(Hidden)
+			str_format(aLabel, sizeof(aLabel), "%s (hidden)", Localize(s_aHudModuleDefs[i].m_pName));
+		else
+			str_copy(aLabel, Localize(s_aHudModuleDefs[i].m_pName));
+		Ui()->DoLabel(&Label, aLabel, 8.0f, TEXTALIGN_ML);
+	}
+
+	// Header/help bar.
+	CUIRect HelpBar = {UiWidth / 2.0f - 360.0f, 8.0f, 720.0f, 38.0f};
+	HelpBar.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.90f), IGraphics::CORNER_ALL, 6.0f);
+	HelpBar.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.75f));
+	Ui()->DoLabel(&HelpBar, Localize("HUD Editor  —  drag to move  •  right-click a module for settings  •  Shift+left-click to hide/show  •  right-click empty space to save/discard"), 8.5f, TEXTALIGN_MC);
+
+	static CButtonContainer s_SaveAndCloseButton;
+	CUIRect CloseButton = {UiWidth - 190.0f, 10.0f, 180.0f, 24.0f};
+	if(GameClient()->m_Menus.DoButton_Menu(&s_SaveAndCloseButton, Localize("Save and close"), 0, &CloseButton))
+		CloseHudEditor(true);
+
+	if(m_HudEditorConfirm)
+	{
+		CUIRect Panel = {UiWidth / 2.0f - 220.0f, UiHeight / 2.0f - 92.0f, 440.0f, 184.0f};
+		Panel.Draw(ColorRGBA(0.04f, 0.05f, 0.08f, 0.97f), IGraphics::CORNER_ALL, 8.0f);
+		Panel.DrawOutline(ColorRGBA(0.55f, 0.78f, 1.0f, 0.9f));
+		CUIRect Inner = Panel;
+		Inner.Margin(14.0f, &Inner);
+
+		CUIRect Title;
+		Inner.HSplitTop(28.0f, &Title, &Inner);
+		Ui()->DoLabel(&Title, Localize("Save the HUD layout?"), 14.0f, TEXTALIGN_MC);
+		Inner.HSplitTop(8.0f, nullptr, &Inner);
+		CUIRect Hint;
+		Inner.HSplitTop(34.0f, &Hint, &Inner);
+		Ui()->DoLabel(&Hint, Localize("Save keeps your changes. Discard restores the layout from when you opened the editor."), 9.0f, TEXTALIGN_MC);
+
+		CUIRect Buttons;
+		Inner.HSplitBottom(30.0f, &Inner, &Buttons);
+		Buttons.VSplitMid(&Buttons, nullptr, 8.0f);
+		CUIRect SaveButton, DiscardButton;
+		Buttons.VSplitMid(&SaveButton, &DiscardButton, 8.0f);
+
+		static CButtonContainer s_SaveButton, s_DiscardButton, s_KeepEditingButton;
+		if(GameClient()->m_Menus.DoButton_Menu(&s_SaveButton, Localize("Save"), 0, &SaveButton))
+			CloseHudEditor(true);
+		if(GameClient()->m_Menus.DoButton_Menu(&s_DiscardButton, Localize("Discard"), 0, &DiscardButton))
+			CloseHudEditor(false);
+
+		CUIRect Keep;
+		Inner.HSplitBottom(30.0f, &Inner, &Keep);
+		Keep = CUIRect{Panel.x + Panel.w / 2.0f - 90.0f, Panel.y + Panel.h - 72.0f, 180.0f, 24.0f};
+		if(GameClient()->m_Menus.DoButton_Menu(&s_KeepEditingButton, Localize("Keep editing"), 0, &Keep))
+			m_HudEditorConfirm = false;
+	}
+
+	if(m_HudEditorSettings >= 0 && m_HudEditorSettings < HUD_MODULE_COUNT)
+	{
+		const int ModuleId = m_HudEditorSettings;
+		SHudModuleState &Module = m_aHudModules[ModuleId];
+
+		CUIRect Panel = {UiWidth / 2.0f - 220.0f, UiHeight / 2.0f - 200.0f, 440.0f, 400.0f};
+		Panel.Draw(ColorRGBA(0.04f, 0.05f, 0.08f, 0.97f), IGraphics::CORNER_ALL, 8.0f);
+		Panel.DrawOutline(ColorRGBA(0.55f, 0.78f, 1.0f, 0.9f));
+		CUIRect Inner = Panel;
+		Inner.Margin(14.0f, &Inner);
+
+		CUIRect Title, Row;
+		Inner.HSplitTop(28.0f, &Title, &Inner);
+		char aTitle[160];
+		str_format(aTitle, sizeof(aTitle), "%s — %s", Localize("Module settings"), Localize(s_aHudModuleDefs[ModuleId].m_pName));
+		Ui()->DoLabel(&Title, aTitle, 13.0f, TEXTALIGN_ML);
+		Inner.HSplitTop(6.0f, nullptr, &Inner);
+
+		Inner.HSplitTop(24.0f, &Row, &Inner);
+		Ui()->DoScrollbarOption(&Module.m_OffsetX, &Module.m_OffsetX, &Row, Localize("Horizontal offset"), -400, 400, &CUi::ms_LinearScrollbarScale, 0, " px");
+		Inner.HSplitTop(6.0f, nullptr, &Inner);
+		Inner.HSplitTop(24.0f, &Row, &Inner);
+		Ui()->DoScrollbarOption(&Module.m_OffsetY, &Module.m_OffsetY, &Row, Localize("Vertical offset"), -300, 300, &CUi::ms_LinearScrollbarScale, 0, " px");
+
+		Inner.HSplitTop(8.0f, nullptr, &Inner);
+		Inner.HSplitTop(24.0f, &Row, &Inner);
+		Row.VSplitMid(&Row, nullptr, 8.0f);
+		CUIRect ResetButton, HideButton;
+		Row.VSplitMid(&ResetButton, &HideButton, 8.0f);
+		static CButtonContainer s_ResetPositionButton;
+		static CButtonContainer s_HideModuleButton;
+		if(GameClient()->m_Menus.DoButton_Menu(&s_ResetPositionButton, Localize("Reset position"), 0, &ResetButton))
+		{
+			Module.m_OffsetX = 0;
+			Module.m_OffsetY = 0;
+		}
+		if(GameClient()->m_Menus.DoButton_Menu(&s_HideModuleButton, Module.m_Hidden ? Localize("Show module") : Localize("Hide module"), 0, &HideButton))
+			Module.m_Hidden = !Module.m_Hidden;
+
+		unsigned int *pTextColor = nullptr;
+		unsigned int *pBackgroundColor = nullptr;
+		bool TextAlpha = false;
+		bool BackgroundAlpha = false;
+		switch(ModuleId)
+		{
+		case HUD_MODULE_TELEMETRY:
+			pTextColor = &g_Config.m_LcTelemetryTextColor;
+			pBackgroundColor = &g_Config.m_LcTelemetryBgColor;
+			BackgroundAlpha = true;
+			break;
+		case HUD_MODULE_ZERO_GRAV_WARNING:
+			pTextColor = &g_Config.m_LcZeroGravTextColor;
+			pBackgroundColor = &g_Config.m_LcZeroGravBgColor;
+			BackgroundAlpha = true;
+			break;
+		case HUD_MODULE_STATUS_BAR:
+			pTextColor = &g_Config.m_TcStatusBarTextColor;
+			pBackgroundColor = &g_Config.m_TcStatusBarColor;
+			break;
+		default:
+			break;
+		}
+
+		if(pTextColor != nullptr)
+		{
+			Inner.HSplitTop(12.0f, nullptr, &Inner);
+			CUIRect ColorsTitle;
+			Inner.HSplitTop(20.0f, &ColorsTitle, &Inner);
+			Ui()->DoLabel(&ColorsTitle, Localize("Colors"), 10.0f, TEXTALIGN_ML);
+
+			static CButtonContainer s_TextColorButton;
+			Inner.HSplitTop(4.0f, nullptr, &Inner);
+			Inner.HSplitTop(24.0f, &Row, &Inner);
+			if(GameClient()->m_Menus.DoButton_Menu(&s_TextColorButton, Localize("Cycle text color"), 0, &Row))
+				CycleHudColor(pTextColor, TextAlpha, false);
+
+			if(pBackgroundColor != nullptr)
+			{
+				static CButtonContainer s_BackgroundColorButton;
+				Inner.HSplitTop(6.0f, nullptr, &Inner);
+				Inner.HSplitTop(24.0f, &Row, &Inner);
+				if(GameClient()->m_Menus.DoButton_Menu(&s_BackgroundColorButton, Localize("Cycle background color"), 0, &Row))
+					CycleHudColor(pBackgroundColor, BackgroundAlpha, true);
+			}
+		}
+		else
+		{
+			Inner.HSplitTop(12.0f, nullptr, &Inner);
+			CUIRect Hint;
+			Inner.HSplitTop(30.0f, &Hint, &Inner);
+			Ui()->DoLabel(&Hint, Localize("This HUD group uses DDNet's fixed colors. Move or hide it here."), 9.0f, TEXTALIGN_ML);
+		}
+
+		static CButtonContainer s_ResetModuleButton, s_SettingsCloseButton;
+		CUIRect Bottom;
+		Inner.HSplitBottom(28.0f, &Inner, &Bottom);
+		Bottom.VSplitMid(&Bottom, nullptr, 8.0f);
+		CUIRect ResetModule, CloseSettings;
+		Bottom.VSplitMid(&ResetModule, &CloseSettings, 8.0f);
+		if(GameClient()->m_Menus.DoButton_Menu(&s_ResetModuleButton, Localize("Reset module"), 0, &ResetModule))
+		{
+			Module = SHudModuleState();
+		}
+		if(GameClient()->m_Menus.DoButton_Menu(&s_SettingsCloseButton, Localize("Close"), 0, &CloseSettings))
+			m_HudEditorSettings = -1;
+	}
+
+	Graphics()->MapScreen(OldScreen);
+}
+
 void CLazyClient::OnRender()
 {
 	RenderZeroGravityForcedStatus();
 	RenderZeroGravityWarning();
 	RenderTelemetry();
 	RenderSwapTimers();
+	RenderHudEditor();
 }
 
 void CLazyClient::OnUpdate()

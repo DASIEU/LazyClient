@@ -1996,6 +1996,15 @@ void CHud::OnRender()
 	m_Height = 300.0f;
 	Graphics()->MapScreenToSize(m_Width, m_Height);
 
+	CLazyClient &Lazy = GameClient()->m_Lazy;
+	auto RenderHudModule = [&](int ModuleId, auto &&Render) {
+		if(Lazy.BeginHudModule(ModuleId))
+		{
+			Render();
+			Lazy.EndHudModule();
+		}
+	};
+
 #if defined(CONF_VIDEORECORDER)
 	if((IVideo::Current() && g_Config.m_ClVideoShowhud) || (!IVideo::Current() && g_Config.m_ClShowhud))
 #else
@@ -2006,22 +2015,22 @@ void CHud::OnRender()
 		{
 			if(g_Config.m_ClShowhudHealthAmmo)
 			{
-				RenderAmmoHealthAndArmor(GameClient()->m_Snap.m_pLocalCharacter);
+				RenderHudModule(HUD_MODULE_HEALTH_AMMO, [&] { RenderAmmoHealthAndArmor(GameClient()->m_Snap.m_pLocalCharacter); });
 			}
 			if(GameClient()->m_Snap.m_aCharacters[GameClient()->m_Snap.m_LocalClientId].m_HasExtendedData && g_Config.m_ClShowhudDDRace && GameClient()->m_GameInfo.m_HudDDRace)
 			{
-				RenderPlayerState(GameClient()->m_Snap.m_LocalClientId);
+				RenderHudModule(HUD_MODULE_PLAYER_STATE, [&] { RenderPlayerState(GameClient()->m_Snap.m_LocalClientId); });
 			}
-			RenderSpectatorCount();
-			RenderMovementInformation();
-			RenderDDRaceEffects();
+			RenderHudModule(HUD_MODULE_SPECTATOR_COUNT, [&] { RenderSpectatorCount(); });
+			RenderHudModule(HUD_MODULE_MOVEMENT_INFO, [&] { RenderMovementInformation(); });
+			RenderHudModule(HUD_MODULE_DDRACE_EFFECTS, [&] { RenderDDRaceEffects(); });
 		}
 		else if(GameClient()->m_Snap.m_SpecInfo.m_Active)
 		{
 			int SpectatorId = GameClient()->m_Snap.m_SpecInfo.m_SpectatorId;
 			if(SpectatorId != SPEC_FREEVIEW && g_Config.m_ClShowhudHealthAmmo)
 			{
-				RenderAmmoHealthAndArmor(&GameClient()->m_Snap.m_aCharacters[SpectatorId].m_Cur);
+				RenderHudModule(HUD_MODULE_HEALTH_AMMO, [&] { RenderAmmoHealthAndArmor(&GameClient()->m_Snap.m_aCharacters[SpectatorId].m_Cur); });
 			}
 			if(SpectatorId != SPEC_FREEVIEW &&
 				GameClient()->m_Snap.m_aCharacters[SpectatorId].m_HasExtendedData &&
@@ -2029,29 +2038,29 @@ void CHud::OnRender()
 				(!GameClient()->m_MultiViewActivated || GameClient()->m_MultiViewShowHud) &&
 				GameClient()->m_GameInfo.m_HudDDRace)
 			{
-				RenderPlayerState(SpectatorId);
+				RenderHudModule(HUD_MODULE_PLAYER_STATE, [&] { RenderPlayerState(SpectatorId); });
 			}
-			RenderMovementInformation();
-			RenderSpectatorHud();
+			RenderHudModule(HUD_MODULE_MOVEMENT_INFO, [&] { RenderMovementInformation(); });
+			RenderHudModule(HUD_MODULE_SPECTATOR_HUD, [&] { RenderSpectatorHud(); });
 		}
 
 		if(g_Config.m_ClShowhudTimer)
-			RenderGameTimer();
-		RenderPauseNotification();
-		RenderSuddenDeath();
+			RenderHudModule(HUD_MODULE_GAME_TIMER, [&] { RenderGameTimer(); });
+		RenderHudModule(HUD_MODULE_PAUSE_NOTIFICATION, [&] { RenderPauseNotification(); });
+		RenderHudModule(HUD_MODULE_SUDDEN_DEATH, [&] { RenderSuddenDeath(); });
 		if(g_Config.m_ClShowhudScore)
-			RenderScoreHud();
-		RenderDummyActions();
-		RenderWarmupTimer();
-		RenderTextInfo();
-		GameClient()->m_TClient.RenderCenterLines();
-		RenderLocalTime((m_Width / 7) * 3);
+			RenderHudModule(HUD_MODULE_SCORE_HUD, [&] { RenderScoreHud(); });
+		RenderHudModule(HUD_MODULE_DUMMY_ACTIONS, [&] { RenderDummyActions(); });
+		RenderHudModule(HUD_MODULE_WARMUP_TIMER, [&] { RenderWarmupTimer(); });
+		RenderHudModule(HUD_MODULE_TEXT_INFO, [&] { RenderTextInfo(); });
+		RenderHudModule(HUD_MODULE_CENTER_LINES, [&] { GameClient()->m_TClient.RenderCenterLines(); });
+		RenderHudModule(HUD_MODULE_LOCAL_TIME, [&] { RenderLocalTime((m_Width / 7) * 3); });
 		if(Client()->State() != IClient::STATE_DEMOPLAYBACK)
-			RenderConnectionWarning();
-		RenderTeambalanceWarning();
-		GameClient()->m_Voting.Render();
+			RenderHudModule(HUD_MODULE_CONNECTION_WARNING, [&] { RenderConnectionWarning(); });
+		RenderHudModule(HUD_MODULE_TEAM_BALANCE, [&] { RenderTeambalanceWarning(); });
+		RenderHudModule(HUD_MODULE_VOTING, [&] { GameClient()->m_Voting.Render(); });
 		if(g_Config.m_ClShowRecord)
-			RenderRecord();
+			RenderHudModule(HUD_MODULE_RECORD, [&] { RenderRecord(); });
 	}
 	RenderCursor();
 }
