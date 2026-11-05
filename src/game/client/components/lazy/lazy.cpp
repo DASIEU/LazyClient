@@ -266,42 +266,6 @@ CUIRect HudModuleRect(const CLazyClient::SHudModuleState &State, const SHudModul
 	return Rect;
 }
 
-void CycleHudColor(unsigned int *pColor, bool HasAlpha, bool Background)
-{
-	static const ColorRGBA s_aPresets[] = {
-		ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f),
-		ColorRGBA(0.95f, 0.85f, 0.35f, 1.0f),
-		ColorRGBA(0.40f, 0.95f, 0.55f, 1.0f),
-		ColorRGBA(0.35f, 0.80f, 1.0f, 1.0f),
-		ColorRGBA(0.85f, 0.50f, 1.0f, 1.0f),
-		ColorRGBA(1.0f, 0.45f, 0.45f, 1.0f),
-		ColorRGBA(1.0f, 0.60f, 0.25f, 1.0f),
-		ColorRGBA(0.15f, 0.15f, 0.18f, 1.0f),
-	};
-
-	const ColorHSLA Current(*pColor, HasAlpha);
-	int Best = 0;
-	float BestDistance = 1000.0f;
-	for(int i = 0; i < (int)(sizeof(s_aPresets) / sizeof(s_aPresets[0])); i++)
-	{
-		const ColorRGBA Preset = Background ? s_aPresets[i].WithAlpha(0.75f) : s_aPresets[i];
-		const ColorHSLA Candidate = color_cast<ColorHSLA>(Preset);
-		const float Distance = absolute(Candidate.h - Current.h) + absolute(Candidate.s - Current.s) + absolute(Candidate.l - Current.l);
-		if(Distance < BestDistance)
-		{
-			BestDistance = Distance;
-			Best = i;
-		}
-	}
-
-	ColorRGBA Next = s_aPresets[(Best + 1) % (int)(sizeof(s_aPresets) / sizeof(s_aPresets[0]))];
-	if(Background)
-		Next = Next.WithAlpha(0.75f);
-	ColorHSLA NextHsla = color_cast<ColorHSLA>(Next);
-	if(HasAlpha)
-		NextHsla.a = Current.a;
-	*pColor = NextHsla.Pack(HasAlpha);
-}
 } // namespace
 
 void CLazyClient::OnConsoleInit()
@@ -3443,6 +3407,7 @@ void CLazyClient::OpenHudEditor()
 	// The editor owns the cursor, so release it from the game's relative mouse
 	// mode and keep the menu from fighting the editor for input.
 	Input()->MouseModeAbsolute();
+	Ui()->ClosePopupMenus();
 	GameClient()->m_Menus.SetActive(false);
 }
 
@@ -3477,6 +3442,7 @@ void CLazyClient::CloseHudEditor(bool Save)
 		GameClient()->m_Menus.SetActive(true);
 	m_HudEditorMenuWasActive = false;
 
+	Ui()->ClosePopupMenus();
 	if(!GameClient()->m_GameConsole.IsActive())
 		Input()->MouseModeRelative();
 }
@@ -3524,9 +3490,11 @@ bool CLazyClient::BeginHudModule(int ModuleId)
 
 	// Offsets are stored in standard 300-unit HUD space. Scale them to the
 	// current mapping so scaled overlays move by the same visual distance.
+	// Moving the screen rect in the opposite direction moves the rendered HUD
+	// element with the mouse (positive editor offsets = right/down).
 	const float Factor = Screen.Height() / 300.0f;
 	const SHudModuleState &Module = m_aHudModules[ModuleId];
-	Graphics()->MapScreen(Screen.Move(vec2(Module.m_OffsetX * Factor, Module.m_OffsetY * Factor)));
+	Graphics()->MapScreen(Screen.Move(vec2(-Module.m_OffsetX * Factor, -Module.m_OffsetY * Factor)));
 	return true;
 }
 
@@ -3676,6 +3644,14 @@ void CLazyClient::RenderHudEditor()
 	if(GameClient()->m_Menus.DoButton_Menu(&s_SaveAndCloseButton, Localize("Save and close"), 0, &CloseButton))
 		CloseHudEditor(true);
 
+	static CButtonContainer s_ResetLayoutButton;
+	CUIRect ResetLayoutButton = {UiWidth - 190.0f, 40.0f, 180.0f, 22.0f};
+	if(GameClient()->m_Menus.DoButton_Menu(&s_ResetLayoutButton, Localize("Reset layout"), 0, &ResetLayoutButton))
+	{
+		for(auto &Module : m_aHudModules)
+			Module = SHudModuleState();
+	}
+
 	if(m_HudEditorConfirm)
 	{
 		CUIRect Panel = {UiWidth / 2.0f - 220.0f, UiHeight / 2.0f - 92.0f, 440.0f, 184.0f};
@@ -3754,21 +3730,30 @@ void CLazyClient::RenderHudEditor()
 		unsigned int *pBackgroundColor = nullptr;
 		bool TextAlpha = false;
 		bool BackgroundAlpha = false;
+		ColorRGBA TextDefault(1.0f, 1.0f, 1.0f, 1.0f);
+		ColorRGBA BackgroundDefault(0.0f, 0.0f, 0.0f, 1.0f);
 		switch(ModuleId)
 		{
 		case HUD_MODULE_TELEMETRY:
 			pTextColor = &g_Config.m_LcTelemetryTextColor;
 			pBackgroundColor = &g_Config.m_LcTelemetryBgColor;
+			TextDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcTelemetryTextColor, false));
+			BackgroundDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcTelemetryBgColor, true));
 			BackgroundAlpha = true;
 			break;
 		case HUD_MODULE_ZERO_GRAV_WARNING:
 			pTextColor = &g_Config.m_LcZeroGravTextColor;
 			pBackgroundColor = &g_Config.m_LcZeroGravBgColor;
+			TextDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcZeroGravTextColor, false));
+			BackgroundDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcZeroGravBgColor, true));
 			BackgroundAlpha = true;
 			break;
 		case HUD_MODULE_STATUS_BAR:
 			pTextColor = &g_Config.m_TcStatusBarTextColor;
 			pBackgroundColor = &g_Config.m_TcStatusBarColor;
+			// Matches the reset defaults used on the TClient status bar page.
+			TextDefault = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
+			BackgroundDefault = ColorRGBA(0.0f, 0.0f, 0.0f, 1.0f);
 			break;
 		default:
 			break;
@@ -3781,20 +3766,12 @@ void CLazyClient::RenderHudEditor()
 			Inner.HSplitTop(20.0f, &ColorsTitle, &Inner);
 			Ui()->DoLabel(&ColorsTitle, Localize("Colors"), 10.0f, TEXTALIGN_ML);
 
-			static CButtonContainer s_TextColorButton;
-			Inner.HSplitTop(4.0f, nullptr, &Inner);
-			Inner.HSplitTop(24.0f, &Row, &Inner);
-			if(GameClient()->m_Menus.DoButton_Menu(&s_TextColorButton, Localize("Cycle text color"), 0, &Row))
-				CycleHudColor(pTextColor, TextAlpha, false);
-
+			static CButtonContainer s_TextColorResetButton;
+			static CButtonContainer s_BackgroundColorResetButton;
+			Inner.HSplitTop(2.0f, nullptr, &Inner);
+			GameClient()->m_Menus.DoLine_ColorPicker(&s_TextColorResetButton, 22.0f, 9.0f, 6.0f, &Inner, Localize("Text color"), pTextColor, TextDefault, false, nullptr, TextAlpha);
 			if(pBackgroundColor != nullptr)
-			{
-				static CButtonContainer s_BackgroundColorButton;
-				Inner.HSplitTop(6.0f, nullptr, &Inner);
-				Inner.HSplitTop(24.0f, &Row, &Inner);
-				if(GameClient()->m_Menus.DoButton_Menu(&s_BackgroundColorButton, Localize("Cycle background color"), 0, &Row))
-					CycleHudColor(pBackgroundColor, BackgroundAlpha, true);
-			}
+				GameClient()->m_Menus.DoLine_ColorPicker(&s_BackgroundColorResetButton, 22.0f, 9.0f, 6.0f, &Inner, Localize("Background color"), pBackgroundColor, BackgroundDefault, false, nullptr, BackgroundAlpha);
 		}
 		else
 		{
@@ -3818,6 +3795,7 @@ void CLazyClient::RenderHudEditor()
 			m_HudEditorSettings = -1;
 	}
 
+	Ui()->RenderPopupMenus();
 	Ui()->FinishCheck();
 
 	Graphics()->MapScreen(OldScreen);
