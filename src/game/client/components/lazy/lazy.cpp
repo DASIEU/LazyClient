@@ -649,11 +649,10 @@ void CLazyClient::RenderSwapTimers()
 	Box.y += m_aHudModules[HUD_MODULE_SWAP_TIMERS].m_OffsetY;
 	m_aHudModuleRects[HUD_MODULE_SWAP_TIMERS] = Box;
 	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
-	Box.DrawOutline(ColorRGBA(0.85f, 0.65f, 0.30f, 0.40f));
 
 	TextRender()->TextColor(ColorRGBA(1.0f, 0.82f, 0.38f, 1.0f));
 	TextRender()->Text(Box.x + 6.0f, Box.y + 4.0f, FontSize, pTitle);
-	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryTextColor, false)));
+	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryTextColor, true)));
 	float y = Box.y + 4.0f + LineHeight;
 	for(int i = 0; i < NumRows; i++)
 	{
@@ -3052,10 +3051,7 @@ void CLazyClient::RenderZeroGravityForcedStatus()
 	m_aHudModuleRects[HUD_MODULE_ZERO_GRAV_STATUS] = {Box.x * ScaleX, Box.y * ScaleY, Box.w * ScaleX, Box.h * ScaleY};
 	const ColorRGBA Background = m_ZeroGravForcedStatusOn ?
 		ColorRGBA(0.04f, 0.35f, 0.16f, 0.86f) : ColorRGBA(0.32f, 0.08f, 0.08f, 0.86f);
-	const ColorRGBA Outline = m_ZeroGravForcedStatusOn ?
-		ColorRGBA(0.45f, 1.0f, 0.65f, 0.9f) : ColorRGBA(1.0f, 0.55f, 0.45f, 0.9f);
 	Box.Draw(Background, IGraphics::CORNER_ALL, 3.0f);
-	Box.DrawOutline(Outline);
 
 	TextRender()->TextColor(ColorRGBA(0.92f, 1.0f, 0.95f, 1.0f));
 	Ui()->DoLabel(&Box, pStatus, FontSize, TEXTALIGN_MC);
@@ -3105,9 +3101,8 @@ void CLazyClient::RenderZeroGravityWarning()
 	CUIRect Box = {Width / 2.0f - BoxWidth / 2.0f + OffsetX, (StatusVisible ? 58.0f : 32.0f) / ScaleY + OffsetY, BoxWidth, 22.0f};
 	m_aHudModuleRects[HUD_MODULE_ZERO_GRAV_WARNING] = {Box.x * ScaleX, Box.y * ScaleY, Box.w * ScaleX, Box.h * ScaleY};
 	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcZeroGravBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
-	Box.DrawOutline(ColorRGBA(1.0f, 0.35f, 0.25f, 0.9f));
 
-	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcZeroGravTextColor, false)));
+	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcZeroGravTextColor, true)));
 	Ui()->DoLabel(&Box, aCountdown, CountdownSize, TEXTALIGN_MC);
 	TextRender()->TextColor(TextRender()->DefaultTextColor());
 
@@ -3316,9 +3311,8 @@ void CLazyClient::RenderTelemetry()
 	CUIRect Box = {Width - BoxWidth - 6.0f / ScaleX + OffsetX, 34.0f / ScaleY + OffsetY, BoxWidth, BoxHeight};
 	m_aHudModuleRects[HUD_MODULE_TELEMETRY] = {Box.x * ScaleX, Box.y * ScaleY, Box.w * ScaleX, Box.h * ScaleY};
 	Box.Draw(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryBgColor, true)), IGraphics::CORNER_ALL, 3.0f);
-	Box.DrawOutline(ColorRGBA(0.45f, 0.65f, 0.85f, 0.35f));
 
-	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryTextColor, false)));
+	TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_LcTelemetryTextColor, true)));
 	float y = Box.y + 4.0f;
 	for(int i = 0; i < NumLines; i++)
 	{
@@ -3353,6 +3347,13 @@ void CLazyClient::LoadHudLayout()
 		if(pEntry != nullptr)
 			pEntry++;
 	}
+
+	// Old configs stored Lazy text colors without an alpha byte. Those values
+	// would become fully transparent now that the editor exposes text alpha.
+	if((g_Config.m_LcTelemetryTextColor >> 24) == 0)
+		g_Config.m_LcTelemetryTextColor |= 0xFF000000;
+	if((g_Config.m_LcZeroGravTextColor >> 24) == 0)
+		g_Config.m_LcZeroGravTextColor |= 0xFF000000;
 	m_HudLayoutLoaded = true;
 }
 
@@ -3737,15 +3738,17 @@ void CLazyClient::RenderHudEditor()
 		case HUD_MODULE_TELEMETRY:
 			pTextColor = &g_Config.m_LcTelemetryTextColor;
 			pBackgroundColor = &g_Config.m_LcTelemetryBgColor;
-			TextDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcTelemetryTextColor, false));
+			TextDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcTelemetryTextColor, true));
 			BackgroundDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcTelemetryBgColor, true));
+			TextAlpha = true;
 			BackgroundAlpha = true;
 			break;
 		case HUD_MODULE_ZERO_GRAV_WARNING:
 			pTextColor = &g_Config.m_LcZeroGravTextColor;
 			pBackgroundColor = &g_Config.m_LcZeroGravBgColor;
-			TextDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcZeroGravTextColor, false));
+			TextDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcZeroGravTextColor, true));
 			BackgroundDefault = color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::LcZeroGravBgColor, true));
+			TextAlpha = true;
 			BackgroundAlpha = true;
 			break;
 		case HUD_MODULE_STATUS_BAR:
@@ -3803,6 +3806,8 @@ void CLazyClient::RenderHudEditor()
 
 void CLazyClient::OnRender()
 {
+	if(!m_HudLayoutLoaded)
+		LoadHudLayout();
 	RenderZeroGravityForcedStatus();
 	RenderZeroGravityWarning();
 	RenderTelemetry();

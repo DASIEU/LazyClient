@@ -69,7 +69,7 @@ MACRO_CONFIG_INT(LcZeroGravOffsetY, lc_zerograv_offset_y, 0, -200, 200, CFGFLAG_
 MACRO_CONFIG_INT(LcZeroGravScaleX, lc_zerograv_scale_x, 100, 50, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity warning horizontal scale in percent")
 MACRO_CONFIG_INT(LcZeroGravScaleY, lc_zerograv_scale_y, 100, 50, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity warning vertical scale in percent")
 MACRO_CONFIG_STR(LcZeroGravText, lc_zerograv_text, 64, "", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Custom zero-gravity warning prefix (empty = \"Freeze in\")")
-MACRO_CONFIG_COL(LcZeroGravTextColor, lc_zerograv_text_color, 0x0EFFF0, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity warning text color")
+MACRO_CONFIG_COL(LcZeroGravTextColor, lc_zerograv_text_color, 0xFF0EFFF0, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Zero-gravity warning text color")
 MACRO_CONFIG_COL(LcZeroGravBgColor, lc_zerograv_bg_color, 0xDB01E54A, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Zero-gravity warning background color")
 
 // Auto team lock
@@ -109,5 +109,5 @@ MACRO_CONFIG_INT(LcTelemetryOffsetX, lc_telemetry_offset_x, 0, -300, 300, CFGFLA
 MACRO_CONFIG_INT(LcTelemetryOffsetY, lc_telemetry_offset_y, 0, -200, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry overlay vertical offset in pixels")
 MACRO_CONFIG_INT(LcTelemetryScaleX, lc_telemetry_scale_x, 100, 50, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry overlay horizontal scale in percent")
 MACRO_CONFIG_INT(LcTelemetryScaleY, lc_telemetry_scale_y, 100, 50, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry overlay vertical scale in percent")
-MACRO_CONFIG_COL(LcTelemetryTextColor, lc_telemetry_text_color, 0x95FFF2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Telemetry overlay text color")
+MACRO_CONFIG_COL(LcTelemetryTextColor, lc_telemetry_text_color, 0xFF95FFF2, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Telemetry overlay text color")
 MACRO_CONFIG_COL(LcTelemetryBgColor, lc_telemetry_bg_color, 0xB89C550B, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Telemetry overlay background color")

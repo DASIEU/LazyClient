@@ -8,7 +8,7 @@ the upstream client, protocol, and configuration compatibility while adding a
 small set of client-side tools for hook-heavy maps.
 
 LazyClient is built on TClient 10.9.x / DDNet 20.x. The current release is
-**0.1.0**. Windows builds are provided from 0.1.1 onwards; 0.1.0 was only built
+**0.1.1**. Windows builds are provided from 0.1.1 onwards; 0.1.0 was only built
 and tested for Linux.
 
 ## Fair play and privacy
@@ -117,8 +117,8 @@ shown.
 
 LazyClient checks the latest GitHub Release and links to it. Update checks are
 informational; release artifacts are installed manually. The long-term plan is
-a signed release/update pipeline, but 0.1.0 does not include an installer or
-automatic updater.
+a signed release/update pipeline, but LazyClient does not include an installer
+or automatic updater.
 
 ## Upstream and branches
 

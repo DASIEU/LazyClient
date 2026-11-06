@@ -2318,9 +2318,13 @@ bool CMenus::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 
 bool CMenus::OnInput(const IInput::CEvent &Event)
 {
-	// The HUD editor owns input while it is open.
+	// The HUD editor owns input while it is open, but the UI still needs the
+	// events so color-picker text fields and hex input can be edited.
 	if(GameClient()->m_Lazy.HudEditorActive())
+	{
+		Ui()->OnInput(Event);
 		return true;
+	}
 
 	// Escape key is always handled to activate/deactivate menu
 	if((Event.m_Flags & IInput::FLAG_PRESS && Event.m_Key == KEY_ESCAPE) || IsActive())

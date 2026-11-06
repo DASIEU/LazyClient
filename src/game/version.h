@@ -29,7 +29,7 @@ extern const char *GIT_SHORTREV_HASH;
 
 // LazyClient
 #ifndef LAZYCLIENT_VERSION
-#define LAZYCLIENT_VERSION "0.1.0"
+#define LAZYCLIENT_VERSION "0.1.1"
 #endif
 
 // custom
