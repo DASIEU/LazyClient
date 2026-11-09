@@ -413,7 +413,7 @@ void CLazyClient::AddOrRefreshSwapTimer(const char *pFrom, const char *pTo, int 
 	if(pFrom == nullptr || pTo == nullptr || pFrom[0] == '\0' || pTo[0] == '\0')
 		return;
 	Seconds = std::clamp(Seconds, 1, 600);
-	const int64_t Deadline = time() + (int64_t)Seconds;
+	const int64_t Deadline = time() + (int64_t)Seconds * time_freq();
 
 	for(auto &Entry : m_SwapTimers)
 	{
@@ -621,7 +621,7 @@ void CLazyClient::RenderSwapTimers()
 		if(Mode == 1 && !IsNameInLocalTeam(Entry.m_aFrom) && !IsNameInLocalTeam(Entry.m_aTo))
 			continue;
 		str_format(aaRows[NumRows], sizeof(aaRows[NumRows]), "%s ↔ %s", Entry.m_aFrom, Entry.m_aTo);
-		RowSeconds[NumRows] = (int)std::max<int64_t>(0, Entry.m_Deadline - Now);
+		RowSeconds[NumRows] = (int)std::max<int64_t>(0, (Entry.m_Deadline - Now + time_freq() - 1) / time_freq());
 		NumRows++;
 	}
 	if(NumRows == 0)
