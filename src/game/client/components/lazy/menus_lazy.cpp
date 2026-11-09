@@ -669,7 +669,7 @@ void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 	LazyInfoLabel(&MainView, Localize("Type /r <message> to reply to the last whisper."), Ui(), TextRender());
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Auto Greeting"), Ui(), GameClient(), Localize("Replies once when another player says hi, hello, hey, yo, qq or hai. The reply can stay in the same chat, mention the player, or be sent as a whisper. Messages are separated by | and one is picked at random. Each player can only get one reply per minute, so two LazyClients cannot greet each other forever."));
+	LazySectionTitle(&MainView, Localize("Auto Greeting"), Ui(), GameClient(), Localize("Replies once when another player greets you by name (for example \"hi DASI\") or whispers a greeting to you. Plain public greetings that do not mention your name are ignored. The reply can stay in the same chat, mention the player, or be sent as a whisper. Messages are separated by | and one is picked at random. Each player can only get one reply per minute."));
 	static CButtonContainer s_AutoHiCheckbox;
 	DoButton_CheckBoxAutoVMarginAndSet(&s_AutoHiCheckbox, Localize("Reply to greetings"), &g_Config.m_LcAutoHi, &MainView, LazyLineSize);
 

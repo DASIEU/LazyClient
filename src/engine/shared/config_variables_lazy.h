@@ -85,7 +85,7 @@ MACRO_CONFIG_INT(LcInviteManager, lc_invite_manager, 0, 0, 1, CFGFLAG_CLIENT | C
 MACRO_CONFIG_INT(LcAutoGG, lc_auto_gg, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Send a GG message once your team's race time is received")
 MACRO_CONFIG_INT(LcAutoGGChat, lc_auto_gg_chat, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto GG chat: 0 = team chat, 1 = all chat")
 MACRO_CONFIG_STR(LcAutoGGMessage, lc_auto_gg_message, 64, "gg", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Message sent by auto GG")
-MACRO_CONFIG_INT(LcAutoHi, lc_auto_hi, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Reply automatically to incoming greetings")
+MACRO_CONFIG_INT(LcAutoHi, lc_auto_hi, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Reply automatically to greetings that mention you or are whispered to you")
 MACRO_CONFIG_INT(LcAutoHiMode, lc_auto_hi_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto greeting reply mode: 0 = same chat, 1 = same chat with mention, 2 = whisper")
 MACRO_CONFIG_STR(LcAutoHiMessages, lc_auto_hi_messages, 128, "hi|hello|hey", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto greeting replies separated by | (one is picked at random)")
 

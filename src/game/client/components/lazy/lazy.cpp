@@ -186,6 +186,29 @@ bool IsGreetingMessage(const char *pMessage)
 	return false;
 }
 
+bool IsNameMentioned(const char *pMessage, const char *pName)
+{
+	const int NameLength = str_length(pName);
+	if(NameLength <= 0)
+		return false;
+
+	auto IsWordChar = [](char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '_';
+	};
+
+	const char *p = pMessage;
+	while((p = str_utf8_find_nocase(p, pName)) != nullptr)
+	{
+		const bool StartOk = p == pMessage || !IsWordChar(p[-1]);
+		const bool EndOk = !IsWordChar(p[NameLength]);
+		if(StartOk && EndOk)
+			return true;
+		p += NameLength;
+	}
+	return false;
+}
+
 enum EHudAlign
 {
 	HUD_ALIGN_LEFT = 0,
@@ -1705,6 +1728,21 @@ void CLazyClient::HandleAutoHi(int ClientId, int Team, const char *pMessage)
 		return;
 	if(!IsGreetingMessage(pMessage))
 		return;
+
+	// A greeting only gets a reply when it is actually aimed at us: either a
+	// whisper or a chat message that mentions our name. Otherwise anyone saying
+	// "hi" to the server would make us answer.
+	if(Team != TEAM_WHISPER_RECV)
+	{
+		char aLocalName[MAX_NAME_LENGTH];
+		const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+		if(LocalId >= 0 && LocalId < MAX_CLIENTS && GameClient()->m_aClients[LocalId].m_aName[0] != '\0')
+			str_copy(aLocalName, GameClient()->m_aClients[LocalId].m_aName, sizeof(aLocalName));
+		else
+			str_copy(aLocalName, g_Config.m_PlayerName, sizeof(aLocalName));
+		if(!IsNameMentioned(pMessage, aLocalName))
+			return;
+	}
 
 	auto Cooldown = m_AutoHiCooldowns.find(Client.m_aName);
 	const int64_t Now = time();
