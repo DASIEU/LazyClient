@@ -952,6 +952,13 @@ void CLazyClient::UpdateClientTypes()
 			Type = LC_CLIENT_BESTCLIENT;
 		}
 
+		// Hardcoded developer tag: every LazyClient sees the dev icon for this
+		// name, even if the player's color still carries the normal LazyClient id.
+		if(Client.m_aName[0] != '\0' && str_comp_nocase(Client.m_aName, DEV_ICON_NAME) == 0)
+		{
+			Type = LC_CLIENT_LAZYCLIENT_DEV;
+		}
+
 		if(State == IClient::STATE_ONLINE &&
 			(ClientId == GameClient()->m_aLocalIds[0] || ClientId == GameClient()->m_aLocalIds[1]))
 		{
