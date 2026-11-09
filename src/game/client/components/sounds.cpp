@@ -172,6 +172,44 @@ void CSounds::ClearQueue()
 	m_QueueWaitTime = time();
 }
 
+void CSounds::Clear()
+{
+	// Wait for any in-progress sound loading job to finish before unloading.
+	if(m_WaitForSoundJob && m_pSoundJob)
+	{
+		while(m_pSoundJob->State() != IJob::STATE_DONE && m_pSoundJob->State() != IJob::STATE_ABORTED)
+			m_pSoundJob->Abort();
+		m_WaitForSoundJob = false;
+	}
+
+	Sound()->StopAll();
+	ClearQueue();
+
+	for(int s = 0; s < g_pData->m_NumSounds; s++)
+	{
+		for(int i = 0; i < g_pData->m_aSounds[s].m_NumSounds; i++)
+		{
+			if(g_pData->m_aSounds[s].m_aSounds[i].m_Id != -1)
+			{
+				Sound()->UnloadSample(g_pData->m_aSounds[s].m_aSounds[i].m_Id);
+				g_pData->m_aSounds[s].m_aSounds[i].m_Id = -1;
+			}
+		}
+	}
+
+	if(g_Config.m_ClThreadsoundloading)
+	{
+		m_pSoundJob = std::make_shared<CSoundLoading>(GameClient(), false);
+		GameClient()->Engine()->AddJob(m_pSoundJob);
+		m_WaitForSoundJob = true;
+	}
+	else
+	{
+		CSoundLoading(GameClient(), false).Run();
+		m_WaitForSoundJob = false;
+	}
+}
+
 void CSounds::Enqueue(int Channel, int SetId)
 {
 	if(GameClient()->m_SuppressEvents)

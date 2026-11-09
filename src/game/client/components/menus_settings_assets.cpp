@@ -34,7 +34,8 @@ enum
 	ASSETS_TAB_PARTICLES = 3,
 	ASSETS_TAB_HUD = 4,
 	ASSETS_TAB_EXTRAS = 5,
-	NUMBER_OF_ASSETS_TABS = 6,
+	ASSETS_TAB_AUDIO = 6,
+	NUMBER_OF_ASSETS_TABS = 7,
 };
 
 void CMenus::LoadEntities(SCustomEntities *pEntitiesItem, void *pUser)
@@ -211,12 +212,39 @@ int CMenus::ExtrasScan(const char *pName, int IsDir, int DirType, void *pUser)
 	return AssetScan(pName, IsDir, DirType, pThis->m_vExtrasList, "extras", pGraphics, pUser);
 }
 
+int CMenus::AudioPackScan(const char *pName, int IsDir, int DirType, void *pUser)
+{
+	auto *pRealUser = (SMenuAssetScanUser *)pUser;
+	auto *pThis = (CMenus *)pRealUser->m_pUser;
+
+	if(!IsDir || pName[0] == '.')
+		return 0;
+
+	// "default" means the stock sounds and is always offered explicitly.
+	if(str_comp(pName, "default") == 0)
+		return 0;
+
+	for(const SCustomAudioPack &Pack : pThis->m_vAudioPackList)
+	{
+		if(str_comp(Pack.m_aName, pName) == 0)
+			return 0;
+	}
+
+	SCustomAudioPack PackItem;
+	str_copy(PackItem.m_aName, pName);
+	pThis->m_vAudioPackList.push_back(PackItem);
+
+	pRealUser->m_LoadedFunc();
+	return 0;
+}
+
 static std::vector<const CMenus::SCustomEntities *> gs_vpSearchEntitiesList;
 static std::vector<const CMenus::SCustomGame *> gs_vpSearchGamesList;
 static std::vector<const CMenus::SCustomEmoticon *> gs_vpSearchEmoticonsList;
 static std::vector<const CMenus::SCustomParticle *> gs_vpSearchParticlesList;
 static std::vector<const CMenus::SCustomHud *> gs_vpSearchHudList;
 static std::vector<const CMenus::SCustomExtras *> gs_vpSearchExtrasList;
+static std::vector<const CMenus::SCustomAudioPack *> gs_vpSearchAudioPackList;
 
 static bool gs_aInitCustomList[NUMBER_OF_ASSETS_TABS] = {
 	true,
@@ -244,6 +272,8 @@ static const CMenus::SCustomItem *GetCustomItem(int CurTab, size_t Index)
 		return gs_vpSearchHudList[Index];
 	else if(CurTab == ASSETS_TAB_EXTRAS)
 		return gs_vpSearchExtrasList[Index];
+	else if(CurTab == ASSETS_TAB_AUDIO)
+		return gs_vpSearchAudioPackList[Index];
 	dbg_assert_failed("Invalid CurTab: %d", CurTab);
 }
 
@@ -308,6 +338,13 @@ void CMenus::ClearCustomItems(int CurTab)
 		// reload current DDNet particles skin
 		GameClient()->LoadExtrasSkin(g_Config.m_ClAssetExtras);
 	}
+	else if(CurTab == ASSETS_TAB_AUDIO)
+	{
+		m_vAudioPackList.clear();
+
+		// reload the currently selected sound pack
+		GameClient()->m_Sounds.Clear();
+	}
 	else
 	{
 		dbg_assert_failed("Invalid CurTab: %d", CurTab);
@@ -364,7 +401,8 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 		Localize("Emoticons"),
 		Localize("Particles"),
 		Localize("HUD"),
-		Localize("Extras")};
+		Localize("Extras"),
+		Localize("Sounds")};
 
 	for(int Tab = ASSETS_TAB_ENTITIES; Tab < NUMBER_OF_ASSETS_TABS; ++Tab)
 	{
@@ -420,6 +458,21 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 	{
 		InitAssetList(m_vExtrasList, "assets/extras", "extras", ExtrasScan, Graphics(), Storage(), &User);
 	}
+	else if(s_CurCustomTab == ASSETS_TAB_AUDIO)
+	{
+		if(m_vAudioPackList.empty())
+		{
+			SCustomAudioPack DefaultPack;
+			str_copy(DefaultPack.m_aName, "default");
+			m_vAudioPackList.push_back(DefaultPack);
+
+			Storage()->ListDirectory(IStorage::TYPE_ALL, "assets/audio", AudioPackScan, &User);
+			Storage()->ListDirectory(IStorage::TYPE_ALL, "audio", AudioPackScan, &User);
+			std::sort(m_vAudioPackList.begin(), m_vAudioPackList.end());
+		}
+		if(m_vAudioPackList.size() != gs_aCustomListSize[s_CurCustomTab])
+			gs_aInitCustomList[s_CurCustomTab] = true;
+	}
 	else
 	{
 		dbg_assert_failed("Invalid s_CurCustomTab: %d", s_CurCustomTab);
@@ -467,6 +520,10 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 		{
 			ListSize = InitSearchList(gs_vpSearchExtrasList, m_vExtrasList);
 		}
+		else if(s_CurCustomTab == ASSETS_TAB_AUDIO)
+		{
+			ListSize = InitSearchList(gs_vpSearchAudioPackList, m_vAudioPackList);
+		}
 		gs_aInitCustomList[s_CurCustomTab] = false;
 		gs_aCustomListSize[s_CurCustomTab] = ListSize;
 	}
@@ -502,6 +559,11 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 	else if(s_CurCustomTab == ASSETS_TAB_EXTRAS)
 	{
 		SearchListSize = gs_vpSearchExtrasList.size();
+	}
+	else if(s_CurCustomTab == ASSETS_TAB_AUDIO)
+	{
+		SearchListSize = gs_vpSearchAudioPackList.size();
+		TextureHeight = 0;
 	}
 
 	static CListBox s_ListBox;
@@ -540,6 +602,11 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 		else if(s_CurCustomTab == ASSETS_TAB_EXTRAS)
 		{
 			if(str_comp(pItem->m_aName, g_Config.m_ClAssetExtras) == 0)
+				OldSelected = i;
+		}
+		else if(s_CurCustomTab == ASSETS_TAB_AUDIO)
+		{
+			if(str_comp(pItem->m_aName, g_Config.m_SndPack) == 0)
 				OldSelected = i;
 		}
 
@@ -601,6 +668,11 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 				str_copy(g_Config.m_ClAssetExtras, GetCustomItem(s_CurCustomTab, NewSelected)->m_aName);
 				GameClient()->LoadExtrasSkin(g_Config.m_ClAssetExtras);
 			}
+			else if(s_CurCustomTab == ASSETS_TAB_AUDIO)
+			{
+				str_copy(g_Config.m_SndPack, GetCustomItem(s_CurCustomTab, NewSelected)->m_aName);
+				GameClient()->m_Sounds.Clear();
+			}
 		}
 	}
 
@@ -634,6 +706,8 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 			str_copy(aBufFull, "assets/hud");
 		else if(s_CurCustomTab == ASSETS_TAB_EXTRAS)
 			str_copy(aBufFull, "assets/extras");
+		else if(s_CurCustomTab == ASSETS_TAB_AUDIO)
+			str_copy(aBufFull, "assets/audio");
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, aBufFull, aBuf, sizeof(aBuf));
 		Storage()->CreateFolder("assets", IStorage::TYPE_SAVE);
 		Storage()->CreateFolder(aBufFull, IStorage::TYPE_SAVE);
@@ -740,4 +814,16 @@ void CMenus::ConchainAssetExtras(IConsole::IResult *pResult, void *pUserData, IC
 	}
 
 	pfnCallback(pResult, pCallbackUserData);
+}
+
+void CMenus::ConchainSndPack(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+{
+	CMenus *pThis = (CMenus *)pUserData;
+	char aOldSndPack[64];
+	str_copy(aOldSndPack, g_Config.m_SndPack, sizeof(aOldSndPack));
+	pfnCallback(pResult, pCallbackUserData);
+	if(pResult->NumArguments() == 1 && str_comp(aOldSndPack, g_Config.m_SndPack) != 0)
+	{
+		pThis->GameClient()->m_Sounds.Clear();
+	}
 }

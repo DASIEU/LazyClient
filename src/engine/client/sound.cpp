@@ -687,6 +687,59 @@ bool CSound::DecodeWV(CSample &Sample, const void *pData, unsigned DataSize, con
 	return true;
 }
 
+// Loads a sound file, preferring the selected sound pack in assets/audio (or
+// audio/) when it exists. Mirrors BestClient's pack layout: pack files may keep
+// the original "audio/" subfolder or be stored flat in the pack folder.
+static bool LoadSoundFile(IStorage *pStorage, const char *pFilename, int StorageType, void **ppData, unsigned *pDataSize, bool *pPackActive)
+{
+	*pPackActive = false;
+
+	// Only replace the client's own audio set. Map sounds (mapres/...) and
+	// editor previews keep loading from their original paths.
+	const char *pRelative = str_startswith(pFilename, "audio/");
+	if(pRelative == nullptr)
+		return pStorage->ReadFile(pFilename, StorageType, ppData, pDataSize);
+
+	const char *pEffectivePack = nullptr;
+	char aPackDir[IO_MAX_PATH_LENGTH];
+	auto FolderExists = [&](const char *pPack) {
+		str_format(aPackDir, sizeof(aPackDir), "assets/audio/%s", pPack);
+		if(pStorage->FolderExists(aPackDir, IStorage::TYPE_ALL))
+			return true;
+		str_format(aPackDir, sizeof(aPackDir), "audio/%s", pPack);
+		return pStorage->FolderExists(aPackDir, IStorage::TYPE_ALL);
+	};
+
+	if(FolderExists(g_Config.m_SndPack))
+		pEffectivePack = g_Config.m_SndPack;
+	else if(str_comp(g_Config.m_SndPack, "default") != 0 && FolderExists("default"))
+		pEffectivePack = "default";
+
+	if(pEffectivePack == nullptr)
+		return pStorage->ReadFile(pFilename, StorageType, ppData, pDataSize);
+
+	// A pack is active, so a missing sound stays silent instead of falling back
+	// to the stock file. This is what lets packs replace the whole sound set.
+	*pPackActive = true;
+
+	const char *apPrefixes[] = {"assets/audio", "audio"};
+	for(const char *pPrefix : apPrefixes)
+	{
+		char aPath[IO_MAX_PATH_LENGTH];
+		str_format(aPath, sizeof(aPath), "%s/%s/%s", pPrefix, pEffectivePack, pFilename);
+		if(pStorage->ReadFile(aPath, StorageType, ppData, pDataSize))
+			return true;
+
+		if(pRelative != nullptr)
+		{
+			str_format(aPath, sizeof(aPath), "%s/%s/%s", pPrefix, pEffectivePack, pRelative);
+			if(pStorage->ReadFile(aPath, StorageType, ppData, pDataSize))
+				return true;
+		}
+	}
+	return false;
+}
+
 int CSound::LoadOpus(const char *pFilename, int StorageType)
 {
 	// no need to load sound when we are running with no sound
@@ -702,10 +755,12 @@ int CSound::LoadOpus(const char *pFilename, int StorageType)
 
 	void *pData;
 	unsigned DataSize;
-	if(!m_pStorage->ReadFile(pFilename, StorageType, &pData, &DataSize))
+	bool PackActive = false;
+	if(!LoadSoundFile(m_pStorage, pFilename, StorageType, &pData, &DataSize, &PackActive))
 	{
 		UnloadSample(pSample->m_Index);
-		log_error("sound/opus", "Failed to open file. Filename='%s'", pFilename);
+		if(!PackActive)
+			log_error("sound/opus", "Failed to open file. Filename='%s'", pFilename);
 		return -1;
 	}
 
@@ -739,10 +794,12 @@ int CSound::LoadWV(const char *pFilename, int StorageType)
 
 	void *pData;
 	unsigned DataSize;
-	if(!m_pStorage->ReadFile(pFilename, StorageType, &pData, &DataSize))
+	bool PackActive = false;
+	if(!LoadSoundFile(m_pStorage, pFilename, StorageType, &pData, &DataSize, &PackActive))
 	{
 		UnloadSample(pSample->m_Index);
-		log_error("sound/wv", "Failed to open file. Filename='%s'", pFilename);
+		if(!PackActive)
+			log_error("sound/wv", "Failed to open file. Filename='%s'", pFilename);
 		return -1;
 	}
 
