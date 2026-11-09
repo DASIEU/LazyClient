@@ -239,7 +239,9 @@ private:
 	// Auto team lock
 	// The client never receives the server's per-team lock flag (SetTeamLock is
 	// server-side only), so the state is inferred from the team chat messages
-	// the server sends on /lock and /unlock, and from our own join.
+	// the server sends on /lock and /unlock, and from our own join. The locked
+	// flag is a latched boolean: it stays set until the team changes, disbands or
+	// we are removed from it, and it stops us from sending /lock redundantly.
 	int m_AutoTeamLockTeam = -1;
 	bool m_AutoTeamLockPending = false;
 	int64_t m_AutoTeamLockDeadline = 0;

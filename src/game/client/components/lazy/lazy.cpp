@@ -1466,7 +1466,9 @@ void CLazyClient::LockTeamNow()
 		return;
 	}
 	m_AutoTeamLockLocked = true;
-	GameClient()->m_Chat.SendChat(0, "/lock");
+	// Use the explicit argument: plain /lock toggles, so sending it to an
+	// already-locked team would unlock it instead.
+	GameClient()->m_Chat.SendChat(0, "/lock 1");
 }
 
 void CLazyClient::ResetAutoTeamLockState()
@@ -2012,22 +2014,42 @@ void CLazyClient::OnMessage(int MsgType, void *pRawMsg)
 
 void CLazyClient::UpdateAutoTeamLock()
 {
+	if(Client()->State() != IClient::STATE_ONLINE || !GameClient()->m_Snap.m_pLocalInfo)
+		return; // Transient snapshot gaps must not clear the lock state.
+
 	const bool Enabled = g_Config.m_LcAutoTeamLock != 0;
 	const int Team = CurrentDDRaceTeam();
 
-	if(!Enabled || Client()->State() != IClient::STATE_ONLINE || Team == TEAM_FLOCK)
+	// A team change also covers leaving the team, being kicked from it, or the
+	// team disbanding (all of which put us back in TEAM_FLOCK). Only then is the
+	// remembered locked state discarded.
+	if(Team != m_AutoTeamLockTeam)
 	{
-		// Do not keep a countdown across leaving the team or disabling the option.
-		if(m_AutoTeamLockPending || m_AutoTeamLockTeam != Team)
-			ResetAutoTeamLockState();
+		m_AutoTeamLockTeam = Team;
+		m_AutoTeamLockLocked = false;
+		m_AutoTeamLockPending = false;
+		m_AutoTeamLockDeadline = 0;
+
+		if(Enabled && Team != TEAM_FLOCK)
+		{
+			m_AutoTeamLockPending = true;
+			m_AutoTeamLockDeadline = time() + (int64_t)std::clamp(g_Config.m_LcAutoTeamLockDelay, 1, 60) * time_freq();
+		}
 		return;
 	}
 
-	if(Team != m_AutoTeamLockTeam)
+	if(!Enabled || Team == TEAM_FLOCK)
 	{
-		// Joined a different team: the previous lock state does not apply to it.
-		m_AutoTeamLockTeam = Team;
-		m_AutoTeamLockLocked = false;
+		// Do not forget that the team is locked just because the option was
+		// toggled off; otherwise turning it back on would lock it again.
+		m_AutoTeamLockPending = false;
+		m_AutoTeamLockDeadline = 0;
+		return;
+	}
+
+	// Re-arm after toggling the option back on while the team is still unlocked.
+	if(!m_AutoTeamLockPending && !m_AutoTeamLockLocked)
+	{
 		m_AutoTeamLockPending = true;
 		m_AutoTeamLockDeadline = time() + (int64_t)std::clamp(g_Config.m_LcAutoTeamLockDelay, 1, 60) * time_freq();
 	}
@@ -2042,7 +2064,9 @@ void CLazyClient::UpdateAutoTeamLock()
 
 	m_AutoTeamLockPending = false;
 	m_AutoTeamLockLocked = true;
-	GameClient()->m_Chat.SendChat(0, "/lock");
+	// Use the explicit argument: plain /lock toggles, so sending it to an
+	// already-locked team would unlock it instead.
+	GameClient()->m_Chat.SendChat(0, "/lock 1");
 }
 
 void CLazyClient::BindZoomKey(bool ZoomIn)

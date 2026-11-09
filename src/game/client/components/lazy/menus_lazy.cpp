@@ -755,7 +755,7 @@ void CMenus::RenderSettingsLazyMiscellaneous(CUIRect MainView)
 	}
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
-	LazySectionTitle(&MainView, Localize("Auto Team Lock"), Ui(), GameClient(), Localize("Locks your team automatically a while after you join it by sending /lock, so you and your team cannot be joined by others mid-run. The team is locked again if someone unlocks it. The delay counts from the moment you join; set it long enough for your teammates to join (1-60 seconds)."));
+	LazySectionTitle(&MainView, Localize("Auto Team Lock"), Ui(), GameClient(), Localize("Locks your team automatically a while after you join it by sending /lock, so you and your team cannot be joined by others mid-run. The locked state is remembered until you change team, leave or are removed from it, so /lock is not sent again while the team is already locked. The delay counts from the moment you join; set it long enough for your teammates to join (1-60 seconds)."));
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 
 	static CButtonContainer s_AutoTeamLockCheckbox, s_LockTeamNowButton;
