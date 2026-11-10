@@ -3,6 +3,7 @@
 #include "lazy_ccid.h"
 
 #include <base/io.h>
+#include <base/fs.h>
 #include <base/log.h>
 #include <base/math.h>
 #include <base/net.h>
@@ -13,6 +14,7 @@
 #include <engine/graphics.h>
 #include <engine/image.h>
 #include <engine/http.h>
+#include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
 #include <engine/shared/json.h>
 #include <engine/shared/linereader.h>
@@ -103,6 +105,71 @@ bool CopyMessageBetween(const char *pMessage, const char *pPrefix, const char *p
 		return false;
 	str_copy(pOut, pStart, Length + 1);
 	return true;
+}
+
+// The password file is tab-separated. Escape the separators and newlines so a
+// password may contain any character without breaking the format.
+void PasswordFieldEscape(const char *pIn, char *pOut, int OutSize)
+{
+	int Out = 0;
+	for(const char *p = pIn; p != nullptr && *p != '\0' && Out + 2 < OutSize; p++)
+	{
+		if(*p == '\\')
+		{
+			pOut[Out++] = '\\';
+			pOut[Out++] = '\\';
+		}
+		else if(*p == '\t')
+		{
+			pOut[Out++] = '\\';
+			pOut[Out++] = 't';
+		}
+		else if(*p == '\n')
+		{
+			pOut[Out++] = '\\';
+			pOut[Out++] = 'n';
+		}
+		else if(*p == '\r')
+		{
+			pOut[Out++] = '\\';
+			pOut[Out++] = 'r';
+		}
+		else
+			pOut[Out++] = *p;
+	}
+	pOut[Out] = '\0';
+}
+
+void PasswordFieldUnescape(const char *pIn, char *pOut, int OutSize)
+{
+	int Out = 0;
+	for(const char *p = pIn; p != nullptr && *p != '\0' && Out + 1 < OutSize; p++)
+	{
+		if(*p == '\\' && p[1] != '\0')
+		{
+			p++;
+			switch(*p)
+			{
+			case 't': pOut[Out++] = '\t'; break;
+			case 'n': pOut[Out++] = '\n'; break;
+			case 'r': pOut[Out++] = '\r'; break;
+			default: pOut[Out++] = *p; break;
+			}
+		}
+		else
+			pOut[Out++] = *p;
+	}
+	pOut[Out] = '\0';
+}
+
+bool MessageContainsAny(const char *pMessage, std::initializer_list<const char *> vNeedles)
+{
+	for(const char *pNeedle : vNeedles)
+	{
+		if(str_find_nocase(pMessage, pNeedle) != nullptr)
+			return true;
+	}
+	return false;
 }
 
 bool IsHeavyWeapon(int Weapon)
@@ -1803,6 +1870,252 @@ void CLazyClient::UpdateAutoGG()
 	GameClient()->m_Chat.SendChat(g_Config.m_LcAutoGGChat ? 0 : 1, g_Config.m_LcAutoGGMessage);
 }
 
+void CLazyClient::ReloadPasswords(bool Force)
+{
+	if(m_PasswordsLoaded && !Force)
+		return;
+	m_PasswordsLoaded = true;
+	m_PasswordEntries.clear();
+
+	CLineReader Reader;
+	if(!Reader.OpenFile(Storage()->OpenFile(PASSWORDS_FILE, IOFLAG_READ, IStorage::TYPE_SAVE)))
+		return;
+
+	while(const char *pLine = Reader.Get())
+	{
+		if(pLine[0] == '\0' || pLine[0] == '#')
+			continue;
+
+		std::string Line(pLine);
+		if(!Line.empty() && Line.back() == '\r')
+			Line.pop_back();
+
+		std::string aFields[4];
+		size_t Pos = 0;
+		for(int i = 0; i < 4; i++)
+		{
+			const size_t Next = Line.find('\t', Pos);
+			if(Next == std::string::npos)
+			{
+				aFields[i] = Line.substr(Pos);
+				Pos = Line.size();
+			}
+			else
+			{
+				aFields[i] = Line.substr(Pos, Next - Pos);
+				Pos = Next + 1;
+			}
+		}
+
+		SPasswordEntry Entry;
+		PasswordFieldUnescape(aFields[0].c_str(), Entry.m_aServer, sizeof(Entry.m_aServer));
+		PasswordFieldUnescape(aFields[1].c_str(), Entry.m_aUsername, sizeof(Entry.m_aUsername));
+		PasswordFieldUnescape(aFields[2].c_str(), Entry.m_aPassword, sizeof(Entry.m_aPassword));
+		PasswordFieldUnescape(aFields[3].c_str(), Entry.m_aCommand, sizeof(Entry.m_aCommand));
+		if(Entry.m_aServer[0] == '\0')
+			continue;
+		m_PasswordEntries.push_back(Entry);
+	}
+}
+
+void CLazyClient::SavePasswords()
+{
+	IOHANDLE File = Storage()->OpenFile(PASSWORDS_FILE, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!File)
+		return;
+
+	const char *pHeader =
+		"# LazyClient auto login credentials. Keep this file private.\n"
+		"# One server per line: server<TAB>username<TAB>password<TAB>command\n"
+		"# command placeholders: %u = username, %p = password\n";
+	io_write(File, pHeader, str_length(pHeader));
+
+	for(const SPasswordEntry &Entry : m_PasswordEntries)
+	{
+		char aServer[256];
+		char aUsername[256];
+		char aPassword[256];
+		char aCommand[256];
+		PasswordFieldEscape(Entry.m_aServer, aServer, sizeof(aServer));
+		PasswordFieldEscape(Entry.m_aUsername, aUsername, sizeof(aUsername));
+		PasswordFieldEscape(Entry.m_aPassword, aPassword, sizeof(aPassword));
+		PasswordFieldEscape(Entry.m_aCommand, aCommand, sizeof(aCommand));
+
+		char aLine[1100];
+		str_format(aLine, sizeof(aLine), "%s\t%s\t%s\t%s\n", aServer, aUsername, aPassword, aCommand);
+		io_write(File, aLine, str_length(aLine));
+	}
+	io_close(File);
+
+	// Credentials are kept in a separate file and restricted to the owner so
+	// they are not exposed to other users on the same machine.
+	char aPath[IO_MAX_PATH_LENGTH];
+	Storage()->GetCompletePath(IStorage::TYPE_SAVE, PASSWORDS_FILE, aPath, sizeof(aPath));
+	(void)fs_set_file_private(aPath);
+}
+
+void CLazyClient::AddPasswordEntry()
+{
+	SPasswordEntry Entry;
+	m_PasswordEntries.push_back(Entry);
+	SavePasswords();
+}
+
+void CLazyClient::RemovePasswordEntry(int Index)
+{
+	if(Index < 0 || Index >= (int)m_PasswordEntries.size())
+		return;
+	m_PasswordEntries.erase(m_PasswordEntries.begin() + Index);
+	SavePasswords();
+}
+
+void CLazyClient::UpdatePasswordEntry(int Index, const SPasswordEntry &Entry)
+{
+	if(Index < 0 || Index >= (int)m_PasswordEntries.size())
+		return;
+	m_PasswordEntries[Index] = Entry;
+	SavePasswords();
+}
+
+bool CLazyClient::MatchPasswordEntry(SPasswordEntry *pOut) const
+{
+	if(pOut == nullptr || m_PasswordEntries.empty())
+		return false;
+
+	char aAddress[NETADDR_MAXSTRSIZE];
+	net_addr_str(&Client()->ServerAddress(), aAddress, sizeof(aAddress), true);
+	const CServerInfo &ServerInfo = Client()->ServerInfo();
+
+	for(const SPasswordEntry &Entry : m_PasswordEntries)
+	{
+		if(Entry.m_aServer[0] == '\0')
+			continue;
+		if((ServerInfo.m_aName[0] != '\0' && str_find_nocase(ServerInfo.m_aName, Entry.m_aServer) != nullptr) ||
+			str_find_nocase(aAddress, Entry.m_aServer) != nullptr)
+		{
+			*pOut = Entry;
+			return true;
+		}
+	}
+	return false;
+}
+
+void CLazyClient::BuildLoginCommand(const SPasswordEntry &Entry, char *pOut, int OutSize) const
+{
+	const char *pTemplate = Entry.m_aCommand;
+	if(pTemplate[0] == '\0')
+		pTemplate = Entry.m_aUsername[0] != '\0' ? "/login %u %p" : "/login %p";
+
+	int Out = 0;
+	for(const char *p = pTemplate; *p != '\0' && Out + 1 < OutSize; p++)
+	{
+		if(*p == '%' && p[1] != '\0')
+		{
+			const char *pReplacement = nullptr;
+			if(p[1] == 'u')
+				pReplacement = Entry.m_aUsername;
+			else if(p[1] == 'p')
+				pReplacement = Entry.m_aPassword;
+			else if(p[1] == '%')
+			{
+				pOut[Out++] = '%';
+				p++;
+				continue;
+			}
+
+			if(pReplacement != nullptr)
+			{
+				for(const char *pChar = pReplacement; *pChar != '\0' && Out + 1 < OutSize; pChar++)
+					pOut[Out++] = *pChar;
+				p++;
+				continue;
+			}
+		}
+		pOut[Out++] = *p;
+	}
+	pOut[Out] = '\0';
+}
+
+void CLazyClient::SendAutoPasswordNow()
+{
+	ReloadPasswords();
+	SPasswordEntry Entry;
+	if(!MatchPasswordEntry(&Entry))
+		return;
+
+	char aCommand[512];
+	BuildLoginCommand(Entry, aCommand, sizeof(aCommand));
+	const char *pCommand = str_skip_whitespaces_const(aCommand);
+	if(pCommand[0] != '/')
+		return;
+
+	m_AutoPasswordAttempted = true;
+	// Send through the normal chat path so the command is processed exactly like
+	// a typed one. It is not echoed locally, so the password never appears in
+	// the chat log.
+	GameClient()->m_Chat.SendChat(0, pCommand);
+}
+
+void CLazyClient::EnsureAutoPasswordServer()
+{
+	const NETADDR Address = Client()->ServerAddress();
+	if(m_HasAutoPasswordServer && net_addr_comp(&Address, &m_AutoPasswordServer) == 0)
+		return;
+
+	m_HasAutoPasswordServer = true;
+	m_AutoPasswordServer = Address;
+	m_AutoPasswordAttempted = false;
+	m_AutoPasswordAuthenticated = false;
+	m_AutoPasswordPrompted = false;
+	m_AutoPasswordDeadline = time() + (int64_t)std::clamp(g_Config.m_LcAutoPasswordDelay, 0, 60) * time_freq();
+}
+
+void CLazyClient::UpdateAutoPassword()
+{
+	if(!g_Config.m_LcAutoPassword)
+		return;
+	if(Client()->State() != IClient::STATE_ONLINE || GameClient()->m_Snap.m_pLocalInfo == nullptr)
+		return;
+
+	ReloadPasswords();
+	EnsureAutoPasswordServer();
+
+	if(m_AutoPasswordAuthenticated || m_AutoPasswordAttempted)
+		return;
+
+	// Wait until the server had a moment to send its MOTD and any "not logged
+	// in" notice. A notice triggers the login immediately.
+	if(!m_AutoPasswordPrompted && time() < m_AutoPasswordDeadline)
+		return;
+
+	SendAutoPasswordNow();
+}
+
+void CLazyClient::HandleAutoPasswordMessage(const char *pMessage)
+{
+	if(!g_Config.m_LcAutoPassword || pMessage == nullptr)
+		return;
+	if(Client()->State() != IClient::STATE_ONLINE)
+		return;
+
+	EnsureAutoPasswordServer();
+
+	if(MessageContainsAny(pMessage, {"already logged in", "logged in successfully", "login successful", "successfully logged in", "automatically logged into", "welcome back"}))
+	{
+		m_AutoPasswordAuthenticated = true;
+		m_AutoPasswordAttempted = true;
+		return;
+	}
+
+	if(MessageContainsAny(pMessage, {"not logged in", "please login", "please log in", "use /login", "must be logged in", "log in to"}))
+	{
+		// The server explicitly says a login is needed, so do not wait for the
+		// full delay. This is also what makes the feature work when the login
+		// window only appears after joining.
+		m_AutoPasswordPrompted = true;
+	}
+}
+
 void CLazyClient::ResetAutoKillState()
 {
 	m_AutoKillTeam = -1;
@@ -2012,6 +2325,9 @@ void CLazyClient::OnChatMessage(int ClientId, int Team, const char *pMessage)
 
 	if(Team <= 1)
 		HandleAutoHi(ClientId, Team, pMessage);
+
+	if(ClientId == SERVER_CHAT_CLIENT_ID)
+		HandleAutoPasswordMessage(pMessage);
 
 	// The client cannot read the server's lock flag, but DDNet announces every
 	// lock and unlock change with a server message in the team chat:
@@ -3953,6 +4269,7 @@ void CLazyClient::OnUpdate()
 	UpdateZeroGravityPredictor();
 	UpdateAutoTeamLock();
 	UpdateAutoKill();
+	UpdateAutoPassword();
 	UpdateTelemetry();
 	UpdateTeamLoadQueue();
 }

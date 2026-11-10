@@ -292,4 +292,18 @@ void fs_normalize_path(char *path);
  */
 [[nodiscard]] int fs_file_time(const char *name, time_t *created, time_t *modified);
 
+/**
+ * Restricts a file to be readable and writable only by its owner.
+ *
+ * @ingroup Filesystem
+ *
+ * @param name Path of the file.
+ *
+ * @return `0` on success. non-zero on failure.
+ *
+ * @remark Used for files that contain private data such as credentials.
+ * @remark On platforms without permission support this is a no-op.
+ */
+[[nodiscard]] int fs_set_file_private(const char *name);
+
 #endif

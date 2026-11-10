@@ -628,6 +628,193 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	LazyEndScroll(&s_ScrollRegion, MainView);
 }
 
+struct SPasswordPopupContext
+{
+	CMenus *m_pMenus = nullptr;
+	int m_Selected = -1;
+	bool m_Reveal = false;
+	char m_aServer[64] = {};
+	char m_aUsername[96] = {};
+	char m_aPassword[128] = {};
+	char m_aCommand[160] = {};
+	CLineInput m_ServerInput;
+	CLineInput m_UsernameInput;
+	CLineInput m_PasswordInput;
+	CLineInput m_CommandInput;
+
+	void LoadEntry(const CLazyClient::SPasswordEntry &Entry)
+	{
+		char aTemp[160];
+		str_copy(aTemp, Entry.m_aServer, sizeof(aTemp));
+		m_ServerInput.SetBuffer(m_aServer, sizeof(m_aServer));
+		m_ServerInput.Set(aTemp);
+		str_copy(aTemp, Entry.m_aUsername, sizeof(aTemp));
+		m_UsernameInput.SetBuffer(m_aUsername, sizeof(m_aUsername));
+		m_UsernameInput.Set(aTemp);
+		str_copy(aTemp, Entry.m_aPassword, sizeof(aTemp));
+		m_PasswordInput.SetBuffer(m_aPassword, sizeof(m_aPassword));
+		m_PasswordInput.Set(aTemp);
+		str_copy(aTemp, Entry.m_aCommand, sizeof(aTemp));
+		m_CommandInput.SetBuffer(m_aCommand, sizeof(m_aCommand));
+		m_CommandInput.Set(aTemp);
+	}
+};
+
+CUi::EPopupMenuFunctionResult CMenus::PopupAutoPassword(void *pContext, CUIRect View, bool Active)
+{
+	SPasswordPopupContext *pCtx = (SPasswordPopupContext *)pContext;
+	CMenus *pMenus = pCtx->m_pMenus;
+	CLazyClient &Lazy = pMenus->GameClient()->m_Lazy;
+	const std::vector<CLazyClient::SPasswordEntry> &vEntries = Lazy.PasswordEntries();
+	if(pCtx->m_Selected >= (int)vEntries.size())
+		pCtx->m_Selected = (int)vEntries.size() - 1;
+
+	CUIRect Title, Info, Header, ListArea, StarRow, ButtonRow;
+	View.HSplitTop(20.0f, &Title, &View);
+	pMenus->Ui()->DoLabel(&Title, Localize("Auto password"), 16.0f, TEXTALIGN_ML);
+
+	View.HSplitTop(16.0f, &Info, &View);
+	pMenus->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.6f);
+	pMenus->Ui()->DoLabel(&Info, Localize("Matches the server name or address, then sends the command. Changes are saved automatically."), 11.0f, TEXTALIGN_ML);
+	pMenus->TextRender()->TextColor(pMenus->TextRender()->DefaultTextColor());
+
+	View.HSplitTop(6.0f, nullptr, &View);
+	View.HSplitTop(15.0f, &Header, &View);
+	{
+		CUIRect ColServer, ColUsername, ColPassword;
+		Header.VSplitLeft(Header.w * 0.38f, &ColServer, &Header);
+		Header.VSplitLeft(Header.w * 0.42f, &ColUsername, &ColPassword);
+		pMenus->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.65f);
+		pMenus->Ui()->DoLabel(&ColServer, Localize("Server"), 11.0f, TEXTALIGN_ML);
+		pMenus->Ui()->DoLabel(&ColUsername, Localize("Username"), 11.0f, TEXTALIGN_ML);
+		pMenus->Ui()->DoLabel(&ColPassword, Localize("Password"), 11.0f, TEXTALIGN_ML);
+		pMenus->TextRender()->TextColor(pMenus->TextRender()->DefaultTextColor());
+	}
+
+	View.HSplitTop(170.0f, &ListArea, &View);
+	static CScrollRegion s_ListScroll;
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollUnit = 30.0f;
+	ScrollParams.m_ForceShowScrollbar = true;
+	ScrollParams.m_ScrollbarMargin = 4.0f;
+	LazyBeginScroll(&ListArea, &s_ListScroll, &ScrollParams);
+
+	CUIRect Inner = ListArea;
+	if(vEntries.empty())
+	{
+		CUIRect Empty;
+		Inner.HSplitTop(20.0f, &Empty, &Inner);
+		pMenus->TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.55f);
+		pMenus->Ui()->DoLabel(&Empty, Localize("No servers yet. Press Add to create one."), 12.0f, TEXTALIGN_ML);
+		pMenus->TextRender()->TextColor(pMenus->TextRender()->DefaultTextColor());
+	}
+
+	const int NumEntries = (int)vEntries.size();
+	for(int i = 0; i < NumEntries; i++)
+	{
+		const CLazyClient::SPasswordEntry &Entry = vEntries[i];
+		CUIRect Row;
+		Inner.HSplitTop(19.0f, &Row, &Inner);
+		s_ListScroll.AddRect(Row);
+
+		const bool Clicked = pMenus->Ui()->DoButtonLogic(&Entry, 0, &Row, BUTTONFLAG_LEFT);
+		const bool Hovered = pMenus->Ui()->HotItem() == &Entry;
+		if(i == pCtx->m_Selected)
+			Row.Draw(ColorRGBA(0.36f, 0.55f, 0.88f, 0.35f), IGraphics::CORNER_ALL, 2.0f);
+		else if(Hovered)
+			Row.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.08f), IGraphics::CORNER_ALL, 2.0f);
+
+		if(Clicked)
+		{
+			pCtx->m_Selected = i;
+			pCtx->LoadEntry(Entry);
+		}
+
+		CUIRect ColServer, ColUsername, ColPassword;
+		Row.VSplitLeft(Row.w * 0.38f, &ColServer, &Row);
+		Row.VSplitLeft(Row.w * 0.42f, &ColUsername, &ColPassword);
+		ColServer.HMargin(1.0f, &ColServer);
+		ColUsername.HMargin(1.0f, &ColUsername);
+		ColPassword.HMargin(1.0f, &ColPassword);
+		pMenus->Ui()->DoLabel(&ColServer, Entry.m_aServer[0] != '\0' ? Entry.m_aServer : Localize("(no server)"), 11.0f, TEXTALIGN_ML);
+		pMenus->Ui()->DoLabel(&ColUsername, Entry.m_aUsername[0] != '\0' ? Entry.m_aUsername : Localize("(none)"), 11.0f, TEXTALIGN_ML);
+		pMenus->Ui()->DoLabel(&ColPassword, pCtx->m_Reveal ? Entry.m_aPassword : "********", 11.0f, TEXTALIGN_ML);
+	}
+
+	CUIRect ContentBottom = Inner;
+	LazyEndScroll(&s_ListScroll, ContentBottom);
+
+	View.HSplitTop(4.0f, nullptr, &View);
+	View.HSplitTop(26.0f, &StarRow, &View);
+	{
+		CUIRect StarButton = StarRow;
+		StarButton.w = std::min(240.0f, StarRow.w);
+		StarButton.x = StarRow.x + (StarRow.w - StarButton.w) / 2.0f;
+		static CButtonContainer s_RevealButton;
+		if(pMenus->DoButton_Menu(&s_RevealButton, pCtx->m_Reveal ? Localize("★ Hide passwords") : Localize("☆ Show passwords"), 0, &StarButton))
+			pCtx->m_Reveal = !pCtx->m_Reveal;
+	}
+
+	View.HSplitTop(6.0f, nullptr, &View);
+	View.HSplitBottom(24.0f, &View, &ButtonRow);
+	View.HSplitBottom(6.0f, &View, nullptr);
+
+	CUIRect AddButton, RemoveButton, LoginButton;
+	ButtonRow.VSplitLeft(ButtonRow.w / 3.0f - 3.0f, &AddButton, &ButtonRow);
+	ButtonRow.VSplitLeft(6.0f, nullptr, &ButtonRow);
+	ButtonRow.VSplitLeft(ButtonRow.w / 2.0f - 3.0f, &RemoveButton, &ButtonRow);
+	ButtonRow.VSplitLeft(6.0f, nullptr, &ButtonRow);
+	LoginButton = ButtonRow;
+
+	static CButtonContainer s_AddButton, s_RemoveButton, s_LoginButton;
+	const bool HasSelection = pCtx->m_Selected >= 0 && pCtx->m_Selected < NumEntries;
+	if(pMenus->DoButton_Menu(&s_AddButton, Localize("Add"), 0, &AddButton))
+	{
+		Lazy.AddPasswordEntry();
+		pCtx->m_Selected = (int)Lazy.PasswordEntries().size() - 1;
+		pCtx->LoadEntry(Lazy.PasswordEntries()[pCtx->m_Selected]);
+	}
+	if(pMenus->DoButton_Menu(&s_RemoveButton, Localize("Remove"), HasSelection ? 0 : 1, &RemoveButton) && HasSelection)
+	{
+		Lazy.RemovePasswordEntry(pCtx->m_Selected);
+		pCtx->m_Selected = std::min(pCtx->m_Selected, (int)Lazy.PasswordEntries().size() - 1);
+		if(pCtx->m_Selected >= 0)
+			pCtx->LoadEntry(Lazy.PasswordEntries()[pCtx->m_Selected]);
+	}
+	if(pMenus->DoButton_Menu(&s_LoginButton, Localize("Log in now"), 0, &LoginButton))
+		Lazy.SendAutoPasswordNow();
+
+	if(pCtx->m_Selected >= 0 && pCtx->m_Selected < (int)Lazy.PasswordEntries().size())
+	{
+		CUIRect Row;
+		bool Changed = false;
+		const float RowHeight = 23.0f;
+		View.HSplitTop(RowHeight, &Row, &View);
+		Changed |= pMenus->DoEditBoxWithLabel(&pCtx->m_ServerInput, &Row, Localize("Server name or address"), "kog", pCtx->m_aServer, sizeof(pCtx->m_aServer));
+		View.HSplitTop(3.0f, nullptr, &View);
+		View.HSplitTop(RowHeight, &Row, &View);
+		Changed |= pMenus->DoEditBoxWithLabel(&pCtx->m_UsernameInput, &Row, Localize("Username (optional)"), "account name", pCtx->m_aUsername, sizeof(pCtx->m_aUsername));
+		View.HSplitTop(3.0f, nullptr, &View);
+		View.HSplitTop(RowHeight, &Row, &View);
+		pCtx->m_PasswordInput.SetHidden(!pCtx->m_Reveal);
+		Changed |= pMenus->DoEditBoxWithLabel(&pCtx->m_PasswordInput, &Row, Localize("Password or token"), "secret", pCtx->m_aPassword, sizeof(pCtx->m_aPassword));
+		View.HSplitTop(3.0f, nullptr, &View);
+		View.HSplitTop(RowHeight, &Row, &View);
+		Changed |= pMenus->DoEditBoxWithLabel(&pCtx->m_CommandInput, &Row, Localize("Login command"), "/login %u %p", pCtx->m_aCommand, sizeof(pCtx->m_aCommand));
+		if(Changed)
+		{
+			CLazyClient::SPasswordEntry Entry;
+			str_copy(Entry.m_aServer, pCtx->m_aServer, sizeof(Entry.m_aServer));
+			str_copy(Entry.m_aUsername, pCtx->m_aUsername, sizeof(Entry.m_aUsername));
+			str_copy(Entry.m_aPassword, pCtx->m_aPassword, sizeof(Entry.m_aPassword));
+			str_copy(Entry.m_aCommand, pCtx->m_aCommand, sizeof(Entry.m_aCommand));
+			Lazy.UpdatePasswordEntry(pCtx->m_Selected, Entry);
+		}
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
 void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 {
 	CUIRect Button;
@@ -690,6 +877,42 @@ void CMenus::RenderSettingsLazyChatTriggers(CUIRect MainView)
 	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
 	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 	DoEditBoxWithLabel(&s_AutoHiMessagesInput, &Button, Localize("Replies (separated by |)"), Localize("hi|hello|hey"), g_Config.m_LcAutoHiMessages, sizeof(g_Config.m_LcAutoHiMessages));
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Auto Password"), Ui(), GameClient(), Localize("Stores one login per server in lazy_passwords.txt, next to settings_lazy.cfg. When you join a server whose name or address contains the stored server text, the client sends the login command once. If the server says you are already logged in, nothing is sent. Use %u for the username and %p for the password in the command. Open the table with the Auto password button; passwords are hidden until you click the star in the middle of the window."));
+	static CButtonContainer s_AutoPasswordCheckbox, s_OpenPasswordButton;
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	DoButton_CheckBoxAutoVMarginAndSet(&s_AutoPasswordCheckbox, Localize("Log in automatically"), &g_Config.m_LcAutoPassword, &Button, LazyLineSize);
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcAutoPasswordDelay, &g_Config.m_LcAutoPasswordDelay, &Button, Localize("Login delay"), 0, 60, &CUi::ms_LinearScrollbarScale, 0, " s");
+
+	MainView.HSplitTop(LazyMarginSmall, nullptr, &MainView);
+	MainView.HSplitTop(LazyLineSize * 1.5f, &Button, &MainView);
+	if(DoButton_Menu(&s_OpenPasswordButton, Localize("Auto password"), 0, &Button))
+	{
+		static SPopupMenuId s_PasswordPopupId;
+		static SPasswordPopupContext s_PasswordPopupContext;
+		if(Ui()->IsPopupOpen(&s_PasswordPopupId))
+		{
+			Ui()->ClosePopupMenu(&s_PasswordPopupId);
+		}
+		else
+		{
+			GameClient()->m_Lazy.ReloadPasswords(true);
+			s_PasswordPopupContext.m_pMenus = this;
+			s_PasswordPopupContext.m_Selected = GameClient()->m_Lazy.PasswordEntries().empty() ? -1 : 0;
+			s_PasswordPopupContext.m_Reveal = false;
+			if(s_PasswordPopupContext.m_Selected >= 0)
+				s_PasswordPopupContext.LoadEntry(GameClient()->m_Lazy.PasswordEntries()[0]);
+			const CUIRect *pScreen = Ui()->Screen();
+			const float Width = std::min(620.0f, pScreen->w - 20.0f);
+			const float Height = std::min(470.0f, pScreen->h - 20.0f);
+			Ui()->DoPopupMenu(&s_PasswordPopupId, (pScreen->w - Width) / 2.0f, (pScreen->h - Height) / 2.0f, Width, Height, &s_PasswordPopupContext, PopupAutoPassword);
+		}
+	}
+	LazyInfoLabel(&MainView, Localize("Credentials are stored separately in lazy_passwords.txt with owner-only permissions."), Ui(), TextRender());
 
 	LazyEndScroll(&s_ScrollRegion, MainView);
 }

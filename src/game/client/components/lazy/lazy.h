@@ -2,6 +2,7 @@
 #define GAME_CLIENT_COMPONENTS_LAZY_LAZY_H
 
 #include <base/types.h>
+#include <base/net.h>
 
 #include <engine/client/enums.h>
 #include <engine/console.h>
@@ -128,6 +129,23 @@ public:
 	void CloseHudEditor(bool Save);
 	void ResetHudLayout();
 	void RenderHudEditor();
+
+	// Auto password
+	struct SPasswordEntry
+	{
+		char m_aServer[64] = {};
+		char m_aUsername[96] = {};
+		char m_aPassword[128] = {};
+		char m_aCommand[160] = {};
+	};
+	static constexpr const char *PASSWORDS_FILE = "lazy_passwords.txt";
+	void ReloadPasswords(bool Force = false);
+	const std::vector<SPasswordEntry> &PasswordEntries() const { return m_PasswordEntries; }
+	void AddPasswordEntry();
+	void RemovePasswordEntry(int Index);
+	void UpdatePasswordEntry(int Index, const SPasswordEntry &Entry);
+	void SavePasswords();
+	void SendAutoPasswordNow();
 
 private:
 	static void ConGunFire(IConsole::IResult *pResult, void *pUserData);
@@ -265,6 +283,21 @@ private:
 	char m_aLastWhisperName[MAX_NAME_LENGTH] = {};
 	std::unordered_map<std::string, int64_t> m_AutoHiCooldowns;
 	void HandleAutoHi(int ClientId, int Team, const char *pMessage);
+
+	// Auto password
+	std::vector<SPasswordEntry> m_PasswordEntries;
+	bool m_PasswordsLoaded = false;
+	bool m_AutoPasswordAttempted = false;
+	bool m_AutoPasswordAuthenticated = false;
+	bool m_AutoPasswordPrompted = false;
+	bool m_HasAutoPasswordServer = false;
+	NETADDR m_AutoPasswordServer = {};
+	int64_t m_AutoPasswordDeadline = 0;
+	void UpdateAutoPassword();
+	void HandleAutoPasswordMessage(const char *pMessage);
+	void EnsureAutoPasswordServer();
+	bool MatchPasswordEntry(SPasswordEntry *pOut) const;
+	void BuildLoginCommand(const SPasswordEntry &Entry, char *pOut, int OutSize) const;
 
 	// Team save/load (/st and /lt)
 	static constexpr int TEAM_LOAD_CONFIRM_SECONDS = 30;

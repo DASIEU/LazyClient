@@ -64,6 +64,7 @@ public:
 private:
 	CUi::SColorPickerPopupContext m_ColorPickerPopupContext;
 	ColorHSLA DoButton_ColorPicker(const CUIRect *pRect, unsigned int *pHslaColor, bool Alpha);
+	static CUi::EPopupMenuFunctionResult PopupAutoPassword(void *pContext, CUIRect View, bool Active);
 
 	int DoButton_GridHeader(const void *pId, const char *pText, int Checked, const CUIRect *pRect, int Align = TEXTALIGN_ML);
 	int DoButton_Favorite(const void *pButtonId, const void *pParentId, bool Checked, const CUIRect *pRect);

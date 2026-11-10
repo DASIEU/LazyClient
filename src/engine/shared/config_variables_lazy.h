@@ -89,6 +89,10 @@ MACRO_CONFIG_INT(LcAutoHi, lc_auto_hi, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "
 MACRO_CONFIG_INT(LcAutoHiMode, lc_auto_hi_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto greeting reply mode: 0 = same chat, 1 = same chat with mention, 2 = whisper")
 MACRO_CONFIG_STR(LcAutoHiMessages, lc_auto_hi_messages, 128, "hi|hello|hey", CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto greeting replies separated by | (one is picked at random)")
 
+// Auto password
+MACRO_CONFIG_INT(LcAutoPassword, lc_auto_password, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically send the stored login command when joining a matching server")
+MACRO_CONFIG_INT(LcAutoPasswordDelay, lc_auto_password_delay, 3, 0, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Seconds to wait after joining before the stored login is sent")
+
 // Swap request timer
 MACRO_CONFIG_INT(LcSwapTimer, lc_swap_timer, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a countdown for pending swap requests")
 MACRO_CONFIG_INT(LcSwapTimerMode, lc_swap_timer_mode, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Which swap requests to show: 0 = all, 1 = your team, 2 = only yours")

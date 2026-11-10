@@ -24,6 +24,7 @@
 #include <io.h>
 #include <shlobj.h> // SHGetKnownFolderPath
 #include <shlwapi.h>
+#include <sys/stat.h>
 #include <windows.h>
 
 #include <string>
@@ -647,4 +648,15 @@ int fs_file_time(const char *name, time_t *created, time_t *modified)
 #endif
 
 	return 0;
+}
+
+int fs_set_file_private(const char *name)
+{
+#if defined(CONF_FAMILY_WINDOWS)
+	return _chmod(name, _S_IREAD | _S_IWRITE);
+#elif defined(CONF_FAMILY_UNIX)
+	return chmod(name, S_IRUSR | S_IWUSR);
+#else
+	return 0;
+#endif
 }
