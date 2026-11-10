@@ -178,6 +178,8 @@ public:
 	void AddTuneLayer();
 	void AddSpeedupLayer();
 	void AddTeleLayer();
+	void AutoFreezeMap(int GroupIndex, int LayerIndex, int Image, int TileId);
+	std::vector<bool> BuildAutoFreezeMask(const CLayerTiles *pLayer) const;
 	void DeleteSelectedLayer();
 	void LayerSelectImage();
 	bool IsNonGameTileLayerSelected() const;
@@ -495,14 +497,25 @@ public:
 	};
 	CPopupMapTab m_PopupMapTab;
 	static CUi::EPopupMenuFunctionResult PopupGroup(void *pContext, CUIRect View, bool Active);
+	struct SAutoFreezePopupContext : public SPopupMenuId
+	{
+		CEditor *m_pEditor;
+		int m_GroupIndex;
+		int m_LayerIndex;
+		int m_Image;
+		int m_TileId;
+		int m_FreezeCount;
+	};
 	struct SLayerPopupContext : public SPopupMenuId
 	{
 		CEditor *m_pEditor;
 		std::vector<std::shared_ptr<CLayerTiles>> m_vpLayers;
 		std::vector<int> m_vLayerIndices;
 		CLayerTiles::SCommonPropState m_CommonPropState;
+		SAutoFreezePopupContext m_AutoFreezePopupContext;
 	};
 	static CUi::EPopupMenuFunctionResult PopupLayer(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupAutoFreeze(void *pContext, CUIRect View, bool Active);
 	class CQuadPopupContext : public SPopupMenuId
 	{
 	public:

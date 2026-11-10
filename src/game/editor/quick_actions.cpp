@@ -6,6 +6,9 @@
 #include <game/client/gameclient.h>
 #include <game/mapitems.h>
 
+#include <algorithm>
+#include <vector>
+
 void CEditor::FillGameTiles(EGameTileOp FillTile) const
 {
 	std::shared_ptr<CLayerTiles> pTileLayer = std::static_pointer_cast<CLayerTiles>(Map()->SelectedLayerType(0, LAYERTYPE_TILES));
@@ -71,6 +74,106 @@ void CEditor::AddTileLayer()
 	Map()->SelectLayer(LayerIndex);
 	Map()->m_vpGroups[Map()->m_SelectedGroup]->m_Collapse = false;
 	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionAddLayer>(Map(), Map()->m_SelectedGroup, LayerIndex));
+}
+
+static bool IsAutoFreezeHookableGameTile(int Index)
+{
+	switch(Index)
+	{
+	case TILE_SOLID:
+	case TILE_FREEZE:
+	case TILE_UNFREEZE:
+	case TILE_DFREEZE:
+	case TILE_DUNFREEZE:
+	case TILE_LFREEZE:
+	case TILE_LUNFREEZE:
+	case TILE_WALLJUMP:
+		return true;
+	default:
+		return false;
+	}
+}
+
+std::vector<bool> CEditor::BuildAutoFreezeMask(const CLayerTiles *pLayer) const
+{
+	const size_t TileCount = (size_t)pLayer->m_Width * pLayer->m_Height;
+	std::vector<bool> vSource(TileCount, false);
+	std::vector<bool> vOccupied(TileCount, false);
+
+	for(int y = 0; y < pLayer->m_Height; y++)
+	{
+		for(int x = 0; x < pLayer->m_Width; x++)
+		{
+			const size_t Index = (size_t)y * pLayer->m_Width + x;
+			const int TileIndex = pLayer->m_pTiles[Index].m_Index;
+			vOccupied[Index] = TileIndex != TILE_AIR;
+			// The game layer stores the actual hookable blocks, while a regular
+			// tile layer is used as-is and every non-empty tile counts as a block.
+			vSource[Index] = pLayer->m_HasGame ? IsAutoFreezeHookableGameTile(TileIndex) : TileIndex != TILE_AIR;
+		}
+	}
+
+	std::vector<bool> vFreeze(TileCount, false);
+	for(int y = 0; y < pLayer->m_Height; y++)
+	{
+		for(int x = 0; x < pLayer->m_Width; x++)
+		{
+			if(!vSource[(size_t)y * pLayer->m_Width + x])
+				continue;
+			for(int dy = -1; dy <= 1; dy++)
+			{
+				for(int dx = -1; dx <= 1; dx++)
+				{
+					if(dx == 0 && dy == 0)
+						continue;
+					const int nx = x + dx;
+					const int ny = y + dy;
+					if(nx < 0 || nx >= pLayer->m_Width || ny < 0 || ny >= pLayer->m_Height)
+						continue;
+					const size_t Neighbor = (size_t)ny * pLayer->m_Width + nx;
+					if(!vOccupied[Neighbor])
+						vFreeze[Neighbor] = true;
+				}
+			}
+		}
+	}
+	return vFreeze;
+}
+
+void CEditor::AutoFreezeMap(int GroupIndex, int LayerIndex, int Image, int TileId)
+{
+	if(GroupIndex < 0 || GroupIndex >= (int)Map()->m_vpGroups.size())
+		return;
+	std::shared_ptr<CLayerGroup> pGroup = Map()->m_vpGroups[GroupIndex];
+	if(LayerIndex < 0 || LayerIndex >= (int)pGroup->m_vpLayers.size())
+		return;
+	if(Image < 0 || Image >= (int)Map()->m_vpImages.size())
+		return;
+
+	std::shared_ptr<CLayerTiles> pSource = std::dynamic_pointer_cast<CLayerTiles>(pGroup->m_vpLayers[LayerIndex]);
+	if(!pSource)
+		return;
+
+	const std::vector<bool> vFreeze = BuildAutoFreezeMask(pSource.get());
+
+	std::shared_ptr<CLayerTiles> pLayer = std::make_shared<CLayerTiles>(Map(), pSource->m_Width, pSource->m_Height);
+	pLayer->m_Image = Image;
+	str_copy(pLayer->m_aName, "Auto freeze", sizeof(pLayer->m_aName));
+	const int FreezeTile = std::clamp(TileId, 0, 255);
+	for(int y = 0; y < pLayer->m_Height; y++)
+	{
+		for(int x = 0; x < pLayer->m_Width; x++)
+		{
+			if(vFreeze[(size_t)y * pLayer->m_Width + x])
+				pLayer->SetTileIgnoreHistory(x, y, CTile{(unsigned char)FreezeTile});
+		}
+	}
+
+	pGroup->AddLayer(pLayer);
+	const int NewLayerIndex = (int)pGroup->m_vpLayers.size() - 1;
+	Map()->SelectLayer(NewLayerIndex, GroupIndex);
+	pGroup->m_Collapse = false;
+	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionAddLayer>(Map(), GroupIndex, NewLayerIndex));
 }
 
 void CEditor::AddQuadsLayer()

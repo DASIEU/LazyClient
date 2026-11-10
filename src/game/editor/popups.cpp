@@ -826,6 +826,33 @@ CUi::EPopupMenuFunctionResult CEditor::PopupLayer(void *pContext, CUIRect View, 
 		}
 	}
 
+	// auto freeze map for regular tile layers and the game layer
+	const bool CanAutoFreeze = pCurrentLayer->m_Type == LAYERTYPE_TILES &&
+		(!pCurrentLayer->IsEntitiesLayer() || pCurrentLayer.get() == pEditor->Map()->m_pGameLayer.get());
+	if(CanAutoFreeze)
+	{
+		CUIRect AutoFreezeButton;
+		View.HSplitBottom(4.0f, &View, nullptr);
+		View.HSplitBottom(12.0f, &View, &AutoFreezeButton);
+		static int s_AutoFreezeButton = 0;
+		if(pEditor->DoButton_Editor(&s_AutoFreezeButton, "Auto freeze map", 0, &AutoFreezeButton, BUTTONFLAG_LEFT, "Create a new tile layer with freeze tiles around every hookable tile of this layer."))
+		{
+			std::shared_ptr<CLayerTiles> pTiles = std::static_pointer_cast<CLayerTiles>(pCurrentLayer);
+			SAutoFreezePopupContext *pFreezePopup = &pPopup->m_AutoFreezePopupContext;
+			pFreezePopup->m_pEditor = pEditor;
+			pFreezePopup->m_GroupIndex = pEditor->Map()->m_SelectedGroup;
+			pFreezePopup->m_LayerIndex = pEditor->Map()->m_vSelectedLayers[0];
+			pFreezePopup->m_Image = pTiles->m_Image;
+			pFreezePopup->m_TileId = 0;
+			const std::vector<bool> vMask = pEditor->BuildAutoFreezeMask(pTiles.get());
+			pFreezePopup->m_FreezeCount = 0;
+			for(bool Freeze : vMask)
+				pFreezePopup->m_FreezeCount += Freeze ? 1 : 0;
+			pEditor->Ui()->DoPopupMenu(pFreezePopup, pEditor->Ui()->MouseX(), pEditor->Ui()->MouseY(), 240.0f, 150.0f, pFreezePopup, PopupAutoFreeze);
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+
 	// layer name
 	if(!EntitiesLayer) // name cannot be changed for entities layers
 	{
@@ -894,6 +921,74 @@ CUi::EPopupMenuFunctionResult CEditor::PopupLayer(void *pContext, CUIRect View, 
 	pEditor->Map()->m_LayerPropTracker.End(Prop, State);
 
 	return pCurrentLayer->RenderProperties(&View);
+}
+
+CUi::EPopupMenuFunctionResult CEditor::PopupAutoFreeze(void *pContext, CUIRect View, bool Active)
+{
+	SAutoFreezePopupContext *pCtx = (SAutoFreezePopupContext *)pContext;
+	CEditor *pEditor = pCtx->m_pEditor;
+
+	CUIRect Title, Label, Row;
+	View.HSplitTop(14.0f, &Title, &View);
+	pEditor->Ui()->DoLabel(&Title, "Auto freeze map", 12.0f, TEXTALIGN_ML);
+
+	View.HSplitTop(10.0f, &Label, &View);
+	pEditor->Ui()->DoLabel(&Label, "New tile layer with freeze tiles around", 8.5f, TEXTALIGN_ML);
+	View.HSplitTop(10.0f, &Label, &View);
+	pEditor->Ui()->DoLabel(&Label, "every hookable tile of the source layer.", 8.5f, TEXTALIGN_ML);
+
+	View.HSplitTop(6.0f, nullptr, &View);
+
+	View.HSplitTop(12.0f, &Row, &View);
+	Row.VSplitLeft(58.0f, &Label, &Row);
+	pEditor->Ui()->DoLabel(&Label, "Freeze image", 9.5f, TEXTALIGN_ML);
+	const char *pImageName = "Select image";
+	if(pCtx->m_Image >= 0 && pCtx->m_Image < (int)pEditor->Map()->m_vpImages.size())
+		pImageName = pEditor->Map()->m_vpImages[pCtx->m_Image]->m_aName;
+	static int s_ImageButton = 0;
+	if(pEditor->DoButton_Editor(&s_ImageButton, pImageName, 0, &Row, BUTTONFLAG_LEFT, "Choose the image that contains the freeze tile."))
+		pEditor->PopupSelectImageInvoke(pCtx->m_Image, pEditor->Ui()->MouseX(), pEditor->Ui()->MouseY());
+	const int SelectedImage = pEditor->PopupSelectImageResult();
+	if(SelectedImage >= -1)
+		pCtx->m_Image = SelectedImage;
+
+	View.HSplitTop(3.0f, nullptr, &View);
+
+	View.HSplitTop(12.0f, &Row, &View);
+	Row.VSplitLeft(58.0f, &Label, &Row);
+	pEditor->Ui()->DoLabel(&Label, "Freeze tile ID", 9.5f, TEXTALIGN_ML);
+	auto TileIdResult = pEditor->UiDoValueSelector(&pCtx->m_TileId, &Row, "", pCtx->m_TileId, 0, 255, 1, 1.0f, "Tile index in the selected image. Drag or right-click to edit.", false, false);
+	if(TileIdResult.m_Value != pCtx->m_TileId)
+		pCtx->m_TileId = TileIdResult.m_Value;
+
+	View.HSplitTop(5.0f, nullptr, &View);
+	View.HSplitTop(10.0f, &Label, &View);
+	char aCount[96];
+	if(pCtx->m_FreezeCount > 0)
+		str_format(aCount, sizeof(aCount), "%d freeze tile%s will be created.", pCtx->m_FreezeCount, pCtx->m_FreezeCount == 1 ? "" : "s");
+	else
+		str_copy(aCount, "No hookable tiles found in this layer.", sizeof(aCount));
+	pEditor->Ui()->DoLabel(&Label, aCount, 9.0f, TEXTALIGN_ML);
+
+	View.HSplitTop(6.0f, nullptr, &View);
+	View.HSplitTop(12.0f, &Row, &View);
+	CUIRect CancelButton, CreateButton;
+	Row.VSplitLeft(Row.w / 2.0f - 3.0f, &CancelButton, &Row);
+	Row.VSplitLeft(6.0f, nullptr, &Row);
+	CreateButton = Row;
+
+	static int s_CancelButton = 0, s_CreateButton = 0;
+	if(pEditor->DoButton_Editor(&s_CancelButton, "Cancel", 0, &CancelButton, BUTTONFLAG_LEFT, "Close without creating a layer."))
+		return CUi::POPUP_CLOSE_CURRENT;
+
+	const bool CanCreate = pCtx->m_Image >= 0 && pCtx->m_Image < (int)pEditor->Map()->m_vpImages.size() && pCtx->m_FreezeCount > 0;
+	if(pEditor->DoButton_Editor(&s_CreateButton, "Create layer", CanCreate ? 0 : -1, &CreateButton, BUTTONFLAG_LEFT, CanCreate ? "Create the freeze layer." : "Select an image and make sure the source layer has hookable tiles.") && CanCreate)
+	{
+		pEditor->AutoFreezeMap(pCtx->m_GroupIndex, pCtx->m_LayerIndex, pCtx->m_Image, pCtx->m_TileId);
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
 }
 
 CUi::EPopupMenuFunctionResult CEditor::PopupQuad(void *pContext, CUIRect View, bool Active)
