@@ -180,6 +180,8 @@ public:
 	void AddTeleLayer();
 	void AutoFreezeMap(int GroupIndex, int LayerIndex, int Image, int TileId);
 	std::vector<bool> BuildAutoFreezeMask(const CLayerTiles *pLayer) const;
+	void PopupMergeLayersInvoke(const std::vector<std::shared_ptr<CLayerTiles>> &vpLayers, const std::vector<int> &vLayerIndices);
+	void MergeLayers();
 	void DeleteSelectedLayer();
 	void LayerSelectImage();
 	bool IsNonGameTileLayerSelected() const;
@@ -506,6 +508,20 @@ public:
 		int m_TileId;
 		int m_FreezeCount;
 	};
+	struct SMergeLayersPopupContext : public SPopupMenuId
+	{
+		struct SEntry
+		{
+			std::shared_ptr<CLayerTiles> m_pLayer;
+			int m_LayerIndex;
+			std::vector<int> m_vTileIds;
+			std::vector<bool> m_vSelected;
+		};
+		CEditor *m_pEditor;
+		int m_GroupIndex;
+		int m_OutputImage;
+		std::vector<SEntry> m_vEntries;
+	};
 	struct SLayerPopupContext : public SPopupMenuId
 	{
 		CEditor *m_pEditor;
@@ -516,6 +532,8 @@ public:
 	};
 	static CUi::EPopupMenuFunctionResult PopupLayer(void *pContext, CUIRect View, bool Active);
 	static CUi::EPopupMenuFunctionResult PopupAutoFreeze(void *pContext, CUIRect View, bool Active);
+	static CUi::EPopupMenuFunctionResult PopupMergeLayers(void *pContext, CUIRect View, bool Active);
+	SMergeLayersPopupContext m_MergeLayersPopupContext;
 	class CQuadPopupContext : public SPopupMenuId
 	{
 	public:

@@ -18,6 +18,7 @@
 #include <game/editor/mapitems/image.h>
 #include <game/editor/mapitems/sound.h>
 
+#include <algorithm>
 #include <limits>
 
 CUi::EPopupMenuFunctionResult CEditor::PopupMenuFile(void *pContext, CUIRect View, bool Active)
@@ -794,6 +795,15 @@ CUi::EPopupMenuFunctionResult CEditor::PopupLayer(void *pContext, CUIRect View, 
 
 	if(pPopup->m_vpLayers.size() > 1)
 	{
+		CUIRect MergeButton;
+		View.HSplitBottom(12.0f, &View, &MergeButton);
+		View.HSplitBottom(4.0f, &View, nullptr);
+		static int s_MergeLayersButton = 0;
+		if(pEditor->DoButton_Editor(&s_MergeLayersButton, "Merge layers...", 0, &MergeButton, BUTTONFLAG_LEFT, "Copy specific tile IDs from the selected layers into a new layer."))
+		{
+			pEditor->PopupMergeLayersInvoke(pPopup->m_vpLayers, pPopup->m_vLayerIndices);
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
 		return CLayerTiles::RenderCommonProperties(pPopup->m_CommonPropState, pEditor->Map(), &View, pPopup->m_vpLayers, pPopup->m_vLayerIndices);
 	}
 
@@ -985,6 +995,148 @@ CUi::EPopupMenuFunctionResult CEditor::PopupAutoFreeze(void *pContext, CUIRect V
 	if(pEditor->DoButton_Editor(&s_CreateButton, "Create layer", CanCreate ? 0 : -1, &CreateButton, BUTTONFLAG_LEFT, CanCreate ? "Create the freeze layer." : "Select an image and make sure the source layer has hookable tiles.") && CanCreate)
 	{
 		pEditor->AutoFreezeMap(pCtx->m_GroupIndex, pCtx->m_LayerIndex, pCtx->m_Image, pCtx->m_TileId);
+		return CUi::POPUP_CLOSE_CURRENT;
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+CUi::EPopupMenuFunctionResult CEditor::PopupMergeLayers(void *pContext, CUIRect View, bool Active)
+{
+	SMergeLayersPopupContext *pCtx = (SMergeLayersPopupContext *)pContext;
+	CEditor *pEditor = pCtx->m_pEditor;
+
+	CUIRect Title, Label, Row;
+	View.HSplitTop(14.0f, &Title, &View);
+	pEditor->Ui()->DoLabel(&Title, "Merge layers", 12.0f, TEXTALIGN_ML);
+
+	View.HSplitTop(10.0f, &Label, &View);
+	pEditor->Ui()->DoLabel(&Label, "Only checked tile IDs are copied. Source layers stay unchanged.", 8.5f, TEXTALIGN_ML);
+
+	View.HSplitTop(5.0f, nullptr, &View);
+
+	View.HSplitTop(12.0f, &Row, &View);
+	Row.VSplitLeft(78.0f, &Label, &Row);
+	pEditor->Ui()->DoLabel(&Label, "Output image", 9.5f, TEXTALIGN_ML);
+	const char *pImageName = "Select image";
+	if(pCtx->m_OutputImage >= 0 && pCtx->m_OutputImage < (int)pEditor->Map()->m_vpImages.size())
+		pImageName = pEditor->Map()->m_vpImages[pCtx->m_OutputImage]->m_aName;
+	static int s_OutputImageButton = 0;
+	if(pEditor->DoButton_Editor(&s_OutputImageButton, pImageName, 0, &Row, BUTTONFLAG_LEFT, "Choose the image for the merged layer."))
+		pEditor->PopupSelectImageInvoke(pCtx->m_OutputImage, pEditor->Ui()->MouseX(), pEditor->Ui()->MouseY());
+	const int SelectedImage = pEditor->PopupSelectImageResult();
+	if(SelectedImage >= -1)
+		pCtx->m_OutputImage = SelectedImage;
+
+	View.HSplitTop(6.0f, nullptr, &View);
+
+	int SelectedCount = 0;
+	for(const auto &Entry : pCtx->m_vEntries)
+	{
+		for(bool Selected : Entry.m_vSelected)
+			SelectedCount += Selected ? 1 : 0;
+	}
+
+	CUIRect Footer;
+	View.HSplitBottom(12.0f, &View, &Footer);
+	View.HSplitBottom(4.0f, &View, nullptr);
+
+	// The tile list is scrollable because layers can use many different tile IDs.
+	CUIRect List = View;
+	static CScrollRegion s_MergeScroll;
+	CScrollRegionParams Params;
+	Params.m_ScrollUnit = 30.0f;
+	Params.m_ScrollbarThickness = 10.0f;
+	Params.m_ScrollbarMargin = 3.0f;
+	Params.m_ForceShowScrollbar = true;
+	s_MergeScroll.Begin(&List, &Params);
+
+	CUIRect Content = List;
+	const float CellWidth = 30.0f;
+	const float CellHeight = 14.0f;
+	const float CellGap = 2.0f;
+
+	for(auto &Entry : pCtx->m_vEntries)
+	{
+		CUIRect Header;
+		Content.HSplitTop(14.0f, &Header, &Content);
+		if(s_MergeScroll.AddRect(Header))
+		{
+			CUIRect AllButton, NoneButton;
+			Header.VSplitRight(36.0f, &Header, &NoneButton);
+			Header.VSplitRight(2.0f, &Header, nullptr);
+			Header.VSplitRight(36.0f, &Header, &AllButton);
+
+			char aName[64];
+			if(Entry.m_pLayer->m_aName[0] != '\0')
+				str_copy(aName, Entry.m_pLayer->m_aName, sizeof(aName));
+			else
+				str_format(aName, sizeof(aName), "Layer %d", Entry.m_LayerIndex);
+			SLabelProperties Props;
+			Props.m_MaxWidth = Header.w;
+			Props.m_EllipsisAtEnd = true;
+			pEditor->Ui()->DoLabel(&Header, aName, 9.0f, TEXTALIGN_ML, Props);
+
+			if(pEditor->DoButton_Editor(&Entry.m_vTileIds, "All", 0, &AllButton, BUTTONFLAG_LEFT, "Select all tile IDs of this layer."))
+				std::fill(Entry.m_vSelected.begin(), Entry.m_vSelected.end(), true);
+			if(pEditor->DoButton_Editor(&Entry.m_vSelected, "None", 0, &NoneButton, BUTTONFLAG_LEFT, "Deselect all tile IDs of this layer."))
+				std::fill(Entry.m_vSelected.begin(), Entry.m_vSelected.end(), false);
+		}
+
+		if(Entry.m_vTileIds.empty())
+		{
+			CUIRect Empty;
+			Content.HSplitTop(12.0f, &Empty, &Content);
+			if(s_MergeScroll.AddRect(Empty))
+				pEditor->Ui()->DoLabel(&Empty, "(no tiles)", 8.5f, TEXTALIGN_ML);
+		}
+		else
+		{
+			const int PerRow = std::max(1, (int)((Content.w + CellGap) / (CellWidth + CellGap)));
+			const int Rows = ((int)Entry.m_vTileIds.size() + PerRow - 1) / PerRow;
+			CUIRect Grid;
+			Content.HSplitTop(Rows * (CellHeight + CellGap), &Grid, &Content);
+			for(size_t i = 0; i < Entry.m_vTileIds.size(); i++)
+			{
+				const int Column = (int)i % PerRow;
+				const int RowIndex = (int)i / PerRow;
+				CUIRect Cell = {
+					Grid.x + Column * (CellWidth + CellGap),
+					Grid.y + RowIndex * (CellHeight + CellGap),
+					CellWidth,
+					CellHeight};
+				if(!s_MergeScroll.AddRect(Cell))
+					continue;
+
+				char aId[8];
+				str_format(aId, sizeof(aId), "%d", Entry.m_vTileIds[i]);
+				if(pEditor->DoButton_Editor(&Entry.m_vTileIds[i], aId, Entry.m_vSelected[i] ? 1 : 0, &Cell, BUTTONFLAG_LEFT, "Copy this tile ID."))
+					Entry.m_vSelected[i] = !Entry.m_vSelected[i];
+			}
+		}
+
+		CUIRect Spacer;
+		Content.HSplitTop(6.0f, &Spacer, &Content);
+		s_MergeScroll.AddRect(Spacer);
+	}
+
+	s_MergeScroll.End();
+
+	CUIRect CancelButton, MergeButton;
+	Footer.VSplitLeft(Footer.w / 2.0f - 3.0f, &CancelButton, &Footer);
+	Footer.VSplitLeft(6.0f, nullptr, &Footer);
+	MergeButton = Footer;
+
+	static int s_CancelButton = 0, s_MergeButton = 0;
+	if(pEditor->DoButton_Editor(&s_CancelButton, "Cancel", 0, &CancelButton, BUTTONFLAG_LEFT, "Close without merging."))
+		return CUi::POPUP_CLOSE_CURRENT;
+
+	const bool CanMerge = pCtx->m_OutputImage >= 0 && pCtx->m_OutputImage < (int)pEditor->Map()->m_vpImages.size() && SelectedCount > 0;
+	char aMergeLabel[64];
+	str_format(aMergeLabel, sizeof(aMergeLabel), "Merge (%d)", SelectedCount);
+	if(pEditor->DoButton_Editor(&s_MergeButton, aMergeLabel, CanMerge ? 0 : -1, &MergeButton, BUTTONFLAG_LEFT, CanMerge ? "Create a new layer with the selected tiles." : "Select an image and at least one tile ID.") && CanMerge)
+	{
+		pEditor->MergeLayers();
 		return CUi::POPUP_CLOSE_CURRENT;
 	}
 

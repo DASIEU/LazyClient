@@ -176,6 +176,99 @@ void CEditor::AutoFreezeMap(int GroupIndex, int LayerIndex, int Image, int TileI
 	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionAddLayer>(Map(), GroupIndex, NewLayerIndex));
 }
 
+void CEditor::PopupMergeLayersInvoke(const std::vector<std::shared_ptr<CLayerTiles>> &vpLayers, const std::vector<int> &vLayerIndices)
+{
+	SMergeLayersPopupContext *pCtx = &m_MergeLayersPopupContext;
+	pCtx->m_pEditor = this;
+	pCtx->m_GroupIndex = Map()->m_SelectedGroup;
+	pCtx->m_OutputImage = -1;
+	pCtx->m_vEntries.clear();
+
+	for(size_t i = 0; i < vpLayers.size() && i < vLayerIndices.size(); i++)
+	{
+		SMergeLayersPopupContext::SEntry Entry;
+		Entry.m_pLayer = vpLayers[i];
+		Entry.m_LayerIndex = vLayerIndices[i];
+
+		bool aUsed[256] = {};
+		for(int t = 0; t < Entry.m_pLayer->m_Width * Entry.m_pLayer->m_Height; t++)
+		{
+			const int Index = Entry.m_pLayer->m_pTiles[t].m_Index;
+			if(Index != TILE_AIR)
+				aUsed[Index] = true;
+		}
+		for(int Id = 1; Id < 256; Id++)
+		{
+			if(aUsed[Id])
+			{
+				Entry.m_vTileIds.push_back(Id);
+				Entry.m_vSelected.push_back(true);
+			}
+		}
+		pCtx->m_vEntries.push_back(std::move(Entry));
+	}
+
+	// Merge in layer order so that the topmost selected layer wins when multiple
+	// layers contain a selected tile at the same position.
+	std::sort(pCtx->m_vEntries.begin(), pCtx->m_vEntries.end(), [](const auto &A, const auto &B) { return A.m_LayerIndex < B.m_LayerIndex; });
+
+	if(!pCtx->m_vEntries.empty())
+		pCtx->m_OutputImage = pCtx->m_vEntries.front().m_pLayer->m_Image;
+	if(pCtx->m_OutputImage < 0 && Map()->m_SelectedImage >= 0 && (size_t)Map()->m_SelectedImage < Map()->m_vpImages.size())
+		pCtx->m_OutputImage = Map()->m_SelectedImage;
+
+	Ui()->DoPopupMenu(pCtx, Ui()->MouseX(), Ui()->MouseY(), 430.0f, std::min(460.0f, Ui()->Screen()->h - 20.0f), pCtx, PopupMergeLayers);
+}
+
+void CEditor::MergeLayers()
+{
+	SMergeLayersPopupContext &Ctx = m_MergeLayersPopupContext;
+	if(Ctx.m_GroupIndex < 0 || Ctx.m_GroupIndex >= (int)Map()->m_vpGroups.size())
+		return;
+	if(Ctx.m_OutputImage < 0 || Ctx.m_OutputImage >= (int)Map()->m_vpImages.size())
+		return;
+
+	int Width = 2;
+	int Height = 2;
+	for(const auto &Entry : Ctx.m_vEntries)
+	{
+		Width = std::max(Width, Entry.m_pLayer->m_Width);
+		Height = std::max(Height, Entry.m_pLayer->m_Height);
+	}
+
+	std::shared_ptr<CLayerGroup> pGroup = Map()->m_vpGroups[Ctx.m_GroupIndex];
+	std::shared_ptr<CLayerTiles> pLayer = std::make_shared<CLayerTiles>(Map(), Width, Height);
+	pLayer->m_Image = Ctx.m_OutputImage;
+	str_copy(pLayer->m_aName, "Merged", sizeof(pLayer->m_aName));
+
+	for(const auto &Entry : Ctx.m_vEntries)
+	{
+		// Ignore layers that were removed or moved while the popup was open.
+		if(std::find(pGroup->m_vpLayers.begin(), pGroup->m_vpLayers.end(), Entry.m_pLayer) == pGroup->m_vpLayers.end())
+			continue;
+
+		bool aSelected[256] = {};
+		for(size_t i = 0; i < Entry.m_vTileIds.size() && i < Entry.m_vSelected.size(); i++)
+			aSelected[Entry.m_vTileIds[i]] = Entry.m_vSelected[i];
+
+		for(int y = 0; y < Entry.m_pLayer->m_Height && y < Height; y++)
+		{
+			for(int x = 0; x < Entry.m_pLayer->m_Width && x < Width; x++)
+			{
+				const CTile Tile = Entry.m_pLayer->m_pTiles[y * Entry.m_pLayer->m_Width + x];
+				if(Tile.m_Index != TILE_AIR && aSelected[Tile.m_Index])
+					pLayer->SetTileIgnoreHistory(x, y, Tile);
+			}
+		}
+	}
+
+	pGroup->AddLayer(pLayer);
+	const int NewLayerIndex = (int)pGroup->m_vpLayers.size() - 1;
+	Map()->SelectLayer(NewLayerIndex, Ctx.m_GroupIndex);
+	pGroup->m_Collapse = false;
+	Map()->m_EditorHistory.RecordAction(std::make_shared<CEditorActionAddLayer>(Map(), Ctx.m_GroupIndex, NewLayerIndex));
+}
+
 void CEditor::AddQuadsLayer()
 {
 	std::shared_ptr<CLayer> pQuadLayer = std::make_shared<CLayerQuads>(Map());
