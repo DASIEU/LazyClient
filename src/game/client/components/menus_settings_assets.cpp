@@ -1,19 +1,32 @@
 #include "menus.h"
 
 #include <base/dbg.h>
+#include <base/io.h>
+#include <base/mem.h>
 #include <base/str.h>
 #include <base/time.h>
 
 #include <engine/font_icons.h>
+#include <engine/gfx/image_loader.h>
+#include <engine/image.h>
 #include <engine/shared/config.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
 
 #include <game/client/gameclient.h>
 #include <game/client/ui_listbox.h>
+#include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
 
+#include <generated/client_data.h>
+
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
 
 using namespace std::chrono_literals;
 
@@ -35,7 +48,8 @@ enum
 	ASSETS_TAB_HUD = 4,
 	ASSETS_TAB_EXTRAS = 5,
 	ASSETS_TAB_AUDIO = 6,
-	NUMBER_OF_ASSETS_TABS = 7,
+	ASSETS_TAB_BAKER = 7,
+	NUMBER_OF_ASSETS_TABS = 8,
 };
 
 void CMenus::LoadEntities(SCustomEntities *pEntitiesItem, void *pUser)
@@ -402,7 +416,8 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 		Localize("Particles"),
 		Localize("HUD"),
 		Localize("Extras"),
-		Localize("Sounds")};
+		Localize("Sounds"),
+		Localize("Baker")};
 
 	for(int Tab = ASSETS_TAB_ENTITIES; Tab < NUMBER_OF_ASSETS_TABS; ++Tab)
 	{
@@ -413,6 +428,12 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 		{
 			s_CurCustomTab = Tab;
 		}
+	}
+
+	if(s_CurCustomTab == ASSETS_TAB_BAKER)
+	{
+		RenderAssetBaker(MainView);
+		return;
 	}
 
 	auto LoadStartTime = time_get_nanoseconds();
@@ -726,8 +747,525 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 }
 
-void CMenus::ConchainAssetsEntities(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData)
+struct SAssetBakeSlot
 {
+	const char *m_pName;
+	std::vector<int> m_vSprites;
+};
+
+static const std::vector<SAssetBakeSlot> &GetAssetBakeSlots()
+{
+	static const std::vector<SAssetBakeSlot> s_vSlots = {
+		{"Crosshairs", {SPRITE_WEAPON_HAMMER_CURSOR, SPRITE_WEAPON_GUN_CURSOR, SPRITE_WEAPON_SHOTGUN_CURSOR, SPRITE_WEAPON_GRENADE_CURSOR, SPRITE_WEAPON_LASER_CURSOR, SPRITE_WEAPON_NINJA_CURSOR}},
+		{"Health & armor", {SPRITE_HEALTH_FULL, SPRITE_HEALTH_EMPTY, SPRITE_ARMOR_FULL, SPRITE_ARMOR_EMPTY}},
+		{"Weapon bodies", {SPRITE_WEAPON_HAMMER_BODY, SPRITE_WEAPON_GUN_BODY, SPRITE_WEAPON_SHOTGUN_BODY, SPRITE_WEAPON_GRENADE_BODY, SPRITE_WEAPON_LASER_BODY, SPRITE_WEAPON_NINJA_BODY}},
+		{"Projectiles", {SPRITE_WEAPON_GUN_PROJ, SPRITE_WEAPON_SHOTGUN_PROJ, SPRITE_WEAPON_GRENADE_PROJ, SPRITE_WEAPON_LASER_PROJ}},
+		{"Muzzles", {SPRITE_WEAPON_GUN_MUZZLE1, SPRITE_WEAPON_GUN_MUZZLE2, SPRITE_WEAPON_GUN_MUZZLE3, SPRITE_WEAPON_SHOTGUN_MUZZLE1, SPRITE_WEAPON_SHOTGUN_MUZZLE2, SPRITE_WEAPON_SHOTGUN_MUZZLE3, SPRITE_WEAPON_NINJA_MUZZLE1, SPRITE_WEAPON_NINJA_MUZZLE2, SPRITE_WEAPON_NINJA_MUZZLE3}},
+		{"Hook", {SPRITE_HOOK_CHAIN, SPRITE_HOOK_HEAD}},
+		{"Pickups", {SPRITE_PICKUP_HEALTH, SPRITE_PICKUP_FREEZE, SPRITE_PICKUP_ARMOR, SPRITE_PICKUP_HAMMER, SPRITE_PICKUP_GUN, SPRITE_PICKUP_SHOTGUN, SPRITE_PICKUP_GRENADE, SPRITE_PICKUP_LASER, SPRITE_PICKUP_NINJA, SPRITE_PICKUP_ARMOR_SHOTGUN, SPRITE_PICKUP_ARMOR_GRENADE, SPRITE_PICKUP_ARMOR_NINJA, SPRITE_PICKUP_ARMOR_LASER}},
+		{"Flags", {SPRITE_FLAG_BLUE, SPRITE_FLAG_RED}},
+		{"Particles & stars", {SPRITE_PART1, SPRITE_PART2, SPRITE_PART3, SPRITE_PART4, SPRITE_PART5, SPRITE_PART6, SPRITE_PART7, SPRITE_PART8, SPRITE_PART9, SPRITE_STAR1, SPRITE_STAR2, SPRITE_STAR3}},
+	};
+	return s_vSlots;
+}
+
+static std::vector<std::string> s_vBakeSlotPacks;
+static std::string s_BakeBasePack;
+static int s_BakeCurrentSlot = 0;
+static bool s_BakeStateInitialized = false;
+static char s_aBakeStatus[256] = "";
+static CLineInputBuffered<64> s_BakeOutputName;
+static CUi::SDropDownState s_BakeBaseDropDown;
+static CButtonContainer s_aBakeSlotButtons[32];
+
+static void GetBakeSpriteRect(const CImageInfo &Image, const CDataSprite &Sprite, int &X, int &Y, int &W, int &H)
+{
+	const int GridX = std::max(1, Sprite.m_pSet->m_Gridx);
+	const int GridY = std::max(1, Sprite.m_pSet->m_Gridy);
+	X = (int)((int64_t)Sprite.m_X * (int64_t)Image.m_Width / GridX);
+	Y = (int)((int64_t)Sprite.m_Y * (int64_t)Image.m_Height / GridY);
+	W = (int)((int64_t)Sprite.m_W * (int64_t)Image.m_Width / GridX);
+	H = (int)((int64_t)Sprite.m_H * (int64_t)Image.m_Height / GridY);
+	X = std::clamp(X, 0, (int)Image.m_Width);
+	Y = std::clamp(Y, 0, (int)Image.m_Height);
+	W = std::clamp(W, 0, (int)Image.m_Width - X);
+	H = std::clamp(H, 0, (int)Image.m_Height - Y);
+}
+
+static void BlitBakeSprite(CImageInfo &Dst, const CImageInfo &Src, const CDataSprite &Sprite)
+{
+	int SrcX, SrcY, SrcW, SrcH;
+	int DstX, DstY, DstW, DstH;
+	GetBakeSpriteRect(Src, Sprite, SrcX, SrcY, SrcW, SrcH);
+	GetBakeSpriteRect(Dst, Sprite, DstX, DstY, DstW, DstH);
+	if(SrcW <= 0 || SrcH <= 0 || DstW <= 0 || DstH <= 0)
+		return;
+
+	if(Src.m_Format == Dst.m_Format)
+	{
+		const size_t SrcPixel = Src.PixelSize();
+		const size_t DstPixel = Dst.PixelSize();
+		for(int y = 0; y < DstH; ++y)
+		{
+			const int Sy = SrcY + (int)((int64_t)y * SrcH / DstH);
+			for(int x = 0; x < DstW; ++x)
+			{
+				const int Sx = SrcX + (int)((int64_t)x * SrcW / DstW);
+				const size_t SrcOffset = ((size_t)Sy * Src.m_Width + Sx) * SrcPixel;
+				const size_t DstOffset = ((size_t)(DstY + y) * Dst.m_Width + (DstX + x)) * DstPixel;
+				mem_copy(&Dst.m_pData[DstOffset], &Src.m_pData[SrcOffset], std::min(SrcPixel, DstPixel));
+			}
+		}
+	}
+	else
+	{
+		for(int y = 0; y < DstH; ++y)
+		{
+			const int Sy = SrcY + (int)((int64_t)y * SrcH / DstH);
+			for(int x = 0; x < DstW; ++x)
+			{
+				const int Sx = SrcX + (int)((int64_t)x * SrcW / DstW);
+				Dst.SetPixelColor(DstX + x, DstY + y, Src.PixelColor(Sx, Sy));
+			}
+		}
+	}
+}
+
+static bool FindGameAssetPath(const char *pName, char *pBuffer, int BufferSize, IStorage *pStorage)
+{
+	if(str_comp(pName, "default") == 0)
+	{
+		str_copy(pBuffer, "game.png", BufferSize);
+		return pStorage->FileExists(pBuffer, IStorage::TYPE_ALL);
+	}
+
+	str_format(pBuffer, BufferSize, "assets/game/%s.png", pName);
+	if(pStorage->FileExists(pBuffer, IStorage::TYPE_ALL))
+		return true;
+
+	str_format(pBuffer, BufferSize, "assets/game/%s/game.png", pName);
+	return pStorage->FileExists(pBuffer, IStorage::TYPE_ALL);
+}
+
+static bool LoadGameAssetImage(const char *pName, CImageInfo &Image, IStorage *pStorage)
+{
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(!FindGameAssetPath(pName, aPath, sizeof(aPath), pStorage))
+		return false;
+
+	IOHANDLE File = pStorage->OpenFile(aPath, IOFLAG_READ, IStorage::TYPE_ALL);
+	if(!File)
+		return false;
+
+	int PngliteIncompatible = 0;
+	return CImageLoader::LoadPng(File, aPath, Image, PngliteIncompatible);
+}
+
+static void CopyToRgba(const CImageInfo &Src, CImageInfo &Dst)
+{
+	Dst.m_Width = Src.m_Width;
+	Dst.m_Height = Src.m_Height;
+	Dst.m_Format = CImageInfo::FORMAT_RGBA;
+	Dst.Allocate();
+	if(Src.m_Format == CImageInfo::FORMAT_RGBA)
+	{
+		mem_copy(Dst.m_pData, Src.m_pData, Src.DataSize());
+		return;
+	}
+	for(size_t y = 0; y < Src.m_Height; ++y)
+	{
+		for(size_t x = 0; x < Src.m_Width; ++x)
+			Dst.SetPixelColor(x, y, Src.PixelColor(x, y));
+	}
+}
+
+static void DrawBakePreview(IGraphics *pGraphics, IGraphics::CTextureHandle Texture, const std::vector<int> &vSprites, CUIRect Area)
+{
+	if(!Texture.IsValid())
+		return;
+
+	pGraphics->WrapClamp();
+	pGraphics->TextureSet(Texture);
+	pGraphics->QuadsBegin();
+	pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+	if(vSprites.empty())
+	{
+		float DrawW = Area.w;
+		float DrawH = Area.w / 2.0f;
+		if(DrawH > Area.h)
+		{
+			DrawH = Area.h;
+			DrawW = Area.h * 2.0f;
+		}
+		IGraphics::CQuadItem Quad(Area.x + (Area.w - DrawW) / 2.0f, Area.y + (Area.h - DrawH) / 2.0f, DrawW, DrawH);
+		pGraphics->QuadsSetSubsetFree(0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f);
+		pGraphics->QuadsDrawTL(&Quad, 1);
+	}
+	else
+	{
+		const int Columns = std::min<int>(4, (int)vSprites.size());
+		const int Rows = ((int)vSprites.size() + Columns - 1) / Columns;
+		const float CellW = Area.w / Columns;
+		const float CellH = Area.h / Rows;
+		for(size_t i = 0; i < vSprites.size(); ++i)
+		{
+			const CDataSprite &Sprite = g_pData->m_aSprites[vSprites[i]];
+			if(Sprite.m_W <= 0 || Sprite.m_H <= 0 || Sprite.m_pSet->m_Gridx <= 0 || Sprite.m_pSet->m_Gridy <= 0)
+				continue;
+
+			const float Aspect = ((float)Sprite.m_W / Sprite.m_pSet->m_Gridx) / ((float)Sprite.m_H / Sprite.m_pSet->m_Gridy);
+			float DrawW = CellW * 0.82f;
+			float DrawH = CellH * 0.82f;
+			if(DrawW / DrawH > Aspect)
+				DrawW = DrawH * Aspect;
+			else
+				DrawH = DrawW / Aspect;
+			const float X = Area.x + (i % Columns) * CellW + (CellW - DrawW) / 2.0f;
+			const float Y = Area.y + (i / Columns) * CellH + (CellH - DrawH) / 2.0f;
+
+			const float U0 = (float)Sprite.m_X / Sprite.m_pSet->m_Gridx;
+			const float V0 = (float)Sprite.m_Y / Sprite.m_pSet->m_Gridy;
+			const float U1 = (float)(Sprite.m_X + Sprite.m_W) / Sprite.m_pSet->m_Gridx;
+			const float V1 = (float)(Sprite.m_Y + Sprite.m_H) / Sprite.m_pSet->m_Gridy;
+
+			IGraphics::CQuadItem Quad(X, Y, DrawW, DrawH);
+			pGraphics->QuadsSetSubsetFree(U0, V0, U1, V0, U1, V1, U0, V1);
+			pGraphics->QuadsDrawTL(&Quad, 1);
+		}
+	}
+
+	pGraphics->QuadsEnd();
+	pGraphics->WrapNormal();
+}
+
+void CMenus::BakeGameSkin()
+{
+	const std::vector<SAssetBakeSlot> &vSlots = GetAssetBakeSlots();
+	if(s_vBakeSlotPacks.size() != vSlots.size())
+		s_vBakeSlotPacks.resize(vSlots.size());
+
+	const SCustomGame *pBasePack = nullptr;
+	for(const SCustomGame &Pack : m_vGameList)
+	{
+		if(str_comp(Pack.m_aName, s_BakeBasePack.c_str()) == 0)
+		{
+			pBasePack = &Pack;
+			break;
+		}
+	}
+	if(pBasePack == nullptr)
+	{
+		str_copy(s_aBakeStatus, "Select a valid base pack first.", sizeof(s_aBakeStatus));
+		return;
+	}
+
+	CImageInfo BaseImage;
+	if(!LoadGameAssetImage(s_BakeBasePack.c_str(), BaseImage, Storage()))
+	{
+		str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not load base pack \"%s\".", s_BakeBasePack.c_str());
+		return;
+	}
+
+	CImageInfo Result;
+	CopyToRgba(BaseImage, Result);
+	BaseImage.Free();
+
+	std::map<std::string, std::unique_ptr<CImageInfo>> LoadedImages;
+	int OverrideCount = 0;
+	for(size_t i = 0; i < vSlots.size(); ++i)
+	{
+		const std::string &SelectedPack = s_vBakeSlotPacks[i];
+		if(SelectedPack.empty() || SelectedPack == s_BakeBasePack)
+			continue;
+
+		auto It = LoadedImages.find(SelectedPack);
+		if(It == LoadedImages.end())
+		{
+			auto pImage = std::make_unique<CImageInfo>();
+			if(!LoadGameAssetImage(SelectedPack.c_str(), *pImage, Storage()))
+			{
+				str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not load \"%s\" for %s.", SelectedPack.c_str(), vSlots[i].m_pName);
+				Result.Free();
+				return;
+			}
+			It = LoadedImages.emplace(SelectedPack, std::move(pImage)).first;
+		}
+
+		for(int SpriteId : vSlots[i].m_vSprites)
+			BlitBakeSprite(Result, *It->second, g_pData->m_aSprites[SpriteId]);
+		OverrideCount++;
+	}
+
+	char aName[64];
+	str_copy(aName, s_BakeOutputName.GetString(), sizeof(aName));
+	if(aName[0] == '\0')
+		str_copy(aName, "custom", sizeof(aName));
+	for(char *p = aName; *p != '\0'; ++p)
+	{
+		const unsigned char c = (unsigned char)*p;
+		if(!std::isalnum(c) && c != '-' && c != '_' && c != ' ')
+			*p = '_';
+	}
+
+	char aFinalName[64];
+	str_copy(aFinalName, aName, sizeof(aFinalName));
+	int Suffix = 1;
+	auto NameExists = [&](const char *pName) {
+		for(const SCustomGame &Pack : m_vGameList)
+		{
+			if(str_comp(Pack.m_aName, pName) == 0)
+				return true;
+		}
+		char aPath[IO_MAX_PATH_LENGTH];
+		str_format(aPath, sizeof(aPath), "assets/game/%s.png", pName);
+		return Storage()->FileExists(aPath, IStorage::TYPE_SAVE);
+	};
+	while(NameExists(aFinalName))
+	{
+		str_format(aFinalName, sizeof(aFinalName), "%s_%d", aName, Suffix++);
+		if(Suffix > 1000)
+			break;
+	}
+
+	Storage()->CreateFolder("assets", IStorage::TYPE_SAVE);
+	Storage()->CreateFolder("assets/game", IStorage::TYPE_SAVE);
+	char aOutputPath[IO_MAX_PATH_LENGTH];
+	str_format(aOutputPath, sizeof(aOutputPath), "assets/game/%s.png", aFinalName);
+	IOHANDLE File = Storage()->OpenFile(aOutputPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!File || !CImageLoader::SavePng(File, aOutputPath, Result))
+	{
+		Result.Free();
+		str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not write \"%s\".", aOutputPath);
+		return;
+	}
+	Result.Free();
+
+	str_copy(g_Config.m_ClAssetGame, aFinalName);
+	s_BakeOutputName.Set(aFinalName);
+	ClearCustomItems(ASSETS_TAB_GAME);
+
+	// Rebuild the pack list immediately so the rest of this frame can use it.
+	SMenuAssetScanUser User;
+	User.m_pUser = this;
+	User.m_LoadedFunc = []() {};
+	SCustomGame DefaultPack;
+	str_copy(DefaultPack.m_aName, "default");
+	LoadAsset(&DefaultPack, "game", Graphics());
+	m_vGameList.push_back(DefaultPack);
+	Storage()->ListDirectory(IStorage::TYPE_ALL, "assets/game", GameScan, &User);
+	std::sort(m_vGameList.begin(), m_vGameList.end());
+
+	str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Baked \"%s\" with %d overrides.", aFinalName, OverrideCount);
+}
+
+void CMenus::RenderAssetBaker(CUIRect MainView)
+{
+	SMenuAssetScanUser User;
+	User.m_pUser = this;
+	User.m_LoadedFunc = []() {};
+
+	if(m_vGameList.empty())
+	{
+		SCustomGame DefaultPack;
+		str_copy(DefaultPack.m_aName, "default");
+		LoadAsset(&DefaultPack, "game", Graphics());
+		m_vGameList.push_back(DefaultPack);
+
+		Storage()->ListDirectory(IStorage::TYPE_ALL, "assets/game", GameScan, &User);
+		std::sort(m_vGameList.begin(), m_vGameList.end());
+	}
+
+	const std::vector<SAssetBakeSlot> &vSlots = GetAssetBakeSlots();
+	if(s_vBakeSlotPacks.size() != vSlots.size())
+		s_vBakeSlotPacks.resize(vSlots.size());
+	if(!s_BakeStateInitialized)
+	{
+		s_BakeStateInitialized = true;
+		s_BakeBasePack = g_Config.m_ClAssetGame;
+		s_BakeOutputName.Set("custom");
+	}
+	if(s_BakeCurrentSlot < 0 || s_BakeCurrentSlot >= (int)vSlots.size())
+		s_BakeCurrentSlot = 0;
+
+	bool BasePackExists = false;
+	for(const SCustomGame &Pack : m_vGameList)
+	{
+		if(str_comp(Pack.m_aName, s_BakeBasePack.c_str()) == 0)
+		{
+			BasePackExists = true;
+			break;
+		}
+	}
+	if(!BasePackExists)
+		s_BakeBasePack = m_vGameList.front().m_aName;
+
+	for(std::string &SelectedPack : s_vBakeSlotPacks)
+	{
+		if(SelectedPack.empty())
+			continue;
+		bool Exists = false;
+		for(const SCustomGame &Pack : m_vGameList)
+		{
+			if(SelectedPack == Pack.m_aName)
+			{
+				Exists = true;
+				break;
+			}
+		}
+		if(!Exists)
+			SelectedPack.clear();
+	}
+
+	CUIRect Header, Body, Status;
+	MainView.HSplitTop(24.0f, &Header, &Body);
+	Body.HSplitBottom(18.0f, &Body, &Status);
+
+	CUIRect BaseLabel, BaseDropDown, NameLabel, NameEdit, BakeButton, ReloadButton;
+	Header.VSplitLeft(64.0f, &BaseLabel, &Header);
+	Header.VSplitLeft(std::min(210.0f, Header.w * 0.3f), &BaseDropDown, &Header);
+	Header.VSplitLeft(8.0f, nullptr, &Header);
+	Header.VSplitLeft(72.0f, &NameLabel, &Header);
+	Header.VSplitLeft(std::min(170.0f, Header.w * 0.3f), &NameEdit, &Header);
+	Header.VSplitRight(70.0f, &Header, &ReloadButton);
+	Header.VSplitRight(6.0f, nullptr, &Header);
+	Header.VSplitRight(90.0f, &Header, &BakeButton);
+
+	Ui()->DoLabel(&BaseLabel, "Base pack", 11.0f, TEXTALIGN_ML);
+	Ui()->DoLabel(&NameLabel, "Output name", 11.0f, TEXTALIGN_ML);
+
+	std::vector<const char *> vpPackNames;
+	vpPackNames.reserve(m_vGameList.size());
+	int BasePackIndex = 0;
+	for(size_t i = 0; i < m_vGameList.size(); ++i)
+	{
+		vpPackNames.push_back(m_vGameList[i].m_aName);
+		if(str_comp(m_vGameList[i].m_aName, s_BakeBasePack.c_str()) == 0)
+			BasePackIndex = (int)i;
+	}
+	const int NewBasePack = Ui()->DoDropDown(&BaseDropDown, BasePackIndex, vpPackNames.data(), (int)vpPackNames.size(), s_BakeBaseDropDown);
+	if(NewBasePack >= 0 && NewBasePack < (int)m_vGameList.size())
+		s_BakeBasePack = m_vGameList[NewBasePack].m_aName;
+
+	Ui()->DoEditBox(&s_BakeOutputName, &NameEdit, 11.0f);
+
+	static CButtonContainer s_BakeButtonId;
+	if(DoButton_Menu(&s_BakeButtonId, Localize("Bake"), 0, &BakeButton))
+		BakeGameSkin();
+
+	static CButtonContainer s_BakeReloadId;
+	if(DoButton_Menu(&s_BakeReloadId, Localize("Reload"), 0, &ReloadButton))
+		ClearCustomItems(ASSETS_TAB_GAME);
+
+	Ui()->DoLabel(&Status, s_aBakeStatus, 9.5f, TEXTALIGN_ML);
+
+	CUIRect SlotList, Preview;
+	Body.VSplitLeft(190.0f, &SlotList, &Preview);
+	SlotList.VSplitRight(8.0f, &SlotList, nullptr);
+
+	static CScrollRegion s_BakeSlotScroll;
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollUnit = 20.0f;
+	ScrollParams.m_ScrollbarThickness = 10.0f;
+	ScrollParams.m_ScrollbarMargin = 3.0f;
+	s_BakeSlotScroll.Begin(&SlotList, &ScrollParams);
+
+	for(int i = 0; i < (int)vSlots.size(); ++i)
+	{
+		CUIRect Button;
+		SlotList.HSplitTop(22.0f, &Button, &SlotList);
+		SlotList.HSplitTop(3.0f, nullptr, &SlotList);
+		if(!s_BakeSlotScroll.AddRect(Button))
+			continue;
+
+		char aSlotName[80];
+		if(s_vBakeSlotPacks[i].empty())
+			str_copy(aSlotName, vSlots[i].m_pName, sizeof(aSlotName));
+		else
+			str_format(aSlotName, sizeof(aSlotName), "%s *", vSlots[i].m_pName);
+		if(DoButton_MenuTab(&s_aBakeSlotButtons[i], aSlotName, i == s_BakeCurrentSlot, &Button, IGraphics::CORNER_ALL, nullptr, nullptr, nullptr, nullptr, 4.0f))
+			s_BakeCurrentSlot = i;
+	}
+	s_BakeSlotScroll.End();
+
+	const int CurSlot = s_BakeCurrentSlot;
+	const std::vector<int> &vSprites = vSlots[CurSlot].m_vSprites;
+
+	int SelectedIndex = 0;
+	if(!s_vBakeSlotPacks[CurSlot].empty())
+	{
+		SelectedIndex = -1;
+		for(size_t i = 0; i < m_vGameList.size(); ++i)
+		{
+			if(s_vBakeSlotPacks[CurSlot] == m_vGameList[i].m_aName)
+			{
+				SelectedIndex = (int)i + 1;
+				break;
+			}
+		}
+	}
+
+	static CListBox s_BakePreviewList;
+	const int NumItems = (int)m_vGameList.size() + 1;
+	Preview.HSplitTop(18.0f, &Header, &Preview);
+	char aPreviewTitle[128];
+	str_format(aPreviewTitle, sizeof(aPreviewTitle), "Pick %s for this pack (click the base card to use the base pack)", vSlots[CurSlot].m_pName);
+	Ui()->DoLabel(&Header, aPreviewTitle, 11.0f, TEXTALIGN_ML);
+
+	const float Margin = 8.0f;
+	const float CardWidth = 160.0f;
+	const float CardHeight = 112.0f;
+	const int PerRow = std::max(1, (int)(Preview.w / (CardWidth + Margin)));
+	s_BakePreviewList.DoStart(CardHeight + Margin, NumItems, PerRow, 1, SelectedIndex, &Preview, false);
+
+	const IGraphics::CTextureHandle BaseTexture = [&]() {
+		for(const SCustomGame &Pack : m_vGameList)
+		{
+			if(str_comp(Pack.m_aName, s_BakeBasePack.c_str()) == 0)
+				return Pack.m_RenderTexture;
+		}
+		return IGraphics::CTextureHandle();
+	}();
+
+	for(int i = 0; i < NumItems; ++i)
+	{
+		const SCustomGame *pPack = i == 0 ? nullptr : &m_vGameList[i - 1];
+		const void *pId = i == 0 ? (const void *)&s_BakePreviewList : (const void *)pPack;
+		const CListboxItem Item = s_BakePreviewList.DoNextItem(pId, SelectedIndex >= 0 && SelectedIndex == i);
+		if(!Item.m_Visible)
+			continue;
+
+		CUIRect Card = Item.m_Rect;
+		Card.Margin(Margin / 2.0f, &Card);
+		Graphics()->DrawRect(Card.x, Card.y, Card.w, Card.h, ColorRGBA(0.0f, 0.0f, 0.0f, 0.35f), IGraphics::CORNER_ALL, 4.0f);
+
+		CUIRect CardName, CardPreview;
+		Card.HSplitTop(16.0f, &CardName, &CardPreview);
+		CardPreview.Margin(4.0f, &CardPreview);
+
+		SLabelProperties Props;
+		Props.m_MaxWidth = CardName.w;
+		Props.m_EllipsisAtEnd = true;
+		const char *pName = i == 0 ? "Use base pack" : pPack->m_aName;
+		Ui()->DoLabel(&CardName, pName, 10.0f, TEXTALIGN_MC, Props);
+
+		if(i == 0)
+			DrawBakePreview(Graphics(), BaseTexture, {}, CardPreview);
+		else
+			DrawBakePreview(Graphics(), pPack->m_RenderTexture, vSprites, CardPreview);
+	}
+
+	const int NewSelected = s_BakePreviewList.DoEnd();
+	if(NewSelected != SelectedIndex && NewSelected >= 0 && NewSelected < NumItems)
+	{
+		if(NewSelected == 0)
+			s_vBakeSlotPacks[CurSlot].clear();
+		else
+			s_vBakeSlotPacks[CurSlot] = m_vGameList[NewSelected - 1].m_aName;
+	}
+}
+
+void CMenus::ConchainAssetsEntities(IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData){
 	CMenus *pThis = (CMenus *)pUserData;
 	if(pResult->NumArguments() == 1)
 	{
