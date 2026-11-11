@@ -26,8 +26,10 @@ private:
 
 	int FindHitter(int TargetId) const;
 	bool PredictForTarget(int TargetId, int HitterId, SPrediction *pOut) const;
-	void RenderPrediction(const SPrediction &Prediction) const;
+	void RenderPrediction(const SPrediction &Prediction, int NowTick) const;
 	void RenderGhost(int ClientId, vec2 Pos, float Alpha) const;
+
+	SPrediction m_CachedPrediction;
 };
 
 #endif

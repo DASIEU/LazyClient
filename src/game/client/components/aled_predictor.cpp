@@ -123,12 +123,18 @@ bool CAledPredictor::PredictForTarget(int TargetId, int HitterId, SPrediction *p
 	// Only normal freeze can be ALED. Deep freeze, live freeze and death are fake scenarios.
 	if(Target.m_DeepFrozen || Target.m_LiveFrozen || Target.m_Super || Target.m_Invincible)
 		return false;
-	if(Target.m_FreezeEnd <= 0 || length(Target.m_Vel) <= 2.0f)
+	if(length(Target.m_Vel) <= 2.0f)
 		return false;
-	if(FreezeTileAt(Collision(), Target.m_Pos) != EFreezeTile::NORMAL)
+
+	const int NowTick = Client()->GameTick(g_Config.m_ClDummy);
+	const EFreezeTile StartTile = FreezeTileAt(Collision(), Target.m_Pos);
+	if(StartTile == EFreezeTile::DEATH || StartTile == EFreezeTile::DEEP || StartTile == EFreezeTile::LIVE)
 		return false;
 	if(TouchesDeath(Collision(), Target.m_Pos))
 		return false;
+
+	const bool StartedFrozen = Target.m_FreezeEnd > NowTick;
+	const bool TreatAsFrozen = StartedFrozen || StartTile == EFreezeTile::NORMAL;
 
 	// The hitter must be able to use the hammer right now.
 	if(Hitter.m_DeepFrozen || Hitter.m_LiveFrozen || Hitter.m_FreezeEnd > 0)
@@ -136,31 +142,33 @@ bool CAledPredictor::PredictForTarget(int TargetId, int HitterId, SPrediction *p
 	if(Hitter.m_HammerHitDisabled)
 		return false;
 
-	const int NowTick = Client()->GameTick(g_Config.m_ClDummy);
-	const int TicksUntilUnfreeze = Target.m_FreezeEnd - NowTick;
-	if(TicksUntilUnfreeze <= 1)
-		return false;
-
 	CCharacterCore Sim = Target;
 	Sim.Init(nullptr, Collision());
-	Sim.m_Input.m_Direction = 0;
-	Sim.m_Input.m_Jump = 0;
-	Sim.m_Input.m_Hook = 0;
-	Sim.m_Direction = 0;
+	if(TreatAsFrozen)
+	{
+		// Frozen tees keep their velocity, but movement/jump/hook input is cleared.
+		Sim.m_Input.m_Direction = 0;
+		Sim.m_Input.m_Jump = 0;
+		Sim.m_Input.m_Hook = 0;
+		Sim.m_Direction = 0;
+	}
 	Sim.m_HookState = HOOK_IDLE;
 	Sim.m_HookPos = Sim.m_Pos;
 	Sim.SetHookedPlayer(-1);
 
-	const int MaxTicks = std::min(TicksUntilUnfreeze - 1, 3 * SERVER_TICK_SPEED);
-	bool Exited = false;
+	const int FreezeTicks = std::max(1, g_Config.m_SvFreezeDelay) * SERVER_TICK_SPEED;
+	int SimFreezeEnd = StartedFrozen ? Target.m_FreezeEnd : (StartTile == EFreezeTile::NORMAL ? NowTick + FreezeTicks : NowTick);
+	bool InFreeze = StartTile == EFreezeTile::NORMAL;
+	bool LeftFreeze = false;
+	bool Started = false;
+
+	const int MaxTicks = 3 * SERVER_TICK_SPEED;
 	for(int Tick = 1; Tick <= MaxTicks; ++Tick)
 	{
 		Sim.Tick(true, false);
 		Sim.Move();
 
-		if(Tick >= TicksUntilUnfreeze)
-			break;
-
+		const int AbsTick = NowTick + Tick;
 		const EFreezeTile Tile = FreezeTileAt(Collision(), Sim.m_Pos);
 		if(Tile == EFreezeTile::DEATH || Tile == EFreezeTile::DEEP || Tile == EFreezeTile::LIVE)
 			break;
@@ -169,31 +177,47 @@ bool CAledPredictor::PredictForTarget(int TargetId, int HitterId, SPrediction *p
 
 		if(Tile == EFreezeTile::NORMAL)
 		{
-			// Re-entering freeze ends the usable window.
-			if(Exited)
-				break;
+			if(!InFreeze)
+			{
+				InFreeze = true;
+				// Entering normal freeze starts (or refreshes) the freeze timer.
+				SimFreezeEnd = std::max(SimFreezeEnd, AbsTick + FreezeTicks);
+			}
+			if(LeftFreeze)
+				break; // re-entering freeze ends the usable window
 			continue;
 		}
 
-		if(!InHammerRange(Hitter.m_Pos, Sim.m_Pos))
+		if(InFreeze)
 		{
-			if(Exited)
-				break;
-			// The exit itself must already be hammerable, otherwise this is not a usable ALED.
-			return false;
+			InFreeze = false;
+			LeftFreeze = true;
 		}
 
-		if(!Exited)
+		if(!LeftFreeze)
+			continue; // still approaching the freeze wall
+
+		if(AbsTick >= SimFreezeEnd)
+			break; // natural unfreeze before a usable hit
+
+		if(InHammerRange(Hitter.m_Pos, Sim.m_Pos))
 		{
-			Exited = true;
-			pOut->m_ExitPos = Sim.m_Pos;
-			pOut->m_ExitTick = Tick;
+			if(!Started)
+			{
+				Started = true;
+				pOut->m_ExitPos = Sim.m_Pos;
+				pOut->m_ExitTick = AbsTick;
+			}
+			pOut->m_LastHitPos = Sim.m_Pos;
+			pOut->m_LastHitTick = AbsTick;
 		}
-		pOut->m_LastHitPos = Sim.m_Pos;
-		pOut->m_LastHitTick = Tick;
+		else if(Started)
+		{
+			break; // left the hammer's reach
+		}
 	}
 
-	if(!Exited)
+	if(!Started)
 		return false;
 
 	pOut->m_Valid = true;
@@ -210,13 +234,23 @@ void CAledPredictor::RenderGhost(int ClientId, vec2 Pos, float Alpha) const
 	RenderTools()->RenderTee(CAnimState::GetIdle(), &Info, EMOTE_NORMAL, vec2(1.0f, 0.0f), Pos, Alpha);
 }
 
-void CAledPredictor::RenderPrediction(const SPrediction &Prediction) const
+void CAledPredictor::RenderPrediction(const SPrediction &Prediction, int NowTick) const
 {
 	const ColorRGBA ExitColor(0.20f, 1.00f, 0.75f, 0.65f);
 	const ColorRGBA LastColor(1.00f, 0.60f, 0.15f, 0.55f);
 
 	Graphics()->TextureClear();
 	Graphics()->LinesBegin();
+	if(NowTick < Prediction.m_ExitTick)
+	{
+		// Show the remaining throw path so the future hit point is visible early.
+		const vec2 TargetPos = GameClient()->m_aClients[Prediction.m_TargetId].m_RenderPos;
+		Graphics()->SetColor(ExitColor.WithAlpha(0.25f));
+		const IGraphics::CLineItem PathLine(
+			TargetPos.x, TargetPos.y,
+			Prediction.m_ExitPos.x, Prediction.m_ExitPos.y);
+		Graphics()->LinesDraw(&PathLine, 1);
+	}
 	if(distance(Prediction.m_ExitPos, Prediction.m_LastHitPos) > 0.5f)
 	{
 		Graphics()->SetColor(ExitColor);
@@ -242,9 +276,17 @@ void CAledPredictor::RenderPrediction(const SPrediction &Prediction) const
 void CAledPredictor::OnRender()
 {
 	if(!g_Config.m_LcAledPredictor)
+	{
+		m_CachedPrediction.m_Valid = false;
 		return;
+	}
 	if(Client()->State() != IClient::STATE_ONLINE)
+	{
+		m_CachedPrediction.m_Valid = false;
 		return;
+	}
+
+	const int NowTick = Client()->GameTick(g_Config.m_ClDummy);
 
 	SPrediction Prediction;
 	for(const int LocalId : GameClient()->m_aLocalIds)
@@ -255,9 +297,31 @@ void CAledPredictor::OnRender()
 		if(HitterId < 0)
 			continue;
 		if(PredictForTarget(LocalId, HitterId, &Prediction))
+		{
+			m_CachedPrediction = Prediction;
 			break;
+		}
 	}
 
-	if(Prediction.m_Valid)
-		RenderPrediction(Prediction);
+	if(m_CachedPrediction.m_Valid)
+	{
+		const int TargetId = m_CachedPrediction.m_TargetId;
+		const int HitterId = m_CachedPrediction.m_HitterId;
+		const CCharacterCore &Target = GameClient()->m_aClients[TargetId].m_Predicted;
+		const CCharacterCore &Hitter = GameClient()->m_aClients[HitterId].m_Predicted;
+		const bool BeforeExit = NowTick < m_CachedPrediction.m_ExitTick;
+		if(NowTick > m_CachedPrediction.m_LastHitTick ||
+			!GameClient()->m_Snap.m_aCharacters[TargetId].m_Active ||
+			!GameClient()->m_Snap.m_aCharacters[HitterId].m_Active ||
+			Target.m_DeepFrozen || Target.m_LiveFrozen ||
+			(!BeforeExit && Target.m_FreezeEnd <= NowTick) ||
+			Hitter.m_DeepFrozen || Hitter.m_LiveFrozen || Hitter.m_FreezeEnd > 0 ||
+			Hitter.m_HammerHitDisabled)
+		{
+			m_CachedPrediction.m_Valid = false;
+		}
+	}
+
+	if(m_CachedPrediction.m_Valid)
+		RenderPrediction(m_CachedPrediction, NowTick);
 }
