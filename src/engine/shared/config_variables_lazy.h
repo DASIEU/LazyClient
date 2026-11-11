@@ -72,6 +72,9 @@ MACRO_CONFIG_STR(LcZeroGravText, lc_zerograv_text, 64, "", CFGFLAG_CLIENT | CFGF
 MACRO_CONFIG_COL(LcZeroGravTextColor, lc_zerograv_text_color, 0xFF0EFFF0, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Zero-gravity warning text color")
 MACRO_CONFIG_COL(LcZeroGravBgColor, lc_zerograv_bg_color, 0xDB01E54A, CFGFLAG_CLIENT | CFGFLAG_SAVE | CFGFLAG_COLALPHA, "Zero-gravity warning background color")
 
+// ALED predictor
+MACRO_CONFIG_INT(LcAledPredictor, lc_aled_predictor, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show ALED prediction ghosts and the valid hammer window")
+
 // Auto team lock
 MACRO_CONFIG_INT(LcAutoTeamLock, lc_auto_team_lock, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically lock your team a while after you join it")
 MACRO_CONFIG_INT(LcAutoTeamLockDelay, lc_auto_team_lock_delay, 10, 1, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Delay in seconds before the team is locked after joining")

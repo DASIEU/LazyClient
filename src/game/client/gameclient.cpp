@@ -3,6 +3,7 @@
 
 #include "gameclient.h"
 
+#include "components/aled_predictor.h"
 #include "components/background.h"
 #include "components/binds.h"
 #include "components/broadcast.h"
@@ -161,6 +162,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Particles.m_RenderExtra,
 					      &m_Particles.m_RenderGeneral,
 					      &m_FreezeBars,
+					      &m_AledPredictor,
 					      &m_DamageInd,
 					      &m_PlayerIndicator, // TClient
 					      &m_Mod, // TClient

@@ -142,7 +142,7 @@ void CMenus::RenderEasyHost(CUIRect MainView)
 
 	// Header
 	AddLabel(32.0f, Localize("Easy Host"), 24.0f);
-	AddLabel(18.0f, Localize("Start a private tournament server without port forwarding."), 11.0f);
+	AddLabel(18.0f, Localize("Start a private server without port forwarding."), 11.0f);
 	AddLabel(18.0f, Localize("Your home IP stays hidden. Players connect through Tailscale."), 11.0f);
 	AddSpacing(10.0f);
 

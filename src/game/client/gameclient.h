@@ -28,6 +28,7 @@
 #include <game/teamscore.h>
 
 // components
+#include "components/aled_predictor.h"
 #include "components/background.h"
 #include "components/binds.h"
 #include "components/broadcast.h"
@@ -207,6 +208,7 @@ public:
 	CPlayers m_Players;
 	CNamePlates m_NamePlates;
 	CFreezeBars m_FreezeBars;
+	CAledPredictor m_AledPredictor;
 	CItems m_Items;
 	CMapImages m_MapImages;
 

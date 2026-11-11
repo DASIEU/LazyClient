@@ -251,7 +251,8 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	{
 		CUIRect Tab;
 		Tabs.VSplitLeft(InputModeWidth, &Tab, &Tabs);
-		const int Corners = Mode == 0 ? IGraphics::CORNER_L : Mode == 4 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE;
+		const int Corners = Mode == 0 ? IGraphics::CORNER_L : Mode == 4 ? IGraphics::CORNER_R :
+										  IGraphics::CORNER_NONE;
 		if(DoButton_MenuTab(&s_aInputModeButtons[Mode], Localize(s_apInputModes[Mode]), g_Config.m_LcInputMode == Mode, &Tab, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
 			g_Config.m_LcInputMode = Mode;
 	}
@@ -344,7 +345,8 @@ void CMenus::RenderSettingsLazyGame(CUIRect MainView)
 	{
 		CUIRect Tab;
 		Tabs.VSplitLeft(AntipingModeWidth, &Tab, &Tabs);
-		const int Corners = Mode == 0 ? IGraphics::CORNER_L : Mode == 2 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE;
+		const int Corners = Mode == 0 ? IGraphics::CORNER_L : Mode == 2 ? IGraphics::CORNER_R :
+										  IGraphics::CORNER_NONE;
 		if(DoButton_MenuTab(&s_aAntipingModeButtons[Mode], Localize(s_apAntipingModes[Mode]), g_Config.m_LcAntipingMode == Mode, &Tab, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
 			g_Config.m_LcAntipingMode = Mode;
 	}
@@ -530,8 +532,8 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	if(g_Config.m_LcZeroGravPredict)
 	{
 		pZeroGravInfo = g_Config.m_LcZeroGravMode == 0 ?
-			Localize("The predictor is always on. It warns only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. The warning stays visible for 0.2 s after the current prediction disappears. The anti-speedrun guard hides it while you move faster than the speed threshold. Works for your tee, a followed player, and the tee nearest the camera in freeview.") :
-			Localize("The bound key only turns the predictor on and off. When it is on, the hold-area, anti-speedrun, warning time and display rules are exactly the same as Prediction mode. The predictor starts off when Forced is selected.");
+					Localize("The predictor is always on. It warns only while holding the opposite key against a wall hook and staying inside the hold area for two seconds. The warning stays visible for 0.2 s after the current prediction disappears. The anti-speedrun guard hides it while you move faster than the speed threshold. Works for your tee, a followed player, and the tee nearest the camera in freeview.") :
+					Localize("The bound key only turns the predictor on and off. When it is on, the hold-area, anti-speedrun, warning time and display rules are exactly the same as Prediction mode. The predictor starts off when Forced is selected.");
 	}
 	LazySectionTitle(&MainView, Localize("Hooked Freeze Predictor"), Ui(), GameClient(), pZeroGravInfo);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcZeroGravPredict, Localize("Predict freeze tiles"), &g_Config.m_LcZeroGravPredict, &MainView, LazyLineSize);
@@ -569,7 +571,6 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 			static CButtonContainer s_BindForcedKeyButton;
 			if(DoButton_Menu(&s_BindForcedKeyButton, Localize("Apply forced key bind"), 0, &Button))
 				GameClient()->m_Lazy.BindZeroGravKey();
-
 		}
 
 		MainView.HSplitTop(LazyMargin, nullptr, &MainView);
@@ -595,6 +596,12 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 	{
 		LazyInfoLabel(&MainView, Localize("No hooked freeze warning is shown."), Ui(), TextRender());
 	}
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("ALED Predictor"), Ui(), GameClient(), Localize("ALED lets a thrown tee pass through a one-tile freeze wall and be unfrozen by a hammer hit right after it leaves the freeze. The green ghost marks where it becomes hittable and the orange ghost marks the last point still inside the other tee's hammer range."));
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcAledPredictor, Localize("Show ALED windows"), &g_Config.m_LcAledPredictor, &MainView, LazyLineSize);
+	if(!g_Config.m_LcAledPredictor)
+		LazyInfoLabel(&MainView, Localize("ALED ghosts and hammer windows are hidden."), Ui(), TextRender());
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
 	LazySectionTitle(&MainView, Localize("Telemetry"), Ui(), GameClient(), Localize("Choose which values the overlay shows. The overlay is local-only in the top-right. Packet loss is estimated from missing vital network chunks and resend requests over the last few seconds."));

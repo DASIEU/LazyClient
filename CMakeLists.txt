@@ -2808,6 +2808,8 @@ if(CLIENT)
     animstate.h
     component.cpp
     component.h
+    components/aled_predictor.cpp
+    components/aled_predictor.h
     components/background.cpp
     components/background.h
     components/binds.cpp
