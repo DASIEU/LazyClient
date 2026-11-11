@@ -200,7 +200,7 @@ void CMenus::RenderEasyHost(CUIRect MainView)
 	AddLabel(20.0f, Localize("Hosting"), 15.0f);
 	AddSpacing(2.0f);
 
-	const bool ServerRunning = GameClient()->m_LocalServer.IsServerRunning();
+	bool ServerRunning = GameClient()->m_LocalServer.IsServerRunning();
 
 	{
 		CUIRect Row, Button, Status;
@@ -249,6 +249,7 @@ void CMenus::RenderEasyHost(CUIRect MainView)
 				}
 			}
 
+			ServerRunning = GameClient()->m_LocalServer.IsServerRunning();
 			TextRender()->TextColor(ServerRunning ? ColorRGBA(0.4f, 1.0f, 0.4f, 1.0f) : ColorRGBA(0.85f, 0.85f, 0.85f, 1.0f));
 			Ui()->DoLabel(&Status, ServerRunning ? Localize("Server is running") : Localize("Server is stopped"), 11.0f, TEXTALIGN_ML);
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
@@ -270,10 +271,10 @@ void CMenus::RenderEasyHost(CUIRect MainView)
 		CUIRect Row, Status, RefreshButton, DownloadButton;
 		if(AddRow(24.0f, &Row))
 		{
-			Row.VSplitRight(150.0f, &Status, &DownloadButton);
-			DownloadButton.VSplitLeft(5.0f, nullptr, &DownloadButton);
-			DownloadButton.VSplitLeft(70.0f, &RefreshButton, &DownloadButton);
-			DownloadButton.VSplitLeft(5.0f, nullptr, &DownloadButton);
+			Row.VSplitRight(220.0f, &Status, &DownloadButton);
+			DownloadButton.VSplitLeft(6.0f, nullptr, &DownloadButton);
+			DownloadButton.VSplitLeft(90.0f, &RefreshButton, &DownloadButton);
+			DownloadButton.VSplitLeft(6.0f, nullptr, &DownloadButton);
 
 			char aText[256];
 			if(CustomAddress)
