@@ -492,6 +492,11 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_LcBestClientPublicList, Localize("Use BestClient public list (network)"), &g_Config.m_LcBestClientPublicList, &MainView, LazyLineSize);
 
 	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
+	LazySectionTitle(&MainView, Localize("Chat"), Ui(), GameClient(), Localize("Sets how opaque chat messages are. The chat input stays fully visible while you type. Fading messages still fade out normally from the selected opacity."));
+	MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+	Ui()->DoScrollbarOption(&g_Config.m_LcChatOpacity, &g_Config.m_LcChatOpacity, &Button, Localize("Message opacity"), 0, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+
+	MainView.HSplitTop(LazyMargin * 1.5f, nullptr, &MainView);
 	LazySectionTitle(&MainView, Localize("Scoreboard"), Ui());
 	DoButton_CheckBoxWithInfo(&g_Config.m_LcFriendHeartScoreboard, Localize("Friend heart"), &g_Config.m_LcFriendHeartScoreboard, &MainView, LazyLineSize, Localize("Shows a heart before friends in the scoreboard."));
 

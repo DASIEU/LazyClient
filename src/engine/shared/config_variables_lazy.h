@@ -49,6 +49,7 @@ MACRO_CONFIG_INT(LcAspectWidth, lc_aspect_width, 0, 0, 10000, CFGFLAG_CLIENT | C
 MACRO_CONFIG_INT(LcAspectHeight, lc_aspect_height, 0, 0, 10000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Aspect ratio height (0 = off, e.g. 9)")
 
 // Visuals
+MACRO_CONFIG_INT(LcChatOpacity, lc_chat_opacity, 100, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Chat message opacity in percent")
 MACRO_CONFIG_INT(LcClientLogos, lc_client_logos, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show client logos in nameplates and the scoreboard")
 MACRO_CONFIG_INT(LcBestClientPublicList, lc_bestclient_public_list, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Use the BestClient public player list to show BestClient logos (network request)")
 MACRO_CONFIG_INT(LcFriendHeartScoreboard, lc_friend_heart_scoreboard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a heart before friends in the scoreboard")

@@ -1424,6 +1424,7 @@ void CChat::OnRender()
 			break;
 
 		float Blend = Now > Line.m_Time + 14 * time_freq() && !m_PrevShowChat ? 1.0f - (Now - Line.m_Time - 14 * time_freq()) / (2.0f * time_freq()) : 1.0f;
+		Blend *= g_Config.m_LcChatOpacity / 100.0f;
 
 		// Draw backgrounds for messages in one batch
 		if(!g_Config.m_ClChatOld)

@@ -10,6 +10,7 @@
 #include <game/mapitems.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -68,6 +69,26 @@ namespace
 			return true;
 		const vec2 ProjStartPos = HitterPos + Diff / Distance * (CCharacterCore::PhysicalSize() * 0.75f);
 		return distance(TargetPos, ProjStartPos) < CCharacterCore::PhysicalSize() * 1.5f;
+	}
+
+	bool HasNormalFreezeNearby(const CCollision *pCollision, vec2 Pos, vec2 Vel)
+	{
+		// Cheap early-out before running the physics simulation. ALED only
+		// matters when there is a normal freeze tile close enough to reach
+		// soon, so avoid simulating tees that are far away from any freeze.
+		const float ReachPerSecond = length(Vel);
+		const int RadiusTiles = std::clamp(3 + (int)std::ceil(ReachPerSecond * 1.5f / 32.0f), 3, 16);
+		const int CenterX = round_to_int(Pos.x) / 32;
+		const int CenterY = round_to_int(Pos.y) / 32;
+		for(int y = CenterY - RadiusTiles; y <= CenterY + RadiusTiles; ++y)
+		{
+			for(int x = CenterX - RadiusTiles; x <= CenterX + RadiusTiles; ++x)
+			{
+				if(FreezeTileAt(pCollision, vec2(x * 32 + 16.0f, y * 32 + 16.0f)) == EFreezeTile::NORMAL)
+					return true;
+			}
+		}
+		return false;
 	}
 } // namespace
 
@@ -135,6 +156,9 @@ bool CAledPredictor::PredictForTarget(int TargetId, int HitterId, SPrediction *p
 
 	const bool StartedFrozen = Target.m_FreezeEnd > NowTick;
 	const bool TreatAsFrozen = StartedFrozen || StartTile == EFreezeTile::NORMAL;
+
+	if(!TreatAsFrozen && !HasNormalFreezeNearby(Collision(), Target.m_Pos, Target.m_Vel))
+		return false;
 
 	// The hitter must be able to use the hammer right now.
 	if(Hitter.m_DeepFrozen || Hitter.m_LiveFrozen || Hitter.m_FreezeEnd > 0)
@@ -273,53 +297,72 @@ void CAledPredictor::RenderPrediction(const SPrediction &Prediction, int NowTick
 		RenderGhost(Prediction.m_TargetId, Prediction.m_LastHitPos, 0.35f);
 }
 
+void CAledPredictor::ValidatePrediction(int NowTick)
+{
+	if(!m_CachedPrediction.m_Valid)
+		return;
+
+	const int TargetId = m_CachedPrediction.m_TargetId;
+	const int HitterId = m_CachedPrediction.m_HitterId;
+	const CCharacterCore &Target = GameClient()->m_aClients[TargetId].m_Predicted;
+	const CCharacterCore &Hitter = GameClient()->m_aClients[HitterId].m_Predicted;
+	const bool BeforeExit = NowTick < m_CachedPrediction.m_ExitTick;
+	if(NowTick > m_CachedPrediction.m_LastHitTick ||
+		!GameClient()->m_Snap.m_aCharacters[TargetId].m_Active ||
+		!GameClient()->m_Snap.m_aCharacters[HitterId].m_Active ||
+		Target.m_DeepFrozen || Target.m_LiveFrozen ||
+		(!BeforeExit && Target.m_FreezeEnd <= NowTick) ||
+		Hitter.m_DeepFrozen || Hitter.m_LiveFrozen || Hitter.m_FreezeEnd > 0 ||
+		Hitter.m_HammerHitDisabled)
+	{
+		m_CachedPrediction.m_Valid = false;
+	}
+}
+
 void CAledPredictor::OnRender()
 {
 	if(!g_Config.m_LcAledPredictor)
 	{
 		m_CachedPrediction.m_Valid = false;
+		m_LastComputedTick = -1;
 		return;
 	}
 	if(Client()->State() != IClient::STATE_ONLINE)
 	{
 		m_CachedPrediction.m_Valid = false;
+		m_LastComputedTick = -1;
 		return;
 	}
 
 	const int NowTick = Client()->GameTick(g_Config.m_ClDummy);
 
-	SPrediction Prediction;
-	for(const int LocalId : GameClient()->m_aLocalIds)
+	// The cached window can be validated cheaply every frame, but the expensive
+	// simulation only needs to run once per game tick and only when no usable
+	// window is cached yet. This keeps ALED rendering independent of the frame
+	// rate instead of simulating up to 3 seconds of physics on every frame.
+	ValidatePrediction(NowTick);
+	if(!m_CachedPrediction.m_Valid && NowTick != m_LastComputedTick)
 	{
-		if(LocalId < 0)
-			continue;
-		const int HitterId = FindHitter(LocalId);
-		if(HitterId < 0)
-			continue;
-		if(PredictForTarget(LocalId, HitterId, &Prediction))
-		{
-			m_CachedPrediction = Prediction;
-			break;
-		}
-	}
+		m_LastComputedTick = NowTick;
 
-	if(m_CachedPrediction.m_Valid)
-	{
-		const int TargetId = m_CachedPrediction.m_TargetId;
-		const int HitterId = m_CachedPrediction.m_HitterId;
-		const CCharacterCore &Target = GameClient()->m_aClients[TargetId].m_Predicted;
-		const CCharacterCore &Hitter = GameClient()->m_aClients[HitterId].m_Predicted;
-		const bool BeforeExit = NowTick < m_CachedPrediction.m_ExitTick;
-		if(NowTick > m_CachedPrediction.m_LastHitTick ||
-			!GameClient()->m_Snap.m_aCharacters[TargetId].m_Active ||
-			!GameClient()->m_Snap.m_aCharacters[HitterId].m_Active ||
-			Target.m_DeepFrozen || Target.m_LiveFrozen ||
-			(!BeforeExit && Target.m_FreezeEnd <= NowTick) ||
-			Hitter.m_DeepFrozen || Hitter.m_LiveFrozen || Hitter.m_FreezeEnd > 0 ||
-			Hitter.m_HammerHitDisabled)
+		SPrediction Prediction;
+		bool Found = false;
+		for(const int LocalId : GameClient()->m_aLocalIds)
 		{
-			m_CachedPrediction.m_Valid = false;
+			if(LocalId < 0)
+				continue;
+			const int HitterId = FindHitter(LocalId);
+			if(HitterId < 0)
+				continue;
+			if(PredictForTarget(LocalId, HitterId, &Prediction))
+			{
+				m_CachedPrediction = Prediction;
+				Found = true;
+				break;
+			}
 		}
+		if(!Found)
+			m_CachedPrediction.m_Valid = false;
 	}
 
 	if(m_CachedPrediction.m_Valid)
