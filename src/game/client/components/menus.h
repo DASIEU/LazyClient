@@ -576,6 +576,7 @@ protected:
 
 	// found in menus_settings_assets.cpp
 	void RenderSettingsAssets(CUIRect MainView);
+	void RenderEasyHost(CUIRect MainView);
 	void RenderAssetBaker(CUIRect MainView);
 	void BakeGameSkin();
 
@@ -712,6 +713,7 @@ public:
 		PAGE_SETTINGS,
 		PAGE_NETWORK,
 		PAGE_GHOST,
+		PAGE_EASY_HOST,
 
 		PAGE_LENGTH,
 	};
