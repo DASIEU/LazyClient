@@ -240,7 +240,13 @@ void CMenus::RenderEasyHost(CUIRect MainView)
 
 					if(GameClient()->m_LocalServer.RunServer(vArguments))
 					{
-						str_copy(s_aStatus, Localize("Server started with master registration disabled."), sizeof(s_aStatus));
+						str_copy(s_aStatus, Localize("Server started. Connecting…"), sizeof(s_aStatus));
+
+						// Join the private server that was just started.
+						char aLocalAddress[64];
+						str_format(aLocalAddress, sizeof(aLocalAddress), "127.0.0.1:%d", Port);
+						const char *pPassword = s_ServerPassword.GetString();
+						Client()->Connect(aLocalAddress, pPassword[0] != '\0' ? pPassword : nullptr);
 					}
 					else
 					{

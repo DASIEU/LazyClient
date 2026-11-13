@@ -126,9 +126,13 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		{
 			GameClient()->m_LocalServer.KillServer();
 		}
-		else
+		else if(GameClient()->m_LocalServer.RunServer({}))
 		{
-			GameClient()->m_LocalServer.RunServer({});
+			// Join the local server that was just started.
+			char aAddr[64];
+			const int Port = g_Config.m_SvPort >= 1 && g_Config.m_SvPort <= 65535 ? g_Config.m_SvPort : 8303;
+			str_format(aAddr, sizeof(aAddr), "127.0.0.1:%d", Port);
+			Client()->Connect(aAddr);
 		}
 	}
 
