@@ -467,6 +467,15 @@ public:
 	int m_aExpectingTuningSince[NUM_DUMMIES]; // how many snaps received since tunezone changed
 	CTuningParams m_aTuning[NUM_DUMMIES]; // current local player tuning, only what the player/dummy has
 
+	// Tuning state of both sessions is preserved across the map reload that a
+	// parked-connection switch performs.
+	bool m_ParkTuningCached = false;
+	CTuningParams m_aParkTuning[NUM_DUMMIES];
+	int m_aParkLocalTuneZone[NUM_DUMMIES];
+	bool m_aParkReceivedTuning[NUM_DUMMIES];
+	int m_aParkExpectingTuningForZone[NUM_DUMMIES];
+	int m_aParkExpectingTuningSince[NUM_DUMMIES];
+
 	std::bitset<RECORDER_MAX> m_ActiveRecordings;
 
 	// spectate cursor data
@@ -675,6 +684,8 @@ public:
 	void OnRender() override;
 	void OnUpdate() override;
 	void OnDummyDisconnect() override;
+	void CacheTuningForParkSwitch() override;
+	void RestoreTuningAfterParkSwitch() override;
 	virtual void OnRelease();
 	void OnInit() override;
 	void OnConsoleInit() override;

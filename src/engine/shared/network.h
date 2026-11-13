@@ -637,6 +637,9 @@ public:
 	void Disconnect(const char *pReason);
 	void Connect(const NETADDR *pAddr, int NumAddrs);
 	void Connect7(const NETADDR *pAddr, int NumAddrs);
+	// Swap the complete network session (socket, connection, tokens) with
+	// another client. Used by the LazyClient parked connection feature.
+	void Swap(CNetClient &Other);
 
 	// communication
 	int Recv(CNetChunk *pChunk, SECURITY_TOKEN *pResponseToken, bool Sixup);

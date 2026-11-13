@@ -679,6 +679,14 @@ void CMenus::RenderServerbrowserStatusBox(CUIRect StatusBox, bool WasListboxItem
 
 void CMenus::Connect(const char *pAddress)
 {
+	if(Client()->ParkEnabled() && Client()->State() == IClient::STATE_ONLINE)
+	{
+		// Keep the current server connected and use the browser selection as
+		// the parked session.
+		Client()->ParkedConnect(pAddress);
+		return;
+	}
+
 	if(Client()->State() == IClient::STATE_ONLINE && GameClient()->CurrentRaceTime() / 60 >= g_Config.m_ClConfirmDisconnectTime && g_Config.m_ClConfirmDisconnectTime >= 0)
 	{
 		str_copy(m_aNextServer, pAddress);

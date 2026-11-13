@@ -195,6 +195,36 @@ class CClient : public IClient, public CDemoPlayer::IListener
 	bool m_DummyReconnectOnResume = false;
 #endif
 
+	// LazyClient parked connection: the active session always lives in
+	// CONN_MAIN, while the kept-alive background session lives in CONN_DUMMY.
+	struct CConnMapInfo
+	{
+		char m_aName[256] = "";
+		bool m_HasSha256 = false;
+		SHA256_DIGEST m_Sha256 = {};
+		int m_Crc = 0;
+		int m_Size = 0;
+		bool m_Ready = false;
+	};
+	CConnMapInfo m_aConnMapInfo[NUM_DUMMIES];
+	bool m_ParkAwaitingMap = false;
+
+	// Parked connection map download (CONN_DUMMY).
+	char m_aParkAddress[256] = "";
+	char m_aParkMapdownloadFilename[256] = "";
+	char m_aParkMapdownloadFilenameTemp[256] = "";
+	char m_aParkMapdownloadName[256] = "";
+	std::optional<SHA256_DIGEST> m_ParkMapdownloadSha256;
+	std::shared_ptr<IHttpRequest> m_pParkMapdownloadTask = nullptr;
+	IOHANDLE m_ParkMapdownloadFileTemp = nullptr;
+	int m_ParkMapdownloadChunk = 0;
+	int m_ParkMapdownloadCrc = 0;
+	int m_ParkMapdownloadAmount = 0;
+	int m_ParkMapdownloadTotalsize = -1;
+	int m_ParkMapDownloadChunkSize = 0;
+	int m_ParkMapDownloadChunksPerRequest = 0;
+	std::optional<CMapDetails> m_ParkMapDetails;
+
 	// graphs
 	CGraph m_aInputtimeMarginGraphs[NUM_DUMMIES];
 	CGraph m_aGametimeMarginGraphs[NUM_DUMMIES];
@@ -221,6 +251,10 @@ class CClient : public IClient, public CDemoPlayer::IListener
 	bool m_CanReceiveServerCapabilities = false;
 	bool m_ServerSentCapabilities = false;
 	CServerCapabilities m_ServerCapabilities;
+	// Server capabilities are tracked per connection so they can be restored
+	// when switching between the active and the parked connection.
+	CServerCapabilities m_aConnServerCapabilities[NUM_DUMMIES];
+	bool m_ParkCanReceiveServerCapabilities = false;
 
 	bool ServerCapAnyPlayerFlag() const override { return m_ServerCapabilities.m_AnyPlayerFlag; }
 
@@ -352,6 +386,23 @@ public:
 	bool DummyConnecting() const override;
 	bool DummyConnectingDelayed() const override;
 	bool DummyAllowed() const override;
+
+	bool ParkEnabled() const override;
+	void SetParkEnabled(bool Enabled) override;
+	bool ParkConnected() const override;
+	bool ParkConnecting() const override;
+	bool ParkSwitch() override;
+	void ParkedConnect(const char *pAddress, const char *pPassword = nullptr) override;
+
+	void FillConnMapInfo(int Conn);
+	bool FindMapFile(const char *pMapName, const std::optional<SHA256_DIGEST> &Sha256, int Crc, char *pBuf, int BufSize);
+	void ResetParkMapDownload(bool ResetActive);
+	void SendParkMapRequest();
+	void FinishParkMapDownload();
+	void ParkSendJoinMessages();
+	void SendParkedKeepalive();
+	void SendInputMsg(int Conn, int Size, int64_t Now, int Tick);
+	void SwapConnState(int A, int B);
 
 	const CServerInfo &ServerInfo() const override;
 	void ServerInfoRequest();

@@ -362,6 +362,42 @@ bool CClient::ConnectionProblems() const
 	return m_aNetClient[g_Config.m_ClDummy].GotProblems(MaxLatencyTicks() * time_freq() / GameTickSpeed());
 }
 
+void CClient::SendInputMsg(int Conn, int Size, int64_t Now, int Tick)
+{
+	// pack input
+	CMsgPacker Msg(NETMSG_INPUT, true);
+	Msg.AddInt(m_aAckGameTick[Conn]);
+	Msg.AddInt(Tick);
+	Msg.AddInt(Size);
+
+	m_aInputs[Conn][m_aCurrentInput[Conn]].m_Tick = Tick;
+	m_aInputs[Conn][m_aCurrentInput[Conn]].m_PredictedTime = m_PredictedTime.Get(Now);
+	m_aInputs[Conn][m_aCurrentInput[Conn]].m_PredictionMargin = PredictionMargin() * time_freq() / 1000;
+	if(g_Config.m_TcSmoothPredictionMargin)
+		m_aInputs[Conn][m_aCurrentInput[Conn]].m_PredictionMargin = m_PredictedTime.GetMargin(Now);
+	m_aInputs[Conn][m_aCurrentInput[Conn]].m_Time = Now;
+
+	// pack it
+	for(int k = 0; k < Size / 4; k++)
+	{
+		static const int FlagsOffset = offsetof(CNetObj_PlayerInput, m_PlayerFlags) / sizeof(int);
+		if(k == FlagsOffset && IsSixup())
+		{
+			int PlayerFlags = m_aInputs[Conn][m_aCurrentInput[Conn]].m_aData[k];
+			Msg.AddInt(PlayerFlags_SixToSeven(PlayerFlags));
+		}
+		else
+		{
+			Msg.AddInt(m_aInputs[Conn][m_aCurrentInput[Conn]].m_aData[k]);
+		}
+	}
+
+	m_aCurrentInput[Conn]++;
+	m_aCurrentInput[Conn] %= 200;
+
+	SendMsg(Conn, &Msg, MSGFLAG_FLUSH);
+}
+
 void CClient::SendInput()
 {
 	int64_t Now = time_get();
@@ -378,42 +414,30 @@ void CClient::SendInput()
 			break;
 		}
 		int i = g_Config.m_ClDummy ^ Dummy;
-		int Size = GameClient()->OnSnapInput(m_aInputs[i][m_aCurrentInput[i]].m_aData, Dummy, Force);
+		const bool Parked = ParkEnabled() && i != g_Config.m_ClDummy;
+		const int Tick = Parked ? m_aPredTick[i] : m_aPredTick[g_Config.m_ClDummy];
+		if(Tick <= 0)
+			continue;
+
+		int Size;
+		if(Parked)
+		{
+			// Parked connections only need a neutral keepalive input. They must
+			// not simulate gameplay or copy the active player's input.
+			CNetObj_PlayerInput Neutral;
+			mem_zero(&Neutral, sizeof(Neutral));
+			Neutral.m_PlayerFlags = PLAYERFLAG_PLAYING;
+			mem_copy(m_aInputs[i][m_aCurrentInput[i]].m_aData, &Neutral, sizeof(Neutral));
+			Size = sizeof(Neutral);
+		}
+		else
+		{
+			Size = GameClient()->OnSnapInput(m_aInputs[i][m_aCurrentInput[i]].m_aData, Dummy, Force);
+		}
 
 		if(Size)
 		{
-			// pack input
-			CMsgPacker Msg(NETMSG_INPUT, true);
-			Msg.AddInt(m_aAckGameTick[i]);
-			Msg.AddInt(m_aPredTick[g_Config.m_ClDummy]);
-			Msg.AddInt(Size);
-
-			m_aInputs[i][m_aCurrentInput[i]].m_Tick = m_aPredTick[g_Config.m_ClDummy];
-			m_aInputs[i][m_aCurrentInput[i]].m_PredictedTime = m_PredictedTime.Get(Now);
-			m_aInputs[i][m_aCurrentInput[i]].m_PredictionMargin = PredictionMargin() * time_freq() / 1000;
-			if(g_Config.m_TcSmoothPredictionMargin)
-				m_aInputs[i][m_aCurrentInput[i]].m_PredictionMargin = m_PredictedTime.GetMargin(Now);
-			m_aInputs[i][m_aCurrentInput[i]].m_Time = Now;
-
-			// pack it
-			for(int k = 0; k < Size / 4; k++)
-			{
-				static const int FlagsOffset = offsetof(CNetObj_PlayerInput, m_PlayerFlags) / sizeof(int);
-				if(k == FlagsOffset && IsSixup())
-				{
-					int PlayerFlags = m_aInputs[i][m_aCurrentInput[i]].m_aData[k];
-					Msg.AddInt(PlayerFlags_SixToSeven(PlayerFlags));
-				}
-				else
-				{
-					Msg.AddInt(m_aInputs[i][m_aCurrentInput[i]].m_aData[k]);
-				}
-			}
-
-			m_aCurrentInput[i]++;
-			m_aCurrentInput[i] %= 200;
-
-			SendMsg(i, &Msg, MSGFLAG_FLUSH);
+			SendInputMsg(i, Size, Now, Tick);
 			// ugly workaround for dummy. we need to send input with dummy to prevent
 			// prediction time resets. but if we do it too often, then it's
 			// impossible to use grenade with frozen dummy that gets hammered...
@@ -421,6 +445,22 @@ void CClient::SendInput()
 				Force = true;
 		}
 	}
+}
+
+void CClient::SendParkedKeepalive()
+{
+	if(!ParkEnabled() || !m_DummyConnected)
+		return;
+
+	const int Conn = CONN_DUMMY;
+	if(m_aPredTick[Conn] <= 0)
+		return;
+
+	CNetObj_PlayerInput Neutral;
+	mem_zero(&Neutral, sizeof(Neutral));
+	Neutral.m_PlayerFlags = PLAYERFLAG_PLAYING;
+	mem_copy(m_aInputs[Conn][m_aCurrentInput[Conn]].m_aData, &Neutral, sizeof(Neutral));
+	SendInputMsg(Conn, sizeof(Neutral), time_get(), m_aPredTick[Conn]);
 }
 
 const char *CClient::LatestVersion() const
@@ -518,7 +558,9 @@ void CClient::OnEnterGame(bool Dummy)
 	m_aPredTick[Dummy] = 0;
 	m_aPredIntraTick[Dummy] = 0.0f;
 	m_aGameTime[Dummy].Init(0);
-	m_PredictedTime.Init(0);
+	// The parked connection must not reset the active session's prediction time.
+	if(!Dummy || !ParkEnabled())
+		m_PredictedTime.Init(0);
 
 	if(!Dummy)
 	{
@@ -543,8 +585,11 @@ void CClient::EnterGame(int Conn)
 	SendEnterGame(Conn);
 	OnEnterGame(Conn);
 
-	ServerInfoRequest(); // fresh one for timeout protection
-	m_CurrentServerNextPingTime = time_get() + time_freq() / 2;
+	if(Conn == CONN_MAIN || !ParkEnabled())
+	{
+		ServerInfoRequest(); // fresh one for timeout protection
+		m_CurrentServerNextPingTime = time_get() + time_freq() / 2;
+	}
 }
 
 void CClient::OnPostConnect(int Conn)
@@ -844,6 +889,14 @@ bool CClient::DummyConnectingDelayed() const
 
 void CClient::DummyConnect()
 {
+	if(ParkEnabled())
+	{
+		// The dummy slot is used by the parked connection. Connecting a real
+		// dummy to the active server would replace the parked session.
+		log_info("client", "Dummy is unavailable while parked connections are enabled.");
+		return;
+	}
+
 	if(m_aNetClient[CONN_MAIN].State() != NETSTATE_ONLINE)
 	{
 		log_info("client", "Not online.");
@@ -902,6 +955,14 @@ void CClient::DummyDisconnect(const char *pReason)
 	m_aReceivedSnapshots[1] = 0;
 	m_DummyConnected = false;
 	m_DummyConnecting = false;
+	m_DummySendConnInfo = false;
+	m_ParkAwaitingMap = false;
+	m_aConnMapInfo[CONN_DUMMY] = {};
+	m_aConnServerCapabilities[CONN_DUMMY] = {};
+	m_ParkCanReceiveServerCapabilities = false;
+	m_aParkAddress[0] = '\0';
+	m_ParkMapDetails = std::nullopt;
+	ResetParkMapDownload(true);
 	m_DummyReconnectOnReload = false;
 	m_DummyDeactivateOnReconnect = false;
 #if defined(CONF_PLATFORM_IOS)
@@ -913,6 +974,327 @@ void CClient::DummyDisconnect(const char *pReason)
 bool CClient::DummyAllowed() const
 {
 	return m_ServerCapabilities.m_AllowDummy;
+}
+
+void CClient::FillConnMapInfo(int Conn)
+{
+	CConnMapInfo &Info = m_aConnMapInfo[Conn];
+	Info = {};
+	if(!GameClient()->Map()->IsLoaded())
+		return;
+	str_copy(Info.m_aName, GameClient()->Map()->BaseName());
+	Info.m_Sha256 = GameClient()->Map()->Sha256();
+	Info.m_HasSha256 = true;
+	Info.m_Crc = GameClient()->Map()->Crc();
+	Info.m_Size = GameClient()->Map()->Size();
+	Info.m_Ready = true;
+}
+
+bool CClient::ParkEnabled() const
+{
+	return g_Config.m_LcParkEnabled != 0;
+}
+
+void CClient::SetParkEnabled(bool Enabled)
+{
+	if(g_Config.m_LcParkEnabled == (Enabled ? 1 : 0))
+		return;
+
+	if(!Enabled)
+	{
+		if(m_DummyConnected || m_DummyConnecting || m_DummySendConnInfo)
+			DummyDisconnect(nullptr);
+		m_ParkAwaitingMap = false;
+		ResetParkMapDownload(true);
+		g_Config.m_ClDummy = 0;
+	}
+	else
+	{
+		// The parked connection reuses the dummy slot, so a regular dummy
+		// cannot stay connected while the feature is enabled.
+		if(m_DummyConnected || m_DummyConnecting)
+			DummyDisconnect(nullptr);
+		g_Config.m_ClDummy = 0;
+	}
+
+	g_Config.m_LcParkEnabled = Enabled ? 1 : 0;
+}
+
+bool CClient::ParkConnected() const
+{
+	return ParkEnabled() && !m_DummyConnecting && m_DummyConnected && m_aConnMapInfo[CONN_DUMMY].m_Ready;
+}
+
+bool CClient::ParkConnecting() const
+{
+	return ParkEnabled() && (m_DummyConnecting || m_DummySendConnInfo || m_ParkAwaitingMap);
+}
+
+void CClient::SwapConnState(int A, int B)
+{
+	using std::swap;
+
+	// Engine timing state (declared in IClient).
+	swap(m_aPrevGameTick[A], m_aPrevGameTick[B]);
+	swap(m_aCurGameTick[A], m_aCurGameTick[B]);
+	swap(m_aGameIntraTick[A], m_aGameIntraTick[B]);
+	swap(m_aGameTickTime[A], m_aGameTickTime[B]);
+	swap(m_aGameIntraTickSincePrev[A], m_aGameIntraTickSincePrev[B]);
+	swap(m_aPredTick[A], m_aPredTick[B]);
+	swap(m_aPredIntraTick[A], m_aPredIntraTick[B]);
+
+	swap(m_aSnapshotParts[A], m_aSnapshotParts[B]);
+	swap(m_aAckGameTick[A], m_aAckGameTick[B]);
+	swap(m_aCurrentRecvTick[A], m_aCurrentRecvTick[B]);
+	swap(m_aRconAuthed[A], m_aRconAuthed[B]);
+	swap(m_aTimeoutCodes[A], m_aTimeoutCodes[B]);
+	swap(m_aDidPostConnect[A], m_aDidPostConnect[B]);
+	swap(m_aExecuteOnJoinDone[A], m_aExecuteOnJoinDone[B]);
+	swap(m_aGameTime[A], m_aGameTime[B]);
+	swap(m_aInputs[A], m_aInputs[B]);
+	swap(m_aCurrentInput[A], m_aCurrentInput[B]);
+	swap(m_aSnapshotStorage[A].m_pFirst, m_aSnapshotStorage[B].m_pFirst);
+	swap(m_aSnapshotStorage[A].m_pLast, m_aSnapshotStorage[B].m_pLast);
+	swap(m_aapSnapshots[A][SNAP_CURRENT], m_aapSnapshots[B][SNAP_CURRENT]);
+	swap(m_aapSnapshots[A][SNAP_PREV], m_aapSnapshots[B][SNAP_PREV]);
+	swap(m_aReceivedSnapshots[A], m_aReceivedSnapshots[B]);
+	swap(m_aSnapshotIncomingDataSize[A], m_aSnapshotIncomingDataSize[B]);
+	swap(m_aConnMapInfo[A], m_aConnMapInfo[B]);
+	swap(m_aConnServerCapabilities[A], m_aConnServerCapabilities[B]);
+	// The active connection always lives in CONN_MAIN.
+	m_ServerCapabilities = m_aConnServerCapabilities[CONN_MAIN];
+
+	// Snapshot data is only used while a snapshot is being assembled. Swapping
+	// the partial buffers avoids mixing data between connections.
+	char aTmp[CSnapshot::MAX_SIZE];
+	mem_copy(aTmp, m_aaSnapshotIncomingData[A], sizeof(aTmp));
+	mem_copy(m_aaSnapshotIncomingData[A], m_aaSnapshotIncomingData[B], sizeof(aTmp));
+	mem_copy(m_aaSnapshotIncomingData[B], aTmp, sizeof(aTmp));
+}
+
+void CClient::ParkedConnect(const char *pAddress, const char *pPassword)
+{
+	if(pAddress == nullptr || pAddress[0] == '\0')
+		return;
+
+	if(!ParkEnabled() || State() != IClient::STATE_ONLINE)
+	{
+		Connect(pAddress, pPassword);
+		return;
+	}
+
+	if(m_DummyConnecting)
+		return;
+
+	char aBuffer[128];
+	const char *pNextAddr = pAddress;
+	NETADDR aConnectAddrs[MAX_SERVER_ADDRESSES];
+	int NumConnectAddrs = 0;
+	bool OnlySixup = true;
+	mem_zero(aConnectAddrs, sizeof(aConnectAddrs));
+	while((pNextAddr = str_next_token(pNextAddr, ",", aBuffer, sizeof(aBuffer))))
+	{
+		NETADDR NextAddr;
+		char aHost[128];
+		const int UrlParseResult = net_addr_from_url(&NextAddr, aBuffer, aHost, sizeof(aHost));
+		bool Sixup = NextAddr.type & NETTYPE_TW7;
+		if(UrlParseResult > 0)
+			str_copy(aHost, aBuffer);
+
+		if(net_host_lookup(aHost, &NextAddr, m_aNetClient[CONN_MAIN].NetType()) != 0)
+		{
+			log_error("client", "could not find address of %s", aHost);
+			continue;
+		}
+		if(NumConnectAddrs == (int)std::size(aConnectAddrs))
+		{
+			log_warn("client", "too many connect addresses, ignoring %s", aHost);
+			continue;
+		}
+		if(NextAddr.port == 0)
+			NextAddr.port = 8303;
+		if(Sixup)
+			NextAddr.type |= NETTYPE_TW7;
+		else
+			OnlySixup = false;
+		aConnectAddrs[NumConnectAddrs++] = NextAddr;
+	}
+
+	if(NumConnectAddrs == 0)
+	{
+		log_error("client", "could not find any parked connect address");
+		return;
+	}
+
+	if(OnlySixup != IsSixup())
+	{
+		char aWarning[256];
+		str_format(aWarning, sizeof(aWarning), Localize("The parked server uses a different protocol version (%s)."), OnlySixup ? "0.7" : "0.6");
+		SWarning Warning(Localize("Parked connection"), aWarning);
+		Warning.m_AutoHide = false;
+		AddWarning(Warning);
+		return;
+	}
+
+	// Replace an existing parked connection only after the new address has
+	// been validated, so a bad address does not drop the current parked one.
+	if(m_DummyConnected || m_DummySendConnInfo)
+		DummyDisconnect(nullptr);
+
+	ResetParkMapDownload(true);
+	m_aConnMapInfo[CONN_DUMMY] = {};
+	m_aConnServerCapabilities[CONN_DUMMY] = {};
+	m_ParkCanReceiveServerCapabilities = true;
+	m_ParkMapDetails = std::nullopt;
+
+	// Reset the per-connection state for the new parked session. Without this,
+	// tick counters from a previous parked connection could reject snapshots
+	// from the new server.
+	m_aAckGameTick[CONN_DUMMY] = -1;
+	m_aCurrentRecvTick[CONN_DUMMY] = 0;
+	m_aPrevGameTick[CONN_DUMMY] = 0;
+	m_aCurGameTick[CONN_DUMMY] = 0;
+	m_aGameIntraTick[CONN_DUMMY] = 0.0f;
+	m_aGameTickTime[CONN_DUMMY] = 0.0f;
+	m_aGameIntraTickSincePrev[CONN_DUMMY] = 0.0f;
+	m_aPredTick[CONN_DUMMY] = 0;
+	m_aPredIntraTick[CONN_DUMMY] = 0.0f;
+	m_aGameTime[CONN_DUMMY].Init(0);
+	m_aapSnapshots[CONN_DUMMY][SNAP_CURRENT] = nullptr;
+	m_aapSnapshots[CONN_DUMMY][SNAP_PREV] = nullptr;
+	m_aSnapshotStorage[CONN_DUMMY].PurgeAll();
+	m_aReceivedSnapshots[CONN_DUMMY] = 0;
+	m_aSnapshotParts[CONN_DUMMY] = 0;
+	m_aSnapshotIncomingDataSize[CONN_DUMMY] = 0;
+	m_aDidPostConnect[CONN_DUMMY] = false;
+	m_aExecuteOnJoinDone[CONN_DUMMY] = false;
+
+	m_DummySendConnInfo = true;
+	m_DummyConnecting = true;
+	m_ParkAwaitingMap = false;
+	str_copy(m_aParkAddress, pAddress);
+	GenerateTimeoutCode(m_aTimeoutCodes[CONN_DUMMY], sizeof(m_aTimeoutCodes[CONN_DUMMY]), g_Config.m_ClTimeoutSeed, aConnectAddrs, NumConnectAddrs, true);
+
+	if(pPassword != nullptr)
+		str_copy(m_aPassword, pPassword);
+
+	if(IsSixup())
+		m_aNetClient[CONN_DUMMY].Connect7(aConnectAddrs, NumConnectAddrs);
+	else
+		m_aNetClient[CONN_DUMMY].Connect(aConnectAddrs, NumConnectAddrs);
+
+	m_aInputtimeMarginGraphs[CONN_DUMMY].Init(-150.0f, 150.0f);
+	m_aGametimeMarginGraphs[CONN_DUMMY].Init(-150.0f, 150.0f);
+}
+
+bool CClient::ParkSwitch()
+{
+	if(!ParkEnabled() || !m_DummyConnected || m_DummyConnecting)
+		return false;
+
+	CConnMapInfo Target = m_aConnMapInfo[CONN_DUMMY];
+	if(!Target.m_Ready || Target.m_aName[0] == '\0')
+		return false;
+
+	// Remember the map of the connection we are leaving so we can restore it
+	// when switching back later.
+	FillConnMapInfo(CONN_MAIN);
+
+	// OnReset during the map load clears the per-session tuning, so cache it
+	// now and restore it once the new map is initialized.
+	GameClient()->CacheTuningForParkSwitch();
+
+	std::optional<SHA256_DIGEST> WantedSha256;
+	if(Target.m_HasSha256)
+		WantedSha256 = Target.m_Sha256;
+
+	// Make sure the map file exists before LoadMapSearch unloads the current
+	// map. A missing map would otherwise leave the active connection without
+	// a map and with purged snapshots.
+	char aMapFilename[IO_MAX_PATH_LENGTH];
+	if(!FindMapFile(Target.m_aName, WantedSha256, Target.m_Crc, aMapFilename, sizeof(aMapFilename)))
+	{
+		char aWarning[512];
+		str_format(aWarning, sizeof(aWarning), Localize("Could not find the parked server map '%s'."), Target.m_aName);
+		SWarning Warning(Localize("Parked connection"), aWarning);
+		Warning.m_AutoHide = false;
+		AddWarning(Warning);
+		return false;
+	}
+
+	const char *pError = LoadMapSearch(Target.m_aName, WantedSha256, Target.m_Crc);
+	if(pError != nullptr)
+	{
+		log_error("client", "could not load parked map: %s", pError);
+		char aWarning[512];
+		str_format(aWarning, sizeof(aWarning), Localize("Could not load the parked server map: %s"), pError);
+		SWarning Warning(Localize("Parked connection"), aWarning);
+		Warning.m_AutoHide = false;
+		AddWarning(Warning);
+		return false;
+	}
+
+	// Move the parked session into the main slot and the active session into
+	// the dummy slot.
+	m_aNetClient[CONN_MAIN].Swap(m_aNetClient[CONN_DUMMY]);
+	SwapConnState(CONN_MAIN, CONN_DUMMY);
+
+	g_Config.m_ClDummy = 0;
+	m_LastDummy = false;
+
+	// Keep the connect address strings in sync with the swapped sessions so
+	// reconnects go to the right server.
+	char aConnectAddressTmp[sizeof(m_aConnectAddressStr)];
+	str_copy(aConnectAddressTmp, m_aConnectAddressStr);
+	str_copy(m_aConnectAddressStr, m_aParkAddress);
+	str_copy(m_aParkAddress, aConnectAddressTmp);
+
+	// The map details of the connection that just became active.
+	CMapDetails ActiveDetails;
+	str_copy(ActiveDetails.m_aName, Target.m_aName);
+	ActiveDetails.m_Size = Target.m_Size;
+	ActiveDetails.m_Crc = Target.m_Crc;
+	ActiveDetails.m_Sha256 = Target.m_HasSha256 ? Target.m_Sha256 : SHA256_DIGEST{};
+	ActiveDetails.m_aUrl[0] = '\0';
+	m_MapDetails = ActiveDetails;
+	m_ParkMapDetails = std::nullopt;
+
+	// The parked snapshots were purged by LoadMap. Keep the preserved tick
+	// values so we can immediately acknowledge the server and request a full
+	// snapshot again. Do the same for the connection that just became parked,
+	// since its snapshot storage was purged as well.
+	m_aAckGameTick[CONN_MAIN] = -1;
+	m_aAckGameTick[CONN_DUMMY] = -1;
+	m_aapSnapshots[CONN_MAIN][SNAP_CURRENT] = nullptr;
+	m_aapSnapshots[CONN_MAIN][SNAP_PREV] = nullptr;
+	m_aReceivedSnapshots[CONN_MAIN] = 0;
+	m_aSnapshotParts[CONN_MAIN] = 0;
+	m_aSnapshotIncomingDataSize[CONN_MAIN] = 0;
+	// Run the usual post-connect actions (timeout code, run on join) for the
+	// connection that just became active.
+	m_aDidPostConnect[CONN_MAIN] = false;
+	m_aExecuteOnJoinDone[CONN_MAIN] = false;
+	GameClient()->InvalidateSnapshot();
+
+	// Let the game client initialize its map logic for the newly active map.
+	GameClient()->OnConnected();
+	GameClient()->RestoreTuningAfterParkSwitch();
+
+	// Refresh the server info so menus and ping display refer to the new
+	// active server.
+	ServerInfoRequest();
+	m_CurrentServerNextPingTime = time_get() + time_freq() / 2;
+
+	// Keep the old active connection parked and ready for the next switch.
+	m_ParkAwaitingMap = false;
+	ResetParkMapDownload(true);
+	m_ParkMapDetails = std::nullopt;
+
+	// Acknowledge no snapshot to force the new active server to send a full
+	// one, and send a neutral keepalive to the connection that just became
+	// parked.
+	SendInput();
+	return true;
 }
 
 const CServerInfo &CClient::ServerInfo() const
@@ -1702,7 +2084,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 	if(Sys)
 	{
 		// system message
-		if(Conn == CONN_MAIN && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_MAP_DETAILS)
+		if((Conn == CONN_MAIN || (Conn == CONN_DUMMY && ParkEnabled())) && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_MAP_DETAILS)
 		{
 			const char *pMap = Unpacker.GetString(CUnpacker::SANITIZE_CC | CUnpacker::SKIP_START_WHITESPACES);
 			SHA256_DIGEST *pMapSha256 = (SHA256_DIGEST *)Unpacker.GetRaw(sizeof(*pMapSha256));
@@ -1719,35 +2101,143 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 				pMapUrl = "";
 			}
 
-			m_MapDetails = std::make_optional<CMapDetails>();
-			CMapDetails &MapDetails = m_MapDetails.value();
+			std::optional<CMapDetails> *pTarget = Conn == CONN_MAIN ? &m_MapDetails : &m_ParkMapDetails;
+			*pTarget = std::make_optional<CMapDetails>();
+			CMapDetails &MapDetails = pTarget->value();
 			str_copy(MapDetails.m_aName, pMap);
 			MapDetails.m_Size = MapSize;
 			MapDetails.m_Crc = MapCrc;
 			MapDetails.m_Sha256 = *pMapSha256;
 			str_copy(MapDetails.m_aUrl, pMapUrl);
 		}
-		else if(Conn == CONN_MAIN && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_CAPABILITIES)
+		else if((Conn == CONN_MAIN || (Conn == CONN_DUMMY && ParkEnabled())) && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_CAPABILITIES)
 		{
-			if(!m_CanReceiveServerCapabilities)
+			if(Conn == CONN_MAIN)
 			{
+				if(!m_CanReceiveServerCapabilities)
+				{
+					return;
+				}
+				int Version = Unpacker.GetInt();
+				int Flags = Unpacker.GetInt();
+				if(Unpacker.Error() || Version <= 0)
+				{
+					return;
+				}
+				m_ServerCapabilities = GetServerCapabilities(Version, Flags, IsSixup());
+				m_aConnServerCapabilities[CONN_MAIN] = m_ServerCapabilities;
+				m_CanReceiveServerCapabilities = false;
+				m_ServerSentCapabilities = true;
+			}
+			else
+			{
+				if(!m_ParkCanReceiveServerCapabilities)
+				{
+					return;
+				}
+				int Version = Unpacker.GetInt();
+				int Flags = Unpacker.GetInt();
+				if(Unpacker.Error() || Version <= 0)
+				{
+					return;
+				}
+				m_aConnServerCapabilities[CONN_DUMMY] = GetServerCapabilities(Version, Flags, IsSixup());
+				m_ParkCanReceiveServerCapabilities = false;
+			}
+		}
+		else if(Conn == CONN_DUMMY && ParkEnabled() && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_MAP_CHANGE)
+		{
+			if(m_ParkCanReceiveServerCapabilities)
+			{
+				m_aConnServerCapabilities[CONN_DUMMY] = GetServerCapabilities(0, 0, IsSixup());
+				m_ParkCanReceiveServerCapabilities = false;
+			}
+			std::optional<CMapDetails> MapDetails = std::nullopt;
+			std::swap(MapDetails, m_ParkMapDetails);
+
+			const char *pMap = Unpacker.GetString(CUnpacker::SANITIZE_CC | CUnpacker::SKIP_START_WHITESPACES);
+			int MapCrc = Unpacker.GetInt();
+			int MapSize = Unpacker.GetInt();
+			if(Unpacker.Error())
+				return;
+			if(MapSize < 0 || MapSize > 1024 * 1024 * 1024) // 1 GiB
+			{
+				DummyDisconnect("invalid map size");
 				return;
 			}
-			int Version = Unpacker.GetInt();
-			int Flags = Unpacker.GetInt();
-			if(Unpacker.Error() || Version <= 0)
+			if(!str_valid_filename(pMap))
 			{
+				DummyDisconnect("map name is not a valid filename");
 				return;
 			}
-			m_ServerCapabilities = GetServerCapabilities(Version, Flags, IsSixup());
-			m_CanReceiveServerCapabilities = false;
-			m_ServerSentCapabilities = true;
+
+			m_DummyConnecting = true;
+			ResetParkMapDownload(true);
+			CConnMapInfo &Info = m_aConnMapInfo[CONN_DUMMY];
+			Info = {};
+			str_copy(Info.m_aName, pMap);
+			Info.m_Crc = MapCrc;
+			Info.m_Size = MapSize;
+
+			std::optional<SHA256_DIGEST> MapSha256;
+			const char *pMapUrl = nullptr;
+			if(MapDetails.has_value() &&
+				str_comp(MapDetails->m_aName, pMap) == 0 &&
+				MapDetails->m_Size == MapSize &&
+				MapDetails->m_Crc == MapCrc)
+			{
+				MapSha256 = MapDetails->m_Sha256;
+				pMapUrl = MapDetails->m_aUrl[0] ? MapDetails->m_aUrl : nullptr;
+			}
+
+			Info.m_HasSha256 = MapSha256.has_value();
+			if(Info.m_HasSha256)
+				Info.m_Sha256 = MapSha256.value();
+
+			char aFilename[IO_MAX_PATH_LENGTH];
+			if(FindMapFile(pMap, MapSha256, MapCrc, aFilename, sizeof(aFilename)))
+			{
+				Info.m_Ready = true;
+				ParkSendJoinMessages();
+				return;
+			}
+
+			FormatMapDownloadFilename(pMap, MapSha256, MapCrc, false, m_aParkMapdownloadFilename, sizeof(m_aParkMapdownloadFilename));
+			FormatMapDownloadFilename(pMap, MapSha256, MapCrc, true, m_aParkMapdownloadFilenameTemp, sizeof(m_aParkMapdownloadFilenameTemp));
+			str_copy(m_aParkMapdownloadName, pMap);
+			m_ParkMapdownloadSha256 = MapSha256;
+			m_ParkMapdownloadCrc = MapCrc;
+			m_ParkMapdownloadTotalsize = MapSize;
+			// Keep the 0.7 chunk parameters for this connection; the shared
+			// translation context can be overwritten by the active server.
+			m_ParkMapDownloadChunkSize = IsSixup() ? m_TranslationContext.m_MapDownloadChunkSize : 0;
+			m_ParkMapDownloadChunksPerRequest = IsSixup() ? m_TranslationContext.m_MapDownloadChunksPerRequest : 0;
+
+			if(MapSha256.has_value())
+			{
+				char aUrl[256];
+				char aEscaped[256];
+				EscapeUrl(aEscaped, str_startswith(m_aParkMapdownloadFilename, "downloadedmaps/"));
+				bool UseConfigUrl = str_comp(g_Config.m_ClMapDownloadUrl, "https://maps.ddnet.org") != 0 || m_aMapDownloadUrl[0] == '\0';
+				str_format(aUrl, sizeof(aUrl), "%s/%s", UseConfigUrl ? g_Config.m_ClMapDownloadUrl : m_aMapDownloadUrl, aEscaped);
+
+				m_pParkMapdownloadTask = HttpGetFile(pMapUrl ? pMapUrl : aUrl, Storage(), m_aParkMapdownloadFilenameTemp, IStorage::TYPE_SAVE);
+				m_pParkMapdownloadTask->Timeout(CTimeout{g_Config.m_ClMapDownloadConnectTimeoutMs, 0, g_Config.m_ClMapDownloadLowSpeedLimit, g_Config.m_ClMapDownloadLowSpeedTime});
+				m_pParkMapdownloadTask->MaxResponseSize(MapSize);
+				m_pParkMapdownloadTask->ExpectSha256(MapSha256.value());
+				Http()->Run(m_pParkMapdownloadTask);
+			}
+			else
+			{
+				SendParkMapRequest();
+			}
 		}
 		else if(Conn == CONN_MAIN && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_MAP_CHANGE)
 		{
 			if(m_CanReceiveServerCapabilities)
 			{
 				m_ServerCapabilities = GetServerCapabilities(0, 0, IsSixup());
+				m_aConnServerCapabilities[CONN_MAIN] = m_ServerCapabilities;
 				m_CanReceiveServerCapabilities = false;
 			}
 			std::optional<CMapDetails> MapDetails = std::nullopt;
@@ -1772,7 +2262,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 				return;
 			}
 
-			if(m_DummyConnected && !m_DummyReconnectOnReload)
+			if(m_DummyConnected && !m_DummyReconnectOnReload && !ParkEnabled())
 			{
 				DummyDisconnect(nullptr);
 			}
@@ -1793,6 +2283,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 			if(LoadMapSearch(pMap, MapSha256, MapCrc) == nullptr)
 			{
 				m_pConsole->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "client/network", "loading done");
+				FillConnMapInfo(CONN_MAIN);
 				SetLoadingStateDetail(IClient::LOADING_STATE_DETAIL_SENDING_READY);
 				SendReady(CONN_MAIN);
 			}
@@ -1828,6 +2319,70 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 				else
 				{
 					SendMapRequest();
+				}
+			}
+		}
+		else if(Conn == CONN_DUMMY && ParkEnabled() && Msg == NETMSG_MAP_DATA)
+		{
+			if(!m_ParkMapdownloadFileTemp)
+				return;
+			int Last = -1;
+			int MapCRC = -1;
+			int Chunk = -1;
+			int Size = -1;
+
+			if(IsSixup())
+			{
+				if(m_ParkMapdownloadTotalsize <= 0 ||
+					m_ParkMapDownloadChunkSize <= 0 ||
+					m_ParkMapDownloadChunksPerRequest <= 0)
+				{
+					return;
+				}
+				MapCRC = m_ParkMapdownloadCrc;
+				Chunk = m_ParkMapdownloadChunk;
+				Size = std::min(m_ParkMapDownloadChunkSize, m_ParkMapdownloadTotalsize - m_ParkMapdownloadAmount);
+			}
+			else
+			{
+				Last = Unpacker.GetInt();
+				MapCRC = Unpacker.GetInt();
+				Chunk = Unpacker.GetInt();
+				Size = Unpacker.GetInt();
+			}
+
+			const unsigned char *pData = Unpacker.GetRaw(Size);
+			if(Unpacker.Error() || Size <= 0 || MapCRC != m_ParkMapdownloadCrc || Chunk != m_ParkMapdownloadChunk)
+				return;
+
+			io_write(m_ParkMapdownloadFileTemp, pData, Size);
+			m_ParkMapdownloadAmount += Size;
+
+			if(IsSixup())
+				Last = m_ParkMapdownloadAmount == m_ParkMapdownloadTotalsize;
+
+			if(Last)
+			{
+				if(m_ParkMapdownloadFileTemp)
+				{
+					io_close(m_ParkMapdownloadFileTemp);
+					m_ParkMapdownloadFileTemp = nullptr;
+				}
+				FinishParkMapDownload();
+			}
+			else
+			{
+				m_ParkMapdownloadChunk++;
+				if(IsSixup() && (m_ParkMapdownloadChunk % m_ParkMapDownloadChunksPerRequest == 0))
+				{
+					CMsgPacker MsgP(protocol7::NETMSG_REQUEST_MAP_DATA, true, true);
+					SendMsg(CONN_DUMMY, &MsgP, MSGFLAG_VITAL | MSGFLAG_FLUSH);
+				}
+				else
+				{
+					CMsgPacker MsgP(NETMSG_REQUEST_MAP_DATA, true);
+					MsgP.AddInt(m_ParkMapdownloadChunk);
+					SendMsg(CONN_DUMMY, &MsgP, MSGFLAG_VITAL | MSGFLAG_FLUSH);
 				}
 			}
 		}
@@ -1911,7 +2466,9 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 		}
 		else if(Conn == CONN_MAIN && (pPacket->m_Flags & NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_MAP_RELOAD)
 		{
-			if(m_DummyConnected)
+			// The parked connection is another server and must not be
+			// reconnected when the active server reloads its map.
+			if(m_DummyConnected && !ParkEnabled())
 			{
 				m_DummyReconnectOnReload = true;
 				m_DummyDeactivateOnReconnect = g_Config.m_ClDummy == 0;
@@ -1946,10 +2503,21 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 		{
 			m_DummyConnected = true;
 			m_DummyConnecting = false;
-			g_Config.m_ClDummy = 1;
-			Rcon("crashmeplx");
-			if(m_aRconAuthed[0] && !m_aRconAuthed[1])
-				RconAuth(m_aRconUsername, m_aRconPassword);
+			if(ParkEnabled())
+			{
+				// The parked connection stays in the background. Do not
+				// activate it or change the active player's settings.
+				g_Config.m_ClDummy = 0;
+				if(!m_aConnMapInfo[CONN_DUMMY].m_Ready)
+					m_ParkAwaitingMap = true;
+			}
+			else
+			{
+				g_Config.m_ClDummy = 1;
+				Rcon("crashmeplx");
+				if(m_aRconAuthed[0] && !m_aRconAuthed[1])
+					RconAuth(m_aRconUsername, m_aRconPassword);
+			}
 		}
 		else if(Msg == NETMSG_PING)
 		{
@@ -2040,10 +2608,15 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 			}
 			else
 			{
+				char aParkedAddress[sizeof(m_aParkAddress)];
+				str_copy(aParkedAddress, m_aParkAddress);
 				DummyDisconnect("reconnect");
 				// Reset dummy connect time to allow immediate reconnect
 				m_LastDummyConnectTime = 0.0f;
-				DummyConnect();
+				if(ParkEnabled() && aParkedAddress[0] != '\0')
+					ParkedConnect(aParkedAddress);
+				else
+					DummyConnect();
 			}
 		}
 		else if(Msg == NETMSG_REDIRECT)
@@ -2060,6 +2633,16 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 				char aAddr[NETADDR_MAXSTRSIZE];
 				net_addr_str(&ServerAddr, aAddr, sizeof(aAddr), true);
 				Connect(aAddr);
+			}
+			else if(ParkEnabled())
+			{
+				char aParkedAddress[sizeof(m_aParkAddress)];
+				str_copy(aParkedAddress, m_aParkAddress);
+				DummyDisconnect("redirect");
+				// Reset dummy connect time to allow immediate reconnect
+				m_LastDummyConnectTime = 0.0f;
+				if(aParkedAddress[0] != '\0')
+					ParkedConnect(aParkedAddress);
 			}
 			else
 			{
@@ -2165,7 +2748,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 				}
 			}
 
-			if(Target)
+			if(Target && !(ParkEnabled() && Conn == CONN_DUMMY))
 				m_PredictedTime.Update(&m_aInputtimeMarginGraphs[Conn], Target, TimeLeft, CSmoothTime::ADJUSTDIRECTION_UP);
 		}
 		else if(Msg == NETMSG_SNAP || Msg == NETMSG_SNAPSINGLE || Msg == NETMSG_SNAPEMPTY)
@@ -2368,7 +2951,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 					if(!m_aExecuteOnJoinDone[Conn] && m_aReceivedSnapshots[Conn] > g_Config.m_TcExecuteOnJoinDelay)
 					{
 						m_aExecuteOnJoinDone[Conn] = true;
-						if(g_Config.m_TcExecuteOnJoin[0] != '\0')
+						if(g_Config.m_TcExecuteOnJoin[0] != '\0' && !(ParkEnabled() && Conn == CONN_DUMMY))
 							m_pConsole->ExecuteLine(g_Config.m_TcExecuteOnJoin, IConsole::CLIENT_ID_UNSPECIFIED);
 					}
 
@@ -2400,8 +2983,11 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 						if(!Dummy)
 						{
 							GameClient()->OnNewSnapshot(false);
+							// Only the active connection may bring the client
+							// online. Inactive/parked connections must not do so
+							// while the active map is still loading.
+							SetState(IClient::STATE_ONLINE);
 						}
-						SetState(IClient::STATE_ONLINE);
 						if(Conn == CONN_MAIN)
 						{
 							DemoRecorder_HandleAutoStart();
@@ -2419,7 +3005,8 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 
 					if(m_aReceivedSnapshots[Conn] > GameTickSpeed() && !m_aDidPostConnect[Conn])
 					{
-						OnPostConnect(Conn);
+						if(!(ParkEnabled() && Conn == CONN_DUMMY))
+							OnPostConnect(Conn);
 						m_aDidPostConnect[Conn] = true;
 					}
 
@@ -2596,6 +3183,7 @@ void CClient::FinishMapDownload()
 		ResetMapDownload(true);
 		m_pConsole->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "client/network", "loading done");
 		SendReady(CONN_MAIN);
+		FillConnMapInfo(CONN_MAIN);
 	}
 	else if(m_pMapdownloadTask) // fallback
 	{
@@ -2606,6 +3194,136 @@ void CClient::FinishMapDownload()
 	{
 		DisconnectWithReason(pError);
 	}
+}
+
+bool CClient::FindMapFile(const char *pMapName, const std::optional<SHA256_DIGEST> &Sha256, int Crc, char *pBuf, int BufSize)
+{
+	const auto &&Matches = [&](const char *pFilename) {
+		if(!Sha256.has_value() && Crc == 0)
+			return true;
+		SHA256_DIGEST GotSha;
+		unsigned GotCrc = 0;
+		if(!Storage()->CalculateHashes(pFilename, IStorage::TYPE_ALL, Sha256.has_value() ? &GotSha : nullptr, &GotCrc))
+			return false;
+		if(Sha256.has_value())
+			return GotSha == Sha256.value();
+		return (int)GotCrc == Crc;
+	};
+
+	str_format(pBuf, BufSize, "maps/%s.map", pMapName);
+	if(Storage()->FileExists(pBuf, IStorage::TYPE_ALL) && Matches(pBuf))
+		return true;
+
+	FormatMapDownloadFilename(pMapName, Sha256, Crc, false, pBuf, BufSize);
+	if(Storage()->FileExists(pBuf, IStorage::TYPE_SAVE) && Matches(pBuf))
+		return true;
+
+	if(Sha256.has_value())
+	{
+		FormatMapDownloadFilename(pMapName, std::nullopt, Crc, false, pBuf, BufSize);
+		if(Storage()->FileExists(pBuf, IStorage::TYPE_SAVE) && Matches(pBuf))
+			return true;
+	}
+
+	char aFilename[IO_MAX_PATH_LENGTH];
+	str_format(aFilename, sizeof(aFilename), "%s.map", pMapName);
+	char aFound[IO_MAX_PATH_LENGTH];
+	if(Storage()->FindFile(aFilename, "maps", IStorage::TYPE_ALL, aFound, sizeof(aFound)) && Matches(aFound))
+	{
+		str_copy(pBuf, aFound, BufSize);
+		return true;
+	}
+	return false;
+}
+
+void CClient::ResetParkMapDownload(bool ResetActive)
+{
+	if(m_pParkMapdownloadTask)
+	{
+		m_pParkMapdownloadTask->Abort();
+		m_pParkMapdownloadTask = nullptr;
+	}
+
+	if(m_ParkMapdownloadFileTemp)
+	{
+		io_close(m_ParkMapdownloadFileTemp);
+		m_ParkMapdownloadFileTemp = nullptr;
+	}
+
+	if(Storage()->FileExists(m_aParkMapdownloadFilenameTemp, IStorage::TYPE_SAVE))
+		Storage()->RemoveFile(m_aParkMapdownloadFilenameTemp, IStorage::TYPE_SAVE);
+
+	if(ResetActive)
+	{
+		m_ParkMapdownloadChunk = 0;
+		m_ParkMapdownloadSha256 = std::nullopt;
+		m_ParkMapdownloadCrc = 0;
+		m_ParkMapdownloadTotalsize = -1;
+		m_ParkMapDownloadChunkSize = 0;
+		m_ParkMapDownloadChunksPerRequest = 0;
+		m_ParkMapdownloadAmount = 0;
+		m_aParkMapdownloadFilename[0] = '\0';
+		m_aParkMapdownloadFilenameTemp[0] = '\0';
+		m_aParkMapdownloadName[0] = '\0';
+	}
+}
+
+void CClient::SendParkMapRequest()
+{
+	dbg_assert(!m_ParkMapdownloadFileTemp, "Parked map download already in progress");
+	m_ParkMapdownloadFileTemp = Storage()->OpenFile(m_aParkMapdownloadFilenameTemp, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(IsSixup())
+	{
+		CMsgPacker MsgP(protocol7::NETMSG_REQUEST_MAP_DATA, true, true);
+		SendMsg(CONN_DUMMY, &MsgP, MSGFLAG_VITAL | MSGFLAG_FLUSH);
+	}
+	else
+	{
+		CMsgPacker Msg(NETMSG_REQUEST_MAP_DATA, true);
+		Msg.AddInt(m_ParkMapdownloadChunk);
+		SendMsg(CONN_DUMMY, &Msg, MSGFLAG_VITAL | MSGFLAG_FLUSH);
+	}
+}
+
+void CClient::FinishParkMapDownload()
+{
+	if(!Storage()->RenameFile(m_aParkMapdownloadFilenameTemp, m_aParkMapdownloadFilename, IStorage::TYPE_SAVE))
+	{
+		char aError[128 + IO_MAX_PATH_LENGTH];
+		str_format(aError, sizeof(aError), Localize("Could not save downloaded map. Try manually deleting this file: %s"), m_aParkMapdownloadFilename);
+		DummyDisconnect(aError);
+		return;
+	}
+
+	CConnMapInfo &Info = m_aConnMapInfo[CONN_DUMMY];
+	str_copy(Info.m_aName, m_aParkMapdownloadName);
+	Info.m_HasSha256 = m_ParkMapdownloadSha256.has_value();
+	if(Info.m_HasSha256)
+		Info.m_Sha256 = m_ParkMapdownloadSha256.value();
+	Info.m_Crc = m_ParkMapdownloadCrc;
+	Info.m_Size = m_ParkMapdownloadTotalsize;
+	Info.m_Ready = true;
+
+	ResetParkMapDownload(true);
+	m_ParkMapDetails = std::nullopt;
+	ParkSendJoinMessages();
+}
+
+void CClient::ParkSendJoinMessages()
+{
+	if(!ParkEnabled())
+		return;
+	if(!m_DummyConnecting && !m_DummyConnected && !m_DummySendConnInfo)
+		return;
+
+	const CConnMapInfo &Info = m_aConnMapInfo[CONN_DUMMY];
+	if(!Info.m_Ready)
+		return;
+
+	m_ParkAwaitingMap = false;
+	SendReady(CONN_DUMMY);
+	GameClient()->SendDummyInfo(true);
+	SendEnterGame(CONN_DUMMY);
 }
 
 void CClient::ResetDDNetInfoTask()
@@ -2793,9 +3511,18 @@ void CClient::PumpNetwork()
 			m_DummySendConnInfo = false;
 			SendInfo(CONN_DUMMY);
 			m_aNetClient[CONN_DUMMY].Update();
-			SendReady(CONN_DUMMY);
-			GameClient()->SendDummyInfo(true);
-			SendEnterGame(CONN_DUMMY);
+			if(ParkEnabled())
+			{
+				// Wait for the server's map change before sending READY and
+				// entering the game, so the map file can be cached first.
+				m_ParkAwaitingMap = true;
+			}
+			else
+			{
+				SendReady(CONN_DUMMY);
+				GameClient()->SendDummyInfo(true);
+				SendEnterGame(CONN_DUMMY);
+			}
 		}
 	}
 
@@ -2816,7 +3543,10 @@ void CClient::PumpNetwork()
 			}
 			if(Conn == CONN_MAIN || Conn == CONN_DUMMY)
 			{
-				ProcessServerPacket(&Packet, Conn, g_Config.m_ClDummy ^ Conn);
+				// While a parked connection is active, the main slot is always
+				// the selected session and the dummy slot is always parked.
+				const bool Dummy = ParkEnabled() ? Conn != CONN_MAIN : g_Config.m_ClDummy ^ Conn;
+				ProcessServerPacket(&Packet, Conn, Dummy);
 			}
 		}
 	}
@@ -2895,6 +3625,22 @@ void CClient::UpdateDemoIntraTimers()
 void CClient::Update()
 {
 	PumpNetwork();
+
+	// The parked connection reuses the dummy slot, so keep the main session
+	// active while the feature is enabled.
+	if(ParkEnabled())
+	{
+		g_Config.m_ClDummy = 0;
+		if(m_DummyConnected)
+		{
+			const int ParkedTick = m_aAckGameTick[CONN_DUMMY];
+			if(ParkedTick > m_aPredTick[CONN_DUMMY])
+			{
+				m_aPredTick[CONN_DUMMY] = ParkedTick;
+				SendParkedKeepalive();
+			}
+		}
+	}
 
 	// update editor/gameclient, before input snapping
 	if(m_EditorActive)
@@ -3128,6 +3874,20 @@ void CClient::Update()
 			dbg_msg("webdl", "http failed, falling back to gameserver");
 			ResetMapDownload(false);
 			SendMapRequest();
+		}
+	}
+
+	if(m_pParkMapdownloadTask)
+	{
+		if(m_pParkMapdownloadTask->State() == EHttpState::DONE)
+		{
+			FinishParkMapDownload();
+		}
+		else if(m_pParkMapdownloadTask->State() == EHttpState::ERROR || m_pParkMapdownloadTask->State() == EHttpState::ABORTED)
+		{
+			dbg_msg("webdl", "parked map http failed, falling back to gameserver");
+			ResetParkMapDownload(false);
+			SendParkMapRequest();
 		}
 	}
 

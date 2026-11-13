@@ -10,6 +10,8 @@
 
 #include <engine/shared/protocol7.h>
 
+#include <utility>
+
 bool CNetClient::Open(NETADDR BindAddr)
 {
 	// open socket
@@ -48,6 +50,22 @@ void CNetClient::Close()
 void CNetClient::Disconnect(const char *pReason)
 {
 	m_Connection.Disconnect(pReason);
+}
+
+void CNetClient::Swap(CNetClient &Other)
+{
+	using std::swap;
+	swap(m_Connection, Other.m_Connection);
+	swap(m_PacketChunkUnpacker, Other.m_PacketChunkUnpacker);
+	swap(m_RecvBuffer, Other.m_RecvBuffer);
+	swap(m_TokenCache, Other.m_TokenCache);
+	swap(m_pStun, Other.m_pStun);
+	swap(m_Socket, Other.m_Socket);
+	// The chunk unpackers cache a pointer to their owning connection object.
+	// Swapping the members makes those pointers stale, so reset the unpackers;
+	// the next received packet sets the correct connection again.
+	m_PacketChunkUnpacker.Reset();
+	Other.m_PacketChunkUnpacker.Reset();
 }
 
 void CNetClient::Update()

@@ -232,6 +232,14 @@ public:
 	virtual bool DummyConnectingDelayed() const = 0;
 	virtual bool DummyAllowed() const = 0;
 
+	// parked connection (LazyClient): keeps a second server connection alive
+	virtual bool ParkEnabled() const = 0;
+	virtual void SetParkEnabled(bool Enabled) = 0;
+	virtual bool ParkConnected() const = 0;
+	virtual bool ParkConnecting() const = 0;
+	virtual bool ParkSwitch() = 0;
+	virtual void ParkedConnect(const char *pAddress, const char *pPassword = nullptr) = 0;
+
 	virtual void Restart() = 0;
 	virtual void Quit() = 0;
 	virtual const char *DemoPlayer_Play(const char *pFilename, int StorageType) = 0;
@@ -450,6 +458,10 @@ public:
 
 	virtual void OnDummyDisconnect() = 0;
 	virtual void DummyResetInput() = 0;
+
+	// parked connection (LazyClient): preserve per-session tuning across switch
+	virtual void CacheTuningForParkSwitch() = 0;
+	virtual void RestoreTuningAfterParkSwitch() = 0;
 	virtual void Echo(const char *pString) = 0;
 
 	virtual bool CanDisplayWarning() const = 0;

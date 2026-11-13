@@ -608,6 +608,38 @@ int CGameClient::OnSnapInput(int *pData, bool Dummy, bool Force)
 	}
 }
 
+void CGameClient::CacheTuningForParkSwitch()
+{
+	for(int i = 0; i < NUM_DUMMIES; i++)
+	{
+		m_aParkTuning[i] = m_aTuning[i];
+		m_aParkLocalTuneZone[i] = m_aLocalTuneZone[i];
+		m_aParkReceivedTuning[i] = m_aReceivedTuning[i];
+		m_aParkExpectingTuningForZone[i] = m_aExpectingTuningForZone[i];
+		m_aParkExpectingTuningSince[i] = m_aExpectingTuningSince[i];
+	}
+	m_ParkTuningCached = true;
+}
+
+void CGameClient::RestoreTuningAfterParkSwitch()
+{
+	if(!m_ParkTuningCached)
+		return;
+
+	// ParkSwitch swaps the two connections, so the active slot receives the
+	// tuning that was cached for the dummy slot and vice versa.
+	for(int i = 0; i < NUM_DUMMIES; i++)
+	{
+		const int From = i == IClient::CONN_MAIN ? IClient::CONN_DUMMY : IClient::CONN_MAIN;
+		m_aTuning[i] = m_aParkTuning[From];
+		m_aLocalTuneZone[i] = m_aParkLocalTuneZone[From];
+		m_aReceivedTuning[i] = m_aParkReceivedTuning[From];
+		m_aExpectingTuningForZone[i] = m_aParkExpectingTuningForZone[From];
+		m_aExpectingTuningSince[i] = m_aParkExpectingTuningSince[From];
+	}
+	m_ParkTuningCached = false;
+}
+
 void CGameClient::OnConnected()
 {
 	const char *pConnectCaption = DemoPlayer()->IsPlaying() ? Localize("Preparing demo playback") : Localize("Connected");
@@ -866,7 +898,9 @@ void CGameClient::OnRender()
 	m_NewTick = false;
 	m_NewPredictedTick = false;
 
-	if(g_Config.m_ClDummy && !Client()->DummyConnected())
+	if(Client()->ParkEnabled())
+		g_Config.m_ClDummy = 0;
+	else if(g_Config.m_ClDummy && !Client()->DummyConnected())
 		g_Config.m_ClDummy = 0;
 
 	// resend player and dummy info if it was filtered by server
@@ -3580,14 +3614,22 @@ void CGameClient::SendSwitchTeam(int Team) const
 void CGameClient::SendStartInfo7(bool Dummy)
 {
 	protocol7::CNetMsg_Cl_StartInfo Msg;
+	const bool Parked = Client()->ParkEnabled() && Dummy;
+	const int Identity = Parked ? IClient::CONN_MAIN : (int)Dummy;
 	Msg.m_pName = Dummy ? Client()->DummyName() : Client()->PlayerName();
 	Msg.m_pClan = Dummy ? Config()->m_ClDummyClan : Config()->m_PlayerClan;
 	Msg.m_Country = Dummy ? Config()->m_ClDummyCountry : Config()->m_PlayerCountry;
+	if(Parked)
+	{
+		Msg.m_pName = Client()->PlayerName();
+		Msg.m_pClan = Config()->m_PlayerClan;
+		Msg.m_Country = Config()->m_PlayerCountry;
+	}
 	for(int p = 0; p < protocol7::NUM_SKINPARTS; p++)
 	{
-		Msg.m_apSkinPartNames[p] = CSkins7::ms_apSkinVariables[(int)Dummy][p];
-		Msg.m_aUseCustomColors[p] = *CSkins7::ms_apUCCVariables[(int)Dummy][p];
-		Msg.m_aSkinPartColors[p] = *CSkins7::ms_apColorVariables[(int)Dummy][p];
+		Msg.m_apSkinPartNames[p] = CSkins7::ms_apSkinVariables[Identity][p];
+		Msg.m_aUseCustomColors[p] = *CSkins7::ms_apUCCVariables[Identity][p];
+		Msg.m_aSkinPartColors[p] = *CSkins7::ms_apColorVariables[Identity][p];
 	}
 	CMsgPacker Packer(&Msg, false, true);
 	if(Msg.Pack(&Packer))
@@ -3599,11 +3641,12 @@ void CGameClient::SendStartInfo7(bool Dummy)
 void CGameClient::SendSkinChange7(bool Dummy)
 {
 	protocol7::CNetMsg_Cl_SkinChange Msg;
+	const int Identity = Client()->ParkEnabled() && Dummy ? IClient::CONN_MAIN : (int)Dummy;
 	for(int p = 0; p < protocol7::NUM_SKINPARTS; p++)
 	{
-		Msg.m_apSkinPartNames[p] = CSkins7::ms_apSkinVariables[(int)Dummy][p];
-		Msg.m_aUseCustomColors[p] = *CSkins7::ms_apUCCVariables[(int)Dummy][p];
-		Msg.m_aSkinPartColors[p] = *CSkins7::ms_apColorVariables[(int)Dummy][p];
+		Msg.m_apSkinPartNames[p] = CSkins7::ms_apSkinVariables[Identity][p];
+		Msg.m_aUseCustomColors[p] = *CSkins7::ms_apUCCVariables[Identity][p];
+		Msg.m_aSkinPartColors[p] = *CSkins7::ms_apColorVariables[Identity][p];
 	}
 	CMsgPacker Packer(&Msg, false, true);
 	if(Msg.Pack(&Packer))
@@ -3706,16 +3749,17 @@ void CGameClient::SendDummyInfo(bool Start)
 			SendSkinChange7(true);
 		return;
 	}
+	const bool Parked = Client()->ParkEnabled();
 	if(Start)
 	{
 		CNetMsg_Cl_StartInfo Msg;
-		Msg.m_pName = Client()->DummyName();
-		Msg.m_pClan = g_Config.m_ClDummyClan;
-		Msg.m_Country = g_Config.m_ClDummyCountry;
-		Msg.m_pSkin = g_Config.m_ClDummySkin;
-		Msg.m_UseCustomColor = g_Config.m_ClDummyUseCustomColor;
-		Msg.m_ColorBody = g_Config.m_ClDummyColorBody;
-		Msg.m_ColorFeet = g_Config.m_ClDummyColorFeet;
+		Msg.m_pName = Parked ? Client()->PlayerName() : Client()->DummyName();
+		Msg.m_pClan = Parked ? g_Config.m_PlayerClan : g_Config.m_ClDummyClan;
+		Msg.m_Country = Parked ? g_Config.m_PlayerCountry : g_Config.m_ClDummyCountry;
+		Msg.m_pSkin = Parked ? g_Config.m_ClPlayerSkin : g_Config.m_ClDummySkin;
+		Msg.m_UseCustomColor = Parked ? g_Config.m_ClPlayerUseCustomColor : g_Config.m_ClDummyUseCustomColor;
+		Msg.m_ColorBody = Parked ? g_Config.m_ClPlayerColorBody : g_Config.m_ClDummyColorBody;
+		Msg.m_ColorFeet = Parked ? g_Config.m_ClPlayerColorFeet : g_Config.m_ClDummyColorFeet;
 		m_Lazy.ApplyClientTypeToColor(Msg.m_ColorBody, Msg.m_ColorFeet);
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
@@ -3725,13 +3769,13 @@ void CGameClient::SendDummyInfo(bool Start)
 	else
 	{
 		CNetMsg_Cl_ChangeInfo Msg;
-		Msg.m_pName = Client()->DummyName();
-		Msg.m_pClan = g_Config.m_ClDummyClan;
-		Msg.m_Country = g_Config.m_ClDummyCountry;
-		Msg.m_pSkin = g_Config.m_ClDummySkin;
-		Msg.m_UseCustomColor = g_Config.m_ClDummyUseCustomColor;
-		Msg.m_ColorBody = g_Config.m_ClDummyColorBody;
-		Msg.m_ColorFeet = g_Config.m_ClDummyColorFeet;
+		Msg.m_pName = Parked ? Client()->PlayerName() : Client()->DummyName();
+		Msg.m_pClan = Parked ? g_Config.m_PlayerClan : g_Config.m_ClDummyClan;
+		Msg.m_Country = Parked ? g_Config.m_PlayerCountry : g_Config.m_ClDummyCountry;
+		Msg.m_pSkin = Parked ? g_Config.m_ClPlayerSkin : g_Config.m_ClDummySkin;
+		Msg.m_UseCustomColor = Parked ? g_Config.m_ClPlayerUseCustomColor : g_Config.m_ClDummyUseCustomColor;
+		Msg.m_ColorBody = Parked ? g_Config.m_ClPlayerColorBody : g_Config.m_ClDummyColorBody;
+		Msg.m_ColorFeet = Parked ? g_Config.m_ClPlayerColorFeet : g_Config.m_ClDummyColorFeet;
 		m_Lazy.ApplyClientTypeToColor(Msg.m_ColorBody, Msg.m_ColorFeet);
 		CMsgPacker Packer(&Msg);
 		Msg.Pack(&Packer);
@@ -3810,7 +3854,9 @@ void CGameClient::ConchainSpecialDummy(IConsole::IResult *pResult, void *pUserDa
 	pfnCallback(pResult, pCallbackUserData);
 	if(pResult->NumArguments())
 	{
-		if(g_Config.m_ClDummy && !((CGameClient *)pUserData)->Client()->DummyConnected())
+		if(((CGameClient *)pUserData)->Client()->ParkEnabled())
+			g_Config.m_ClDummy = 0;
+		else if(g_Config.m_ClDummy && !((CGameClient *)pUserData)->Client()->DummyConnected())
 			g_Config.m_ClDummy = 0;
 	}
 }

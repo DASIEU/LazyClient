@@ -92,7 +92,12 @@ void CMenus::RenderGame(CUIRect MainView)
 	ButtonBar.VSplitRight(170.0f, &ButtonBar, &Button);
 
 	static CButtonContainer s_DummyButton;
-	if(!Client()->DummyAllowed())
+	if(Client()->ParkEnabled())
+	{
+		DoButton_Menu(&s_DummyButton, Localize("Connect Dummy"), 1, &Button);
+		GameClient()->m_Tooltips.DoToolTip(&s_DummyButton, &Button, Localize("Dummy is unavailable while parked connections are enabled"));
+	}
+	else if(!Client()->DummyAllowed())
 	{
 		DoButton_Menu(&s_DummyButton, Localize("Connect Dummy"), 1, &Button);
 		GameClient()->m_Tooltips.DoToolTip(&s_DummyButton, &Button, Localize("Dummy is not allowed on this server"));
@@ -125,6 +130,40 @@ void CMenus::RenderGame(CUIRect MainView)
 			}
 		}
 	}
+
+	ButtonBar.VSplitRight(5.0f, &ButtonBar, nullptr);
+	ButtonBar.VSplitRight(200.0f, &ButtonBar, &Button);
+
+	static CButtonContainer s_ParkSwitchButton;
+	static CButtonContainer s_ParkToggleButton;
+	CUIRect ParkMain, ParkToggle;
+	Button.VSplitRight(26.0f, &ParkMain, &ParkToggle);
+
+	const bool ParkEnabled = Client()->ParkEnabled();
+	const bool ParkConnected = Client()->ParkConnected();
+	const bool ParkConnecting = Client()->ParkConnecting();
+
+	if(ParkConnected)
+	{
+		if(DoButton_Menu(&s_ParkSwitchButton, Localize("Switch server"), 0, &ParkMain, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
+		{
+			if(!Client()->ParkSwitch())
+				GameClient()->Echo(Localize("The parked server is not ready yet."));
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_ParkSwitchButton, &ParkMain, Localize("Switch to the parked server without reconnecting"));
+	}
+	else
+	{
+		DoButton_Menu(&s_ParkSwitchButton, ParkConnecting ? Localize("Connecting parked server") : Localize("Parked connection"), 1, &ParkMain, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L);
+		GameClient()->m_Tooltips.DoToolTip(&s_ParkSwitchButton, &ParkMain, ParkEnabled ? Localize("Select a server in the browser to park it while staying connected") : Localize("Enable parked connections first"));
+	}
+
+	const ColorRGBA ParkToggleColor = ParkEnabled ? ColorRGBA(0.2f, 0.8f, 0.25f, 0.6f) : ColorRGBA(0.9f, 0.2f, 0.2f, 0.6f);
+	if(DoButton_Menu(&s_ParkToggleButton, "", 0, &ParkToggle, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R, 5.0f, 0.0f, ParkToggleColor))
+	{
+		Client()->SetParkEnabled(!ParkEnabled);
+	}
+	GameClient()->m_Tooltips.DoToolTip(&s_ParkToggleButton, &ParkToggle, ParkEnabled ? Localize("Disable parked connections") : Localize("Enable parked connections"));
 
 	ButtonBar.VSplitRight(5.0f, &ButtonBar, nullptr);
 	ButtonBar.VSplitRight(140.0f, &ButtonBar, &Button);
