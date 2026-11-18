@@ -199,7 +199,7 @@ static bool ConfigProfileReservedPath(const char *pPath)
 	       str_startswith(pPath, "profiles/") != nullptr;
 }
 
-static void ConfigProfileEnsureFolders(IStorage *pStorage, const char *pPath)
+static void ConfigProfileEnsureParentFolders(IStorage *pStorage, const char *pPath)
 {
 	char aBuffer[IO_MAX_PATH_LENGTH];
 	str_copy(aBuffer, pPath);
@@ -212,8 +212,6 @@ static void ConfigProfileEnsureFolders(IStorage *pStorage, const char *pPath)
 			pStorage->CreateFolder(aBuffer, IStorage::TYPE_SAVE);
 		*p = '/';
 	}
-	if(aBuffer[0] != '\0')
-		pStorage->CreateFolder(aBuffer, IStorage::TYPE_SAVE);
 }
 
 static bool ConfigProfileAssetExists(IStorage *pStorage, const char *pKind, const char *pName)
@@ -3024,7 +3022,13 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 				continue;
 			}
 
-			ConfigProfileEnsureFolders(Storage(), aTarget);
+			// Older builds could create an empty directory named like the target
+			// file because of a folder creation bug. Clear that obstacle so the
+			// embedded file can be restored.
+			if(Storage()->FolderExists(aTarget, IStorage::TYPE_SAVE))
+				Storage()->RemoveFolder(aTarget, IStorage::TYPE_SAVE);
+
+			ConfigProfileEnsureParentFolders(Storage(), aTarget);
 			IOHANDLE File = Storage()->OpenFile(aTarget, IOFLAG_WRITE, IStorage::TYPE_SAVE);
 			if(!File)
 			{
@@ -3342,7 +3346,7 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 					Ui()->DoLabel(&Item.m_Rect, s_vProfiles[i].m_Name.c_str(), 10.0f, TEXTALIGN_ML);
 			}
 			const int Clicked = s_ProfileListBox.DoEnd();
-			if(Clicked >= 0 && Clicked < (int)s_vProfiles.size())
+			if(s_ProfileListBox.WasItemSelected() && Clicked >= 0 && Clicked < (int)s_vProfiles.size())
 			{
 				SelectProfile(Clicked);
 				LoadProfileFile(Clicked);
