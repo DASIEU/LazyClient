@@ -68,6 +68,10 @@ class CHud : public CComponent
 	void RenderCursor();
 
 	void RenderTextInfo();
+	void RenderFrozenText();
+	void RenderLastNotify();
+	void RenderFrozenTeeHud();
+	void GetFrozenTeamInfo(int &NumInTeam, int &NumFrozen, int &LocalTeamID);
 	void RenderConnectionWarning();
 	void RenderTeambalanceWarning();
 

@@ -325,6 +325,9 @@ const SHudModuleDef s_aHudModuleDefs[HUD_MODULE_COUNT] = {
 	{"Swap timers", HUD_ALIGN_LEFT, 0.0f, 34.0f, 150.0f, 90.0f, HUD_SOURCE_LAZY},
 	{"Zero-gravity warning", HUD_ALIGN_CENTER, 0.0f, 32.0f, 170.0f, 24.0f, HUD_SOURCE_LAZY},
 	{"Zero-gravity status", HUD_ALIGN_CENTER, 0.0f, 32.0f, 170.0f, 24.0f, HUD_SOURCE_LAZY},
+	{"Frozen tee display", HUD_ALIGN_CENTER, 38.0f, 0.0f, 130.0f, 34.0f, HUD_SOURCE_TATER},
+	{"Frozen count text", HUD_ALIGN_CENTER, 0.0f, 12.0f, 70.0f, 14.0f, HUD_SOURCE_TATER},
+	{"Last tee notification", HUD_ALIGN_FRACTION, 0.20f, 0.0f, 90.0f, 20.0f, HUD_SOURCE_TATER},
 };
 
 static const char *HudModuleSourceName(int Source)
@@ -3950,7 +3953,9 @@ void CLazyClient::RenderHudEditor()
 	// The filter bar sits on top of the module outlines. Keep the cursor from
 	// grabbing a module underneath it while the filter buttons are used.
 	const CUIRect FilterBar = {UiWidth / 2.0f - 260.0f, 50.0f, 520.0f, 24.0f};
-	const bool MouseOverFilterBar = Ui()->MouseInside(&FilterBar);
+	const CUIRect EditorToggleBar = {10.0f, UiHeight - 34.0f, 230.0f, 24.0f};
+	const bool MouseOverFilterBar = !m_HudEditorFilterCollapsed && Ui()->MouseInside(&FilterBar);
+	const bool MouseOverToggles = Ui()->MouseInside(&EditorToggleBar);
 
 	const auto ModuleMatchesFilter = [&](int ModuleId) {
 		return m_HudEditorFilter < 0 || s_aHudModuleDefs[ModuleId].m_Source == m_HudEditorFilter;
@@ -3966,7 +3971,7 @@ void CLazyClient::RenderHudEditor()
 	};
 
 	int Hovered = -1;
-	if(m_HudEditorSettings < 0 && !m_HudEditorConfirm && !MouseOverFilterBar)
+	if(m_HudEditorSettings < 0 && !m_HudEditorConfirm && !MouseOverFilterBar && !MouseOverToggles)
 	{
 		for(int i = HUD_MODULE_COUNT - 1; i >= 0; i--)
 		{
@@ -4012,7 +4017,7 @@ void CLazyClient::RenderHudEditor()
 			m_HudEditorSettings = Hovered;
 			m_HudEditorConfirm = false;
 		}
-		else if(Hovered < 0 && !MouseOverFilterBar && Ui()->MouseButtonClicked(1))
+		else if(Hovered < 0 && !MouseOverFilterBar && !MouseOverToggles && Ui()->MouseButtonClicked(1))
 		{
 			m_HudEditorConfirm = true;
 			m_HudEditorSettings = -1;
@@ -4048,36 +4053,41 @@ void CLazyClient::RenderHudEditor()
 	}
 
 	// Header/help bar.
-	CUIRect HelpBar = {UiWidth / 2.0f - 360.0f, 8.0f, 720.0f, 38.0f};
-	HelpBar.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.90f), IGraphics::CORNER_ALL, 6.0f);
-	HelpBar.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.75f));
-	Ui()->DoLabel(&HelpBar, Localize("HUD Editor  —  drag to move  •  right-click a module for settings  •  Shift+left-click to hide/show  •  right-click empty space to save/discard"), 8.5f, TEXTALIGN_MC);
+	if(m_HudEditorHelpVisible)
+	{
+		CUIRect HelpBar = {UiWidth / 2.0f - 360.0f, 8.0f, 720.0f, 38.0f};
+		HelpBar.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.90f), IGraphics::CORNER_ALL, 6.0f);
+		HelpBar.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.75f));
+		Ui()->DoLabel(&HelpBar, Localize("HUD Editor  —  drag to move  •  right-click a module for settings  •  Shift+left-click to hide/show  •  right-click empty space to save/discard"), 8.5f, TEXTALIGN_MC);
+	}
 
 	// Client filter. Only outlines from the selected client are drawn and
 	// interactive, which makes overlapping HUD modules much easier to grab.
-	CUIRect FilterBarInner = FilterBar;
-	FilterBarInner.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.90f), IGraphics::CORNER_ALL, 5.0f);
-	FilterBarInner.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.55f));
-	FilterBarInner.Margin(3.0f, &FilterBarInner);
-	CUIRect FilterLabel, FilterButtons;
-	FilterBarInner.VSplitLeft(80.0f, &FilterLabel, &FilterButtons);
-	FilterBar.VSplitLeft(80.0f, &FilterLabel, &FilterButtons);
-	Ui()->DoLabel(&FilterLabel, Localize("Client filter:"), 8.5f, TEXTALIGN_ML);
-	static CButtonContainer s_aHudFilterButtons[HUD_SOURCE_COUNT + 1];
-	const int aFilterValues[HUD_SOURCE_COUNT + 1] = {-1, HUD_SOURCE_DDNET, HUD_SOURCE_TATER, HUD_SOURCE_LAZY};
-	const char *apFilterNames[HUD_SOURCE_COUNT + 1] = {Localize("All"), "DDNet", "Tater", "Lazy"};
-	for(int i = 0; i < HUD_SOURCE_COUNT + 1; i++)
+	if(!m_HudEditorFilterCollapsed)
 	{
-		CUIRect FilterButton;
-		FilterButtons.VSplitLeft(FilterButtons.w / (HUD_SOURCE_COUNT + 1 - i), &FilterButton, &FilterButtons);
-		FilterButton.Margin(1.0f, &FilterButton);
-		if(GameClient()->m_Menus.DoButton_Menu(&s_aHudFilterButtons[i], apFilterNames[i], m_HudEditorFilter == aFilterValues[i] ? 1 : 0, &FilterButton))
-			m_HudEditorFilter = aFilterValues[i];
+		CUIRect FilterBarInner = FilterBar;
+		FilterBarInner.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.90f), IGraphics::CORNER_ALL, 5.0f);
+		FilterBarInner.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.55f));
+		FilterBarInner.Margin(3.0f, &FilterBarInner);
+		CUIRect FilterLabel, FilterButtons;
+		FilterBarInner.VSplitLeft(80.0f, &FilterLabel, &FilterButtons);
+		Ui()->DoLabel(&FilterLabel, Localize("Client filter:"), 8.5f, TEXTALIGN_ML);
+		static CButtonContainer s_aHudFilterButtons[HUD_SOURCE_COUNT + 1];
+		const int aFilterValues[HUD_SOURCE_COUNT + 1] = {-1, HUD_SOURCE_DDNET, HUD_SOURCE_TATER, HUD_SOURCE_LAZY};
+		const char *apFilterNames[HUD_SOURCE_COUNT + 1] = {Localize("All"), "DDNet", "Tater", "Lazy"};
+		for(int i = 0; i < HUD_SOURCE_COUNT + 1; i++)
+		{
+			CUIRect FilterButton;
+			FilterButtons.VSplitLeft(FilterButtons.w / (HUD_SOURCE_COUNT + 1 - i), &FilterButton, &FilterButtons);
+			FilterButton.Margin(1.0f, &FilterButton);
+			if(GameClient()->m_Menus.DoButton_Menu(&s_aHudFilterButtons[i], apFilterNames[i], m_HudEditorFilter == aFilterValues[i] ? 1 : 0, &FilterButton))
+				m_HudEditorFilter = aFilterValues[i];
+		}
 	}
 
 	if(!LiveHud)
 	{
-		CUIRect PreviewHint = {UiWidth / 2.0f - 360.0f, 80.0f, 720.0f, 20.0f};
+		CUIRect PreviewHint = {UiWidth / 2.0f - 360.0f, m_HudEditorFilterCollapsed ? 50.0f : 80.0f, 720.0f, 20.0f};
 		PreviewHint.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.80f), IGraphics::CORNER_ALL, 4.0f);
 		Ui()->DoLabel(&PreviewHint, Localize("Preview mode  —  connect to a server to see the live HUD behind these outlines"), 8.0f, TEXTALIGN_MC);
 	}
@@ -4094,6 +4104,20 @@ void CLazyClient::RenderHudEditor()
 		for(auto &Module : m_aHudModules)
 			Module = SHudModuleState();
 	}
+
+	// Compact editor controls. The filter bar and the instructions can be
+	// folded away so they do not cover the HUD while arranging modules.
+	CUIRect ToggleBarInner = EditorToggleBar;
+	ToggleBarInner.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.90f), IGraphics::CORNER_ALL, 5.0f);
+	ToggleBarInner.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.55f));
+	ToggleBarInner.Margin(3.0f, &ToggleBarInner);
+	static CButtonContainer s_FilterToggleButton, s_HelpToggleButton;
+	CUIRect FilterToggle, HelpToggle;
+	ToggleBarInner.VSplitMid(&FilterToggle, &HelpToggle, 4.0f);
+	if(GameClient()->m_Menus.DoButton_Menu(&s_FilterToggleButton, Localize("Filters"), m_HudEditorFilterCollapsed ? 0 : 1, &FilterToggle))
+		m_HudEditorFilterCollapsed = !m_HudEditorFilterCollapsed;
+	if(GameClient()->m_Menus.DoButton_Menu(&s_HelpToggleButton, Localize("Help"), m_HudEditorHelpVisible ? 1 : 0, &HelpToggle))
+		m_HudEditorHelpVisible = !m_HudEditorHelpVisible;
 
 	if(m_HudEditorConfirm)
 	{

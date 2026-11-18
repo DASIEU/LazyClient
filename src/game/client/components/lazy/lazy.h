@@ -51,6 +51,9 @@ enum EHudModule
 	HUD_MODULE_SWAP_TIMERS,
 	HUD_MODULE_ZERO_GRAV_WARNING,
 	HUD_MODULE_ZERO_GRAV_STATUS,
+	HUD_MODULE_FROZEN_TEE_HUD,
+	HUD_MODULE_FROZEN_TEXT,
+	HUD_MODULE_LAST_NOTIFY,
 	HUD_MODULE_COUNT,
 };
 
@@ -359,6 +362,8 @@ private:
 	int m_HudEditorSettings = -1;
 	bool m_HudEditorConfirm = false;
 	int m_HudEditorFilter = -1; // -1 = all clients, otherwise an EHudModuleSource
+	bool m_HudEditorFilterCollapsed = false;
+	bool m_HudEditorHelpVisible = true;
 	void LoadHudLayout();
 	void SaveHudLayout();
 	static void ConHudEditor(IConsole::IResult *pResult, void *pUserData);
