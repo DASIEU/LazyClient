@@ -1,3 +1,4 @@
+#include <base/io.h>
 #include <base/log.h>
 #include <base/math.h>
 #include <base/types.h>
@@ -74,6 +75,61 @@ const float MarginBetweenViews = 30.0f;
 
 const float ColorPickerLabelSize = 13.0f;
 const float ColorPickerLineSpacing = 5.0f;
+
+enum
+{
+	CONFIG_IMPORT_ALL = 0,
+	CONFIG_IMPORT_ASSETS,
+	CONFIG_IMPORT_DDNET,
+	CONFIG_IMPORT_TATER,
+	CONFIG_IMPORT_LAZY,
+	CONFIG_IMPORT_BINDS,
+	CONFIG_IMPORT_COUNT,
+};
+
+static int ConfigFileScan(const char *pName, int IsDir, int DirType, void *pUser)
+{
+	if(IsDir || !str_endswith_nocase(pName, ".cfg"))
+		return 0;
+
+	auto *pFiles = static_cast<std::vector<std::string> *>(pUser);
+	pFiles->emplace_back(pName);
+	return 0;
+}
+
+static bool ConfigImportLineMatches(const char *pLine, int Filter)
+{
+	if(Filter == CONFIG_IMPORT_ALL)
+		return true;
+
+	const char *pCommand = str_skip_whitespaces_const(pLine);
+	if(pCommand[0] == '\0' || pCommand[0] == '#')
+		return false;
+
+	char aCommand[64];
+	int Length = 0;
+	while(pCommand[Length] != '\0' && !str_isspace(pCommand[Length]) && Length < (int)sizeof(aCommand) - 1)
+	{
+		aCommand[Length] = pCommand[Length];
+		Length++;
+	}
+	aCommand[Length] = '\0';
+
+	const bool IsBind = str_comp(aCommand, "bind") == 0 || str_comp(aCommand, "unbind") == 0 || str_comp(aCommand, "unbindall") == 0;
+	const bool IsAsset = str_startswith(aCommand, "cl_asset") != nullptr || str_comp(aCommand, "snd_pack") == 0;
+	const bool IsTater = str_startswith(aCommand, "tc_") != nullptr;
+	const bool IsLazy = str_startswith(aCommand, "lc_") != nullptr;
+
+	switch(Filter)
+	{
+	case CONFIG_IMPORT_ASSETS: return IsAsset;
+	case CONFIG_IMPORT_DDNET: return !IsBind && !IsAsset && !IsTater && !IsLazy;
+	case CONFIG_IMPORT_TATER: return IsTater;
+	case CONFIG_IMPORT_LAZY: return IsLazy;
+	case CONFIG_IMPORT_BINDS: return IsBind;
+	default: return false;
+	}
+}
 
 static void SetFlag(int32_t &Flags, int n, bool Value)
 {
@@ -2417,6 +2473,77 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 		}
 	};
 
+	static bool s_ConfigLoaderOpen = false;
+	static bool s_ConfigFilesScanned = false;
+	static int s_ConfigSelected = -1;
+	static int s_ConfigFilter = CONFIG_IMPORT_ALL;
+	static std::vector<std::string> s_vConfigFiles;
+	static char s_aConfigStatus[256] = "";
+
+	auto RefreshConfigFiles = [&]() {
+		s_vConfigFiles.clear();
+		Storage()->ListDirectory(IStorage::TYPE_SAVE, "", ConfigFileScan, &s_vConfigFiles);
+		Storage()->ListDirectory(IStorage::TYPE_ALL, "", ConfigFileScan, &s_vConfigFiles);
+		std::sort(s_vConfigFiles.begin(), s_vConfigFiles.end());
+		s_vConfigFiles.erase(std::unique(s_vConfigFiles.begin(), s_vConfigFiles.end()), s_vConfigFiles.end());
+		s_ConfigSelected = std::clamp(s_ConfigSelected, -1, (int)s_vConfigFiles.size() - 1);
+		s_ConfigFilesScanned = true;
+	};
+
+	auto ApplyAssetConfig = [&]() {
+		GameClient()->m_MapImages.ChangeEntitiesPath(g_Config.m_ClAssetsEntities);
+		GameClient()->LoadGameSkin(g_Config.m_ClAssetGame);
+		GameClient()->LoadEmoticonsSkin(g_Config.m_ClAssetEmoticons);
+		GameClient()->LoadParticlesSkin(g_Config.m_ClAssetParticles);
+		GameClient()->LoadHudSkin(g_Config.m_ClAssetHud);
+		GameClient()->LoadExtrasSkin(g_Config.m_ClAssetExtras);
+		GameClient()->m_Sounds.Clear();
+	};
+
+	auto LoadConfigFile = [&](const char *pPath, int Filter) {
+		bool Opened = false;
+		int Applied = 0;
+		if(Filter == CONFIG_IMPORT_ALL)
+		{
+			Opened = Console()->ExecuteFile(pPath, IConsole::CLIENT_ID_UNSPECIFIED, true, IStorage::TYPE_ALL);
+			Applied = Opened ? 1 : 0;
+		}
+		else
+		{
+			CLineReader Reader;
+			if(Reader.OpenFile(Storage()->OpenFile(pPath, IOFLAG_READ, IStorage::TYPE_ALL)))
+			{
+				Opened = true;
+				while(const char *pLine = Reader.Get())
+				{
+					if(!ConfigImportLineMatches(pLine, Filter))
+						continue;
+					Console()->ExecuteLine(pLine, IConsole::CLIENT_ID_UNSPECIFIED);
+					Applied++;
+				}
+			}
+		}
+
+		if(!Opened)
+		{
+			str_format(s_aConfigStatus, sizeof(s_aConfigStatus), TCLocalize("Could not open %s"), pPath);
+		}
+		else if(Applied == 0)
+		{
+			str_format(s_aConfigStatus, sizeof(s_aConfigStatus), TCLocalize("No matching settings found in %s"), pPath);
+		}
+		else
+		{
+			ConfigManager()->Save();
+			if(Filter == CONFIG_IMPORT_ALL || Filter == CONFIG_IMPORT_ASSETS || Filter == CONFIG_IMPORT_DDNET)
+				ApplyAssetConfig();
+			if(Filter == CONFIG_IMPORT_ALL)
+				str_format(s_aConfigStatus, sizeof(s_aConfigStatus), TCLocalize("Loaded %s"), pPath);
+			else
+				str_format(s_aConfigStatus, sizeof(s_aConfigStatus), TCLocalize("Loaded %s (%d settings)"), pPath, Applied);
+		}
+	};
+
 	{
 		CUIRect Top;
 		MainView.HSplitTop(160.0f, &Top, &MainView);
@@ -2550,6 +2677,130 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 		Button = Options;
 		if(DoButton_CheckBox(&g_Config.m_TcProfileOverwriteClanWithEmpty, TCLocalize("Overwrite clan even if empty"), g_Config.m_TcProfileOverwriteClanWithEmpty, &Button))
 			g_Config.m_TcProfileOverwriteClanWithEmpty = 1 - g_Config.m_TcProfileOverwriteClanWithEmpty;
+	}
+	MainView.HSplitTop(MarginSmall, nullptr, &MainView);
+	{
+		CUIRect ConfigHeader;
+		MainView.HSplitTop(LineSize, &ConfigHeader, &MainView);
+		static CButtonContainer s_ConfigLoaderToggle;
+		ConfigHeader.VSplitLeft(150.0f, &Button, &ConfigHeader);
+		if(DoButton_Menu(&s_ConfigLoaderToggle, TCLocalize("Config files"), s_ConfigLoaderOpen ? 1 : 0, &Button))
+		{
+			s_ConfigLoaderOpen = !s_ConfigLoaderOpen;
+			if(s_ConfigLoaderOpen)
+				s_ConfigFilesScanned = false;
+		}
+		ConfigHeader.VSplitLeft(MarginSmall, nullptr, &ConfigHeader);
+		if(s_aConfigStatus[0] != '\0')
+			Ui()->DoLabel(&ConfigHeader, s_aConfigStatus, 10.0f, TEXTALIGN_ML);
+	}
+	if(s_ConfigLoaderOpen)
+	{
+		if(!s_ConfigFilesScanned)
+			RefreshConfigFiles();
+
+		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
+		CUIRect ConfigPanel;
+		MainView.HSplitTop(216.0f, &ConfigPanel, &MainView);
+		ConfigPanel.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.18f), IGraphics::CORNER_ALL, 5.0f);
+		ConfigPanel.Margin(8.0f, &ConfigPanel);
+
+		CUIRect Row, ConfigLabel;
+		ConfigPanel.HSplitTop(22.0f, &Row, &ConfigPanel);
+		Row.VSplitLeft(80.0f, &ConfigLabel, &Row);
+		Ui()->DoLabel(&ConfigLabel, TCLocalize("Quick load:"), 10.0f, TEXTALIGN_ML);
+		struct SQuickLoad
+		{
+			const char *m_pLabel;
+			ConfigDomain m_Domain;
+			int m_Filter;
+		};
+		const SQuickLoad aQuickLoads[] = {
+			{TCLocalize("Assets"), ConfigDomain::DDNET, CONFIG_IMPORT_ASSETS},
+			{TCLocalize("DDNet"), ConfigDomain::DDNET, CONFIG_IMPORT_ALL},
+			{TCLocalize("Tater"), ConfigDomain::TCLIENT, CONFIG_IMPORT_ALL},
+			{TCLocalize("Lazy"), ConfigDomain::LAZY, CONFIG_IMPORT_ALL},
+			{TCLocalize("Binds"), ConfigDomain::DDNET, CONFIG_IMPORT_BINDS},
+		};
+		constexpr int NumQuickLoads = sizeof(aQuickLoads) / sizeof(aQuickLoads[0]);
+		static CButtonContainer s_aQuickLoadButtons[NumQuickLoads];
+		for(int i = 0; i < NumQuickLoads; i++)
+		{
+			CUIRect QuickButton;
+			Row.VSplitLeft(Row.w / (NumQuickLoads - i), &QuickButton, &Row);
+			QuickButton.Margin(1.0f, &QuickButton);
+			if(DoButton_Menu(&s_aQuickLoadButtons[i], aQuickLoads[i].m_pLabel, 0, &QuickButton))
+				LoadConfigFile(s_aConfigDomains[aQuickLoads[i].m_Domain].m_aConfigPath, aQuickLoads[i].m_Filter);
+		}
+		ConfigPanel.HSplitTop(4.0f, nullptr, &ConfigPanel);
+
+		ConfigPanel.HSplitTop(22.0f, &Row, &ConfigPanel);
+		Row.VSplitLeft(80.0f, &ConfigLabel, &Row);
+		Ui()->DoLabel(&ConfigLabel, TCLocalize("Import only:"), 10.0f, TEXTALIGN_ML);
+		const char *apFilterNames[CONFIG_IMPORT_COUNT] = {
+			TCLocalize("All"),
+			TCLocalize("Assets"),
+			TCLocalize("DDNet"),
+			TCLocalize("Tater"),
+			TCLocalize("Lazy"),
+			TCLocalize("Binds"),
+		};
+		static CButtonContainer s_aConfigFilterButtons[CONFIG_IMPORT_COUNT];
+		for(int i = 0; i < CONFIG_IMPORT_COUNT; i++)
+		{
+			CUIRect FilterButton;
+			Row.VSplitLeft(Row.w / (CONFIG_IMPORT_COUNT - i), &FilterButton, &Row);
+			FilterButton.Margin(1.0f, &FilterButton);
+			if(DoButton_Menu(&s_aConfigFilterButtons[i], apFilterNames[i], s_ConfigFilter == i ? 1 : 0, &FilterButton))
+				s_ConfigFilter = i;
+		}
+		ConfigPanel.HSplitTop(4.0f, nullptr, &ConfigPanel);
+
+		ConfigPanel.HSplitTop(18.0f, &Row, &ConfigPanel);
+		Ui()->DoLabel(&Row, TCLocalize("Config files in your config directory:"), 10.0f, TEXTALIGN_ML);
+
+		CUIRect ConfigListRect;
+		ConfigPanel.HSplitTop(82.0f, &ConfigListRect, &ConfigPanel);
+		static CListBox s_ConfigListBox;
+		s_ConfigListBox.DoStart(18.0f, s_vConfigFiles.size(), 1, 4, s_ConfigSelected, &ConfigListRect, true);
+		for(size_t i = 0; i < s_vConfigFiles.size(); i++)
+		{
+			CListboxItem Item = s_ConfigListBox.DoNextItem(&s_vConfigFiles[i], s_ConfigSelected == (int)i);
+			if(Item.m_Visible)
+				Ui()->DoLabel(&Item.m_Rect, s_vConfigFiles[i].c_str(), 10.0f, TEXTALIGN_ML);
+		}
+		s_ConfigSelected = s_ConfigListBox.DoEnd();
+		if(s_ConfigListBox.WasItemActivated() && s_ConfigSelected >= 0 && s_ConfigSelected < (int)s_vConfigFiles.size())
+			LoadConfigFile(s_vConfigFiles[s_ConfigSelected].c_str(), s_ConfigFilter);
+
+		ConfigPanel.HSplitTop(4.0f, nullptr, &ConfigPanel);
+		CUIRect ActionsRow;
+		ConfigPanel.HSplitTop(22.0f, &ActionsRow, &ConfigPanel);
+		static CButtonContainer s_LoadConfigButton, s_RefreshConfigButton, s_OpenConfigFolderButton;
+		CUIRect LoadButton, RefreshButton, OpenFolderButton;
+		ActionsRow.VSplitLeft(130.0f, &LoadButton, &ActionsRow);
+		ActionsRow.VSplitLeft(MarginSmall, nullptr, &ActionsRow);
+		ActionsRow.VSplitLeft(90.0f, &RefreshButton, &ActionsRow);
+		ActionsRow.VSplitLeft(MarginSmall, nullptr, &ActionsRow);
+		ActionsRow.VSplitLeft(160.0f, &OpenFolderButton, &ActionsRow);
+		if(DoButton_Menu(&s_LoadConfigButton, TCLocalize("Load selected"), 0, &LoadButton) &&
+			s_ConfigSelected >= 0 && s_ConfigSelected < (int)s_vConfigFiles.size())
+			LoadConfigFile(s_vConfigFiles[s_ConfigSelected].c_str(), s_ConfigFilter);
+		if(DoButton_Menu(&s_RefreshConfigButton, TCLocalize("Refresh"), 0, &RefreshButton))
+		{
+			s_ConfigFilesScanned = false;
+			RefreshConfigFiles();
+		}
+		if(DoButton_Menu(&s_OpenConfigFolderButton, TCLocalize("Open config folder"), 0, &OpenFolderButton))
+		{
+			char aConfigDir[IO_MAX_PATH_LENGTH];
+			Storage()->GetCompletePath(IStorage::TYPE_SAVE, "", aConfigDir, sizeof(aConfigDir));
+			Client()->ViewFile(aConfigDir);
+		}
+
+		CUIRect HintRow;
+		ConfigPanel.HSplitTop(18.0f, &HintRow, &ConfigPanel);
+		Ui()->DoLabel(&HintRow, TCLocalize("Put downloaded .cfg files in the config folder, then refresh. Activate a file to load it."), 9.0f, TEXTALIGN_ML);
 	}
 	MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 	{
