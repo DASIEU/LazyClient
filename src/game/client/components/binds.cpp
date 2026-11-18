@@ -510,6 +510,21 @@ void CBinds::ConfigSaveCallback(IConfigManager *pConfigManager, void *pUserData)
 
 // DDRace
 
+void CBinds::ForEachBindLine(FBindLineCallback pfnCallback, void *pUser) const
+{
+	for(int Modifier = KeyModifier::NONE; Modifier < KeyModifier::COMBINATION_COUNT; Modifier++)
+	{
+		for(int Key = KEY_FIRST; Key < KEY_LAST; Key++)
+		{
+			if(!m_aapKeyBindings[Modifier][Key])
+				continue;
+			char *pBuf = GetKeyBindCommand(Modifier, Key);
+			pfnCallback(pBuf, pUser);
+			free(pBuf);
+		}
+	}
+}
+
 void CBinds::SetDDRaceBinds(bool FreeOnly)
 {
 	if(g_Config.m_ClDDRaceBindsSet < 1)

@@ -56,6 +56,11 @@ class CBinds : public CComponent
 	char *GetKeyBindCommand(int ModifierCombination, int Key) const;
 
 public:
+	typedef void (*FBindLineCallback)(const char *pLine, void *pUser);
+	/** Calls pfnCallback for every active bind with a "bind ..." config line. */
+	void ForEachBindLine(FBindLineCallback pfnCallback, void *pUser) const;
+
+public:
 	CBinds();
 	~CBinds() override;
 	int Sizeof() const override { return sizeof(*this); }

@@ -78,16 +78,166 @@ const float ColorPickerLineSpacing = 5.0f;
 
 enum
 {
-	CONFIG_IMPORT_ALL = 0,
-	CONFIG_IMPORT_ASSETS,
-	CONFIG_IMPORT_DDNET,
-	CONFIG_IMPORT_TATER,
-	CONFIG_IMPORT_LAZY,
-	CONFIG_IMPORT_BINDS,
-	CONFIG_IMPORT_COUNT,
+	CONFIG_PROFILE_ASSET_GAME = 1 << 0,
+	CONFIG_PROFILE_ASSET_EMOTICONS = 1 << 1,
+	CONFIG_PROFILE_ASSET_PARTICLES = 1 << 2,
+	CONFIG_PROFILE_ASSET_HUD = 1 << 3,
+	CONFIG_PROFILE_ASSET_EXTRAS = 1 << 4,
+	CONFIG_PROFILE_ASSET_ENTITIES = 1 << 5,
+	CONFIG_PROFILE_ASSET_SOUND = 1 << 6,
+	CONFIG_PROFILE_ASSETS_ALL = (1 << 7) - 1,
+	CONFIG_PROFILE_DDNET = 1 << 7,
+	CONFIG_PROFILE_TATER = 1 << 8,
+	CONFIG_PROFILE_LAZY = 1 << 9,
+	CONFIG_PROFILE_BINDS = 1 << 10,
+	CONFIG_PROFILE_ALL = (1 << 11) - 1,
 };
 
-static int ConfigFileScan(const char *pName, int IsDir, int DirType, void *pUser)
+static const char *CONFIG_PROFILE_DIR = "profiles";
+static const char *CONFIG_PROFILE_FILE_MARKER = "# lcprofile-file ";
+static const char *CONFIG_PROFILE_DATA_MARKER = "# lcprofile-data ";
+static const char *CONFIG_PROFILE_END_MARKER = "# lcprofile-end";
+static const char *CONFIG_PROFILE_CONTENTS_MARKER = "# lcprofile-contents ";
+
+struct SConfigProfileEntry
+{
+	std::string m_Name;
+	std::string m_File;
+	int m_Contents = CONFIG_PROFILE_ALL;
+	std::vector<std::string> m_vExtraFiles;
+};
+
+struct SConfigProfileFileEntry
+{
+	std::string m_Name;
+	bool m_IsDir;
+};
+
+static int ConfigProfileCategoryOf(const char *pName)
+{
+	if(str_comp(pName, "cl_asset_game") == 0)
+		return CONFIG_PROFILE_ASSET_GAME;
+	if(str_comp(pName, "cl_asset_emoticons") == 0)
+		return CONFIG_PROFILE_ASSET_EMOTICONS;
+	if(str_comp(pName, "cl_asset_particles") == 0)
+		return CONFIG_PROFILE_ASSET_PARTICLES;
+	if(str_comp(pName, "cl_asset_hud") == 0)
+		return CONFIG_PROFILE_ASSET_HUD;
+	if(str_comp(pName, "cl_asset_extras") == 0)
+		return CONFIG_PROFILE_ASSET_EXTRAS;
+	if(str_comp(pName, "cl_assets_entities") == 0)
+		return CONFIG_PROFILE_ASSET_ENTITIES;
+	if(str_comp(pName, "snd_pack") == 0)
+		return CONFIG_PROFILE_ASSET_SOUND;
+	if(str_startswith(pName, "tc_") != nullptr)
+		return CONFIG_PROFILE_TATER;
+	if(str_startswith(pName, "lc_") != nullptr)
+		return CONFIG_PROFILE_LAZY;
+	return CONFIG_PROFILE_DDNET;
+}
+
+static void ConfigProfileSanitizeName(const char *pIn, char *pOut, size_t Size)
+{
+	int Out = 0;
+	for(int i = 0; pIn[i] != '\0' && Out < (int)Size - 1; i++)
+	{
+		const char c = pIn[i];
+		if(c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|' || (unsigned char)c < ' ')
+			continue;
+		if(c == ' ' && Out == 0)
+			continue;
+		pOut[Out++] = c;
+	}
+	while(Out > 0 && pOut[Out - 1] == ' ')
+		Out--;
+	pOut[Out] = '\0';
+	if(pOut[0] == '\0')
+		str_copy(pOut, "profile", Size);
+}
+
+static void ConfigProfileEncodeString(const char *pStr, std::string &Out)
+{
+	const int Length = str_length(pStr);
+	Out.resize((Length + 2) / 3 * 4 + 1);
+	str_base64(Out.data(), Out.size(), pStr, Length);
+	Out.resize(str_length(Out.c_str()));
+}
+
+static bool ConfigProfileDecodeString(const char *pBase64, std::string &Out)
+{
+	if(pBase64[0] == '\0')
+		return false;
+	std::vector<char> Buffer(str_length(pBase64) / 4 * 3 + 4);
+	const int Length = str_base64_decode(Buffer.data(), Buffer.size(), pBase64);
+	if(Length < 0)
+		return false;
+	Out.assign(Buffer.data(), Length);
+	return true;
+}
+
+static bool ConfigProfileSafePath(const char *pPath)
+{
+	if(pPath[0] == '\0' || pPath[0] == '/' || pPath[0] == '\\')
+		return false;
+	if(str_find(pPath, "..") != nullptr || str_find(pPath, ":") != nullptr)
+		return false;
+	return true;
+}
+
+static bool ConfigProfileReservedPath(const char *pPath)
+{
+	const char *pBase = pPath;
+	for(const char *p = pPath; *p != '\0'; p++)
+	{
+		if(*p == '/' || *p == '\\')
+			pBase = p + 1;
+	}
+	return str_startswith(pBase, "settings_") != nullptr ||
+	       str_startswith(pBase, "autoexec") != nullptr ||
+	       str_comp(pBase, "tclient_profiles.cfg") == 0 ||
+	       str_startswith(pPath, "profiles/") != nullptr;
+}
+
+static void ConfigProfileEnsureFolders(IStorage *pStorage, const char *pPath)
+{
+	char aBuffer[IO_MAX_PATH_LENGTH];
+	str_copy(aBuffer, pPath);
+	for(char *p = aBuffer; *p != '\0'; p++)
+	{
+		if(*p != '/')
+			continue;
+		*p = '\0';
+		if(aBuffer[0] != '\0')
+			pStorage->CreateFolder(aBuffer, IStorage::TYPE_SAVE);
+		*p = '/';
+	}
+	if(aBuffer[0] != '\0')
+		pStorage->CreateFolder(aBuffer, IStorage::TYPE_SAVE);
+}
+
+static bool ConfigProfileAssetExists(IStorage *pStorage, const char *pKind, const char *pName)
+{
+	if(pName[0] == '\0' || str_comp(pName, "default") == 0)
+		return true;
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(str_comp(pKind, "audio") == 0)
+	{
+		str_format(aPath, sizeof(aPath), "assets/audio/%s", pName);
+		if(pStorage->FolderExists(aPath, IStorage::TYPE_ALL))
+			return true;
+		str_format(aPath, sizeof(aPath), "audio/%s", pName);
+		return pStorage->FolderExists(aPath, IStorage::TYPE_ALL);
+	}
+
+	str_format(aPath, sizeof(aPath), "assets/%s/%s.png", pKind, pName);
+	if(pStorage->FileExists(aPath, IStorage::TYPE_ALL))
+		return true;
+	str_format(aPath, sizeof(aPath), "assets/%s/%s", pKind, pName);
+	return pStorage->FolderExists(aPath, IStorage::TYPE_ALL);
+}
+
+static int ConfigProfileScan(const char *pName, int IsDir, int DirType, void *pUser)
 {
 	if(IsDir || !str_endswith_nocase(pName, ".cfg"))
 		return 0;
@@ -97,38 +247,49 @@ static int ConfigFileScan(const char *pName, int IsDir, int DirType, void *pUser
 	return 0;
 }
 
-static bool ConfigImportLineMatches(const char *pLine, int Filter)
+static int ConfigProfileScanFolder(const char *pName, int IsDir, int DirType, void *pUser)
 {
-	if(Filter == CONFIG_IMPORT_ALL)
-		return true;
+	if(pName[0] == '.')
+		return 0;
+	if(IsDir && str_comp(pName, CONFIG_PROFILE_DIR) == 0)
+		return 0;
 
-	const char *pCommand = str_skip_whitespaces_const(pLine);
-	if(pCommand[0] == '\0' || pCommand[0] == '#')
-		return false;
+	auto *pFiles = static_cast<std::vector<SConfigProfileFileEntry> *>(pUser);
+	pFiles->push_back({pName, IsDir != 0});
+	return 0;
+}
 
-	char aCommand[64];
-	int Length = 0;
-	while(pCommand[Length] != '\0' && !str_isspace(pCommand[Length]) && Length < (int)sizeof(aCommand) - 1)
+static void ConfigProfileReadMetadata(IStorage *pStorage, const char *pPath, SConfigProfileEntry &Entry)
+{
+	Entry.m_vExtraFiles.clear();
+	Entry.m_Contents = CONFIG_PROFILE_ALL;
+
+	void *pData = nullptr;
+	unsigned DataSize = 0;
+	if(!pStorage->ReadFile(pPath, IStorage::TYPE_SAVE, &pData, &DataSize))
+		return;
+
+	CLineReader Reader;
+	Reader.OpenBuffer(static_cast<char *>(pData));
+	while(const char *pLine = Reader.Get())
 	{
-		aCommand[Length] = pCommand[Length];
-		Length++;
+		if(str_startswith(pLine, CONFIG_PROFILE_CONTENTS_MARKER) != nullptr)
+		{
+			Entry.m_Contents = str_toint(str_startswith(pLine, CONFIG_PROFILE_CONTENTS_MARKER));
+		}
+		else if(str_startswith(pLine, CONFIG_PROFILE_FILE_MARKER) != nullptr)
+		{
+			std::string Name;
+			if(ConfigProfileDecodeString(str_startswith(pLine, CONFIG_PROFILE_FILE_MARKER), Name) && !Name.empty())
+				Entry.m_vExtraFiles.push_back(Name);
+		}
 	}
-	aCommand[Length] = '\0';
+}
 
-	const bool IsBind = str_comp(aCommand, "bind") == 0 || str_comp(aCommand, "unbind") == 0 || str_comp(aCommand, "unbindall") == 0;
-	const bool IsAsset = str_startswith(aCommand, "cl_asset") != nullptr || str_comp(aCommand, "snd_pack") == 0;
-	const bool IsTater = str_startswith(aCommand, "tc_") != nullptr;
-	const bool IsLazy = str_startswith(aCommand, "lc_") != nullptr;
-
-	switch(Filter)
-	{
-	case CONFIG_IMPORT_ASSETS: return IsAsset;
-	case CONFIG_IMPORT_DDNET: return !IsBind && !IsAsset && !IsTater && !IsLazy;
-	case CONFIG_IMPORT_TATER: return IsTater;
-	case CONFIG_IMPORT_LAZY: return IsLazy;
-	case CONFIG_IMPORT_BINDS: return IsBind;
-	default: return false;
-	}
+static bool ConfigProfileLineIsCommand(const char *pLine)
+{
+	const char *pTrimmed = str_skip_whitespaces_const(pLine);
+	return pTrimmed[0] != '\0' && pTrimmed[0] != '#';
 }
 
 static void SetFlag(int32_t &Flags, int n, bool Value)
@@ -2473,21 +2634,40 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 		}
 	};
 
-	static bool s_ConfigLoaderOpen = false;
-	static bool s_ConfigFilesScanned = false;
-	static int s_ConfigSelected = -1;
-	static int s_ConfigFilter = CONFIG_IMPORT_ALL;
-	static std::vector<std::string> s_vConfigFiles;
-	static char s_aConfigStatus[256] = "";
+	static bool s_ProfileDropdownOpen = false;
+	static bool s_ProfileConfigureOpen = false;
+	static bool s_ProfilePickerOpen = false;
+	static bool s_ProfileScanned = false;
+	static bool s_ProfilePickerNeedsRefresh = true;
+	static int s_ProfileSelected = -1;
+	static int s_ProfileContents = CONFIG_PROFILE_ALL;
+	static int s_aProfileCheckIds[16];
+	static char s_aProfileStatus[256] = "";
+	static char s_aProfilePickerDir[IO_MAX_PATH_LENGTH] = "";
+	static std::vector<SConfigProfileEntry> s_vProfiles;
+	static std::vector<std::string> s_vProfileExtras;
+	static std::vector<SConfigProfileFileEntry> s_vProfilePickerEntries;
+	static CLineInputBuffered<128> s_ProfileNameInput;
 
-	auto RefreshConfigFiles = [&]() {
-		s_vConfigFiles.clear();
-		Storage()->ListDirectory(IStorage::TYPE_SAVE, "", ConfigFileScan, &s_vConfigFiles);
-		Storage()->ListDirectory(IStorage::TYPE_ALL, "", ConfigFileScan, &s_vConfigFiles);
-		std::sort(s_vConfigFiles.begin(), s_vConfigFiles.end());
-		s_vConfigFiles.erase(std::unique(s_vConfigFiles.begin(), s_vConfigFiles.end()), s_vConfigFiles.end());
-		s_ConfigSelected = std::clamp(s_ConfigSelected, -1, (int)s_vConfigFiles.size() - 1);
-		s_ConfigFilesScanned = true;
+	auto RefreshProfiles = [&]() {
+		s_vProfiles.clear();
+		Storage()->CreateFolder(CONFIG_PROFILE_DIR, IStorage::TYPE_SAVE);
+		std::vector<std::string> vFiles;
+		Storage()->ListDirectory(IStorage::TYPE_SAVE, CONFIG_PROFILE_DIR, ConfigProfileScan, &vFiles);
+		std::sort(vFiles.begin(), vFiles.end());
+		for(const std::string &File : vFiles)
+		{
+			SConfigProfileEntry Entry;
+			Entry.m_File = File;
+			Entry.m_Name = File.substr(0, File.size() - 4);
+			char aPath[IO_MAX_PATH_LENGTH];
+			str_format(aPath, sizeof(aPath), "%s/%s", CONFIG_PROFILE_DIR, File.c_str());
+			ConfigProfileReadMetadata(Storage(), aPath, Entry);
+			s_vProfiles.push_back(std::move(Entry));
+		}
+		if(s_ProfileSelected >= (int)s_vProfiles.size())
+			s_ProfileSelected = -1;
+		s_ProfileScanned = true;
 	};
 
 	auto ApplyAssetConfig = [&]() {
@@ -2500,48 +2680,281 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 		GameClient()->m_Sounds.Clear();
 	};
 
-	auto LoadConfigFile = [&](const char *pPath, int Filter) {
-		bool Opened = false;
-		int Applied = 0;
-		if(Filter == CONFIG_IMPORT_ALL)
+	auto SelectProfile = [&](int Index) {
+		if(Index < 0 || Index >= (int)s_vProfiles.size())
+			return;
+		s_ProfileSelected = Index;
+		s_ProfileNameInput.Set(s_vProfiles[Index].m_Name.c_str());
+		s_vProfileExtras = s_vProfiles[Index].m_vExtraFiles;
+		s_ProfileContents = s_vProfiles[Index].m_Contents & CONFIG_PROFILE_ALL;
+		s_ProfileDropdownOpen = false;
+	};
+
+	auto SaveProfile = [&](const char *pName) {
+		char aSanitized[128];
+		ConfigProfileSanitizeName(pName, aSanitized, sizeof(aSanitized));
+		if(pName[0] == '\0')
 		{
-			Opened = Console()->ExecuteFile(pPath, IConsole::CLIENT_ID_UNSPECIFIED, true, IStorage::TYPE_ALL);
-			Applied = Opened ? 1 : 0;
+			str_copy(s_aProfileStatus, TCLocalize("Enter a profile name first."), sizeof(s_aProfileStatus));
+			return;
 		}
-		else
+
+		char aFile[160];
+		str_format(aFile, sizeof(aFile), "%s.cfg", aSanitized);
+		char aPath[IO_MAX_PATH_LENGTH];
+		str_format(aPath, sizeof(aPath), "%s/%s", CONFIG_PROFILE_DIR, aFile);
+
+		Storage()->CreateFolder(CONFIG_PROFILE_DIR, IStorage::TYPE_SAVE);
+		char aTmpPath[IO_MAX_PATH_LENGTH];
+		IOHANDLE File = Storage()->OpenFile(IStorage::FormatTmpPath(aTmpPath, sizeof(aTmpPath), aPath), IOFLAG_WRITE, IStorage::TYPE_SAVE);
+		if(!File)
 		{
-			CLineReader Reader;
-			if(Reader.OpenFile(Storage()->OpenFile(pPath, IOFLAG_READ, IStorage::TYPE_ALL)))
+			str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Could not write profile '%s'."), aSanitized);
+			return;
+		}
+
+		auto WriteLine = [&](const char *pLine) {
+			io_write(File, pLine, str_length(pLine));
+			io_write_newline(File);
+		};
+
+		WriteLine("# LazyClient config profile");
+		WriteLine("# version 1");
+		char aContents[64];
+		str_format(aContents, sizeof(aContents), "%s%d", CONFIG_PROFILE_CONTENTS_MARKER, s_ProfileContents);
+		WriteLine(aContents);
+
+		std::vector<const SConfigVariable *> vVariables;
+		ConfigManager()->PossibleConfigVariables("", CFGFLAG_CLIENT, [](const SConfigVariable *pVar, void *pUser) {
+			static_cast<std::vector<const SConfigVariable *> *>(pUser)->push_back(pVar);
+		}, &vVariables);
+		std::sort(vVariables.begin(), vVariables.end(), [](const SConfigVariable *pA, const SConfigVariable *pB) {
+			return str_comp(pA->m_pScriptName, pB->m_pScriptName) < 0;
+		});
+
+		int Settings = 0;
+		for(const SConfigVariable *pVar : vVariables)
+		{
+			if((pVar->m_Flags & CFGFLAG_SAVE) == 0)
+				continue;
+			if((s_ProfileContents & ConfigProfileCategoryOf(pVar->m_pScriptName)) == 0)
+				continue;
+			char aLine[2048];
+			pVar->Serialize(aLine, sizeof(aLine));
+			WriteLine(aLine);
+			Settings++;
+		}
+
+		if(s_ProfileContents & CONFIG_PROFILE_BINDS)
+		{
+			WriteLine("unbindall");
+			GameClient()->m_Binds.ForEachBindLine([](const char *pLine, void *pUser) {
+				IOHANDLE BindFile = *static_cast<IOHANDLE *>(pUser);
+				io_write(BindFile, pLine, str_length(pLine));
+				io_write_newline(BindFile);
+			}, &File);
+		}
+
+		int Files = 0;
+		for(const std::string &Extra : s_vProfileExtras)
+		{
+			void *pData = nullptr;
+			unsigned DataSize = 0;
+			if(!ConfigProfileSafePath(Extra.c_str()) || !Storage()->ReadFile(Extra.c_str(), IStorage::TYPE_SAVE, &pData, &DataSize))
+				continue;
+
+			std::string EncodedName;
+			ConfigProfileEncodeString(Extra.c_str(), EncodedName);
+			WriteLine((std::string(CONFIG_PROFILE_FILE_MARKER) + EncodedName).c_str());
+
+			std::string Encoded;
+			Encoded.resize((DataSize + 2) / 3 * 4 + 1);
+			str_base64(Encoded.data(), Encoded.size(), pData, DataSize);
+			Encoded.resize(str_length(Encoded.c_str()));
+			free(pData);
+
+			constexpr size_t ChunkSize = 3000;
+			for(size_t Offset = 0; Offset < Encoded.size(); Offset += ChunkSize)
+				WriteLine((std::string(CONFIG_PROFILE_DATA_MARKER) + Encoded.substr(Offset, ChunkSize)).c_str());
+			WriteLine(CONFIG_PROFILE_END_MARKER);
+			Files++;
+		}
+
+		io_close(File);
+		if(!Storage()->RenameFile(aTmpPath, aPath, IStorage::TYPE_SAVE))
+		{
+			str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Could not finish saving profile '%s'."), aSanitized);
+			return;
+		}
+		ConfigManager()->Save();
+
+		s_ProfileScanned = false;
+		RefreshProfiles();
+		for(int i = 0; i < (int)s_vProfiles.size(); i++)
+		{
+			if(str_comp(s_vProfiles[i].m_File.c_str(), aFile) == 0)
 			{
-				Opened = true;
-				while(const char *pLine = Reader.Get())
-				{
-					if(!ConfigImportLineMatches(pLine, Filter))
-						continue;
-					Console()->ExecuteLine(pLine, IConsole::CLIENT_ID_UNSPECIFIED);
-					Applied++;
-				}
+				SelectProfile(i);
+				break;
+			}
+		}
+		str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Saved '%s': %d settings, %d extra files."), aSanitized, Settings, Files);
+	};
+
+	auto LoadProfileFile = [&](int Index) {
+		if(Index < 0 || Index >= (int)s_vProfiles.size())
+			return;
+		const SConfigProfileEntry &Entry = s_vProfiles[Index];
+		char aPath[IO_MAX_PATH_LENGTH];
+		str_format(aPath, sizeof(aPath), "%s/%s", CONFIG_PROFILE_DIR, Entry.m_File.c_str());
+
+		void *pData = nullptr;
+		unsigned DataSize = 0;
+		if(!Storage()->ReadFile(aPath, IStorage::TYPE_SAVE, &pData, &DataSize))
+		{
+			str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Could not read profile '%s'."), Entry.m_Name.c_str());
+			return;
+		}
+
+		char aOldGame[64];
+		char aOldEmoticons[64];
+		char aOldParticles[64];
+		char aOldHud[64];
+		char aOldExtras[64];
+		char aOldEntities[64];
+		char aOldSound[64];
+		str_copy(aOldGame, g_Config.m_ClAssetGame);
+		str_copy(aOldEmoticons, g_Config.m_ClAssetEmoticons);
+		str_copy(aOldParticles, g_Config.m_ClAssetParticles);
+		str_copy(aOldHud, g_Config.m_ClAssetHud);
+		str_copy(aOldExtras, g_Config.m_ClAssetExtras);
+		str_copy(aOldEntities, g_Config.m_ClAssetsEntities);
+		str_copy(aOldSound, g_Config.m_SndPack);
+
+		CLineReader Reader;
+		Reader.OpenBuffer(static_cast<char *>(pData));
+
+		int Settings = 0;
+		bool InFile = false;
+		std::string CurrentName;
+		std::string CurrentData;
+		std::vector<std::pair<std::string, std::string>> vEmbedded;
+		while(const char *pLine = Reader.Get())
+		{
+			if(str_startswith(pLine, CONFIG_PROFILE_FILE_MARKER) != nullptr)
+			{
+				CurrentName.clear();
+				CurrentData.clear();
+				ConfigProfileDecodeString(str_startswith(pLine, CONFIG_PROFILE_FILE_MARKER), CurrentName);
+				InFile = true;
+			}
+			else if(InFile && str_startswith(pLine, CONFIG_PROFILE_DATA_MARKER) != nullptr)
+			{
+				CurrentData.append(str_startswith(pLine, CONFIG_PROFILE_DATA_MARKER));
+			}
+			else if(InFile && str_comp(pLine, CONFIG_PROFILE_END_MARKER) == 0)
+			{
+				if(!CurrentName.empty())
+					vEmbedded.emplace_back(CurrentName, CurrentData);
+				InFile = false;
+			}
+			else if(ConfigProfileLineIsCommand(pLine))
+			{
+				Console()->ExecuteLine(pLine, IConsole::CLIENT_ID_UNSPECIFIED);
+				Settings++;
 			}
 		}
 
-		if(!Opened)
+		int Restored = 0;
+		int Skipped = 0;
+		char aProfileDir[IO_MAX_PATH_LENGTH];
+		str_format(aProfileDir, sizeof(aProfileDir), "%s/%s", CONFIG_PROFILE_DIR, Entry.m_Name.c_str());
+		for(const auto &[Name, Encoded] : vEmbedded)
 		{
-			str_format(s_aConfigStatus, sizeof(s_aConfigStatus), TCLocalize("Could not open %s"), pPath);
-		}
-		else if(Applied == 0)
-		{
-			str_format(s_aConfigStatus, sizeof(s_aConfigStatus), TCLocalize("No matching settings found in %s"), pPath);
-		}
-		else
-		{
-			ConfigManager()->Save();
-			if(Filter == CONFIG_IMPORT_ALL || Filter == CONFIG_IMPORT_ASSETS || Filter == CONFIG_IMPORT_DDNET)
-				ApplyAssetConfig();
-			if(Filter == CONFIG_IMPORT_ALL)
-				str_format(s_aConfigStatus, sizeof(s_aConfigStatus), TCLocalize("Loaded %s"), pPath);
+			if(!ConfigProfileSafePath(Name.c_str()))
+			{
+				Skipped++;
+				continue;
+			}
+
+			char aTarget[IO_MAX_PATH_LENGTH];
+			if(ConfigProfileReservedPath(Name.c_str()))
+				str_format(aTarget, sizeof(aTarget), "%s/%s", aProfileDir, Name.c_str());
 			else
-				str_format(s_aConfigStatus, sizeof(s_aConfigStatus), TCLocalize("Loaded %s (%d settings)"), pPath, Applied);
+				str_copy(aTarget, Name.c_str());
+
+			if(Storage()->FileExists(aTarget, IStorage::TYPE_SAVE))
+			{
+				Skipped++;
+				continue;
+			}
+
+			std::vector<char> Decoded(Encoded.size() / 4 * 3 + 4);
+			const int DecodedSize = str_base64_decode(Decoded.data(), Decoded.size(), Encoded.c_str());
+			if(DecodedSize < 0)
+			{
+				Skipped++;
+				continue;
+			}
+
+			ConfigProfileEnsureFolders(Storage(), aTarget);
+			IOHANDLE File = Storage()->OpenFile(aTarget, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+			if(!File)
+			{
+				Skipped++;
+				continue;
+			}
+			io_write(File, Decoded.data(), DecodedSize);
+			io_close(File);
+			Restored++;
 		}
+
+		// Embedded asset files are restored above, so only assets that are still
+		// missing get ignored. Keeping the previous value avoids a broken skin.
+		int Missing = 0;
+		if(!ConfigProfileAssetExists(Storage(), "game", g_Config.m_ClAssetGame))
+		{
+			str_copy(g_Config.m_ClAssetGame, aOldGame);
+			Missing++;
+		}
+		if(!ConfigProfileAssetExists(Storage(), "emoticons", g_Config.m_ClAssetEmoticons))
+		{
+			str_copy(g_Config.m_ClAssetEmoticons, aOldEmoticons);
+			Missing++;
+		}
+		if(!ConfigProfileAssetExists(Storage(), "particles", g_Config.m_ClAssetParticles))
+		{
+			str_copy(g_Config.m_ClAssetParticles, aOldParticles);
+			Missing++;
+		}
+		if(!ConfigProfileAssetExists(Storage(), "hud", g_Config.m_ClAssetHud))
+		{
+			str_copy(g_Config.m_ClAssetHud, aOldHud);
+			Missing++;
+		}
+		if(!ConfigProfileAssetExists(Storage(), "extras", g_Config.m_ClAssetExtras))
+		{
+			str_copy(g_Config.m_ClAssetExtras, aOldExtras);
+			Missing++;
+		}
+		if(!ConfigProfileAssetExists(Storage(), "entities", g_Config.m_ClAssetsEntities))
+		{
+			str_copy(g_Config.m_ClAssetsEntities, aOldEntities);
+			Missing++;
+		}
+		if(!ConfigProfileAssetExists(Storage(), "audio", g_Config.m_SndPack))
+		{
+			str_copy(g_Config.m_SndPack, aOldSound);
+			Missing++;
+		}
+
+		ConfigManager()->Save();
+		ApplyAssetConfig();
+
+		if(Missing > 0)
+			str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Loaded '%s': %d settings, %d missing assets ignored, %d files restored, %d already present."), Entry.m_Name.c_str(), Settings, Missing, Restored, Skipped);
+		else
+			str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Loaded '%s': %d settings, %d files restored, %d already present."), Entry.m_Name.c_str(), Settings, Restored, Skipped);
 	};
 
 	{
@@ -2680,127 +3093,337 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 	}
 	MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 	{
-		CUIRect ConfigHeader;
-		MainView.HSplitTop(LineSize, &ConfigHeader, &MainView);
-		static CButtonContainer s_ConfigLoaderToggle;
-		ConfigHeader.VSplitLeft(150.0f, &Button, &ConfigHeader);
-		if(DoButton_Menu(&s_ConfigLoaderToggle, TCLocalize("Config files"), s_ConfigLoaderOpen ? 1 : 0, &Button))
+		if(!s_ProfileScanned)
+			RefreshProfiles();
+
+		CUIRect ProfileHeader;
+		MainView.HSplitTop(16.0f, &ProfileHeader, &MainView);
+		Ui()->DoLabel(&ProfileHeader, TCLocalize("Config profiles (one file: assets, settings, binds and embedded extra files)"), 10.0f, TEXTALIGN_ML);
+
+		CUIRect ProfileRow, DropdownButton, NameInputRect, RenameButton, SaveButton, ConfigureButton, NewButton;
+		MainView.HSplitTop(LineSize, &ProfileRow, &MainView);
+		ProfileRow.VSplitLeft(200.0f, &DropdownButton, &ProfileRow);
+		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
+		ProfileRow.VSplitLeft(170.0f, &NameInputRect, &ProfileRow);
+		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
+		ProfileRow.VSplitLeft(70.0f, &RenameButton, &ProfileRow);
+		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
+		ProfileRow.VSplitLeft(60.0f, &SaveButton, &ProfileRow);
+		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
+		ProfileRow.VSplitLeft(90.0f, &ConfigureButton, &ProfileRow);
+		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
+		ProfileRow.VSplitLeft(50.0f, &NewButton, &ProfileRow);
+
+		static CButtonContainer s_ProfileDropdownButton, s_ProfileRenameButton, s_ProfileSaveButton, s_ProfileConfigureButton, s_ProfileNewButton;
+
+		char aDropdownLabel[192];
+		if(s_ProfileSelected >= 0 && s_ProfileSelected < (int)s_vProfiles.size())
+			str_format(aDropdownLabel, sizeof(aDropdownLabel), "%s: %s", TCLocalize("Profile"), s_vProfiles[s_ProfileSelected].m_Name.c_str());
+		else
+			str_copy(aDropdownLabel, TCLocalize("Select profile"));
+		if(DoButton_Menu(&s_ProfileDropdownButton, aDropdownLabel, s_ProfileDropdownOpen ? 1 : 0, &DropdownButton))
+			s_ProfileDropdownOpen = !s_ProfileDropdownOpen;
+
+		s_ProfileNameInput.SetEmptyText(TCLocalize("Profile name"));
+		Ui()->DoEditBox(&s_ProfileNameInput, &NameInputRect, 10.0f);
+
+		if(DoButton_Menu(&s_ProfileRenameButton, TCLocalize("Rename"), 0, &RenameButton))
 		{
-			s_ConfigLoaderOpen = !s_ConfigLoaderOpen;
-			if(s_ConfigLoaderOpen)
-				s_ConfigFilesScanned = false;
+			if(s_ProfileSelected < 0 || s_ProfileSelected >= (int)s_vProfiles.size())
+			{
+				str_copy(s_aProfileStatus, TCLocalize("Select a profile to rename."), sizeof(s_aProfileStatus));
+			}
+			else
+			{
+				char aSanitized[128];
+				ConfigProfileSanitizeName(s_ProfileNameInput.GetString(), aSanitized, sizeof(aSanitized));
+				char aOldFile[160];
+				char aNewFile[160];
+				str_format(aOldFile, sizeof(aOldFile), "%s/%s", CONFIG_PROFILE_DIR, s_vProfiles[s_ProfileSelected].m_File.c_str());
+				str_format(aNewFile, sizeof(aNewFile), "%s/%s.cfg", CONFIG_PROFILE_DIR, aSanitized);
+				if(str_comp(aOldFile, aNewFile) == 0)
+				{
+					str_copy(s_aProfileStatus, TCLocalize("Profile name unchanged."), sizeof(s_aProfileStatus));
+				}
+				else if(Storage()->FileExists(aNewFile, IStorage::TYPE_SAVE))
+				{
+					str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Profile '%s' already exists."), aSanitized);
+				}
+				else if(Storage()->RenameFile(aOldFile, aNewFile, IStorage::TYPE_SAVE))
+				{
+					s_ProfileScanned = false;
+					RefreshProfiles();
+					for(int i = 0; i < (int)s_vProfiles.size(); i++)
+					{
+						if(str_comp(s_vProfiles[i].m_Name.c_str(), aSanitized) == 0)
+						{
+							SelectProfile(i);
+							break;
+						}
+					}
+					str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Renamed profile to '%s'."), aSanitized);
+				}
+				else
+				{
+					str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Could not rename profile '%s'."), aSanitized);
+				}
+			}
 		}
-		ConfigHeader.VSplitLeft(MarginSmall, nullptr, &ConfigHeader);
-		if(s_aConfigStatus[0] != '\0')
-			Ui()->DoLabel(&ConfigHeader, s_aConfigStatus, 10.0f, TEXTALIGN_ML);
+
+		if(DoButton_Menu(&s_ProfileSaveButton, TCLocalize("Save"), 0, &SaveButton))
+			SaveProfile(s_ProfileNameInput.GetString());
+
+		if(DoButton_Menu(&s_ProfileConfigureButton, TCLocalize("Configure"), s_ProfileConfigureOpen ? 1 : 0, &ConfigureButton))
+			s_ProfileConfigureOpen = !s_ProfileConfigureOpen;
+
+		if(DoButton_Menu(&s_ProfileNewButton, TCLocalize("New"), 0, &NewButton))
+		{
+			s_ProfileSelected = -1;
+			s_ProfileNameInput.Set("");
+			s_vProfileExtras.clear();
+			s_ProfileContents = CONFIG_PROFILE_ALL;
+			s_ProfileConfigureOpen = true;
+			s_aProfileStatus[0] = '\0';
+		}
+
+		if(s_aProfileStatus[0] != '\0')
+		{
+			CUIRect StatusRow;
+			MainView.HSplitTop(16.0f, &StatusRow, &MainView);
+			Ui()->DoLabel(&StatusRow, s_aProfileStatus, 9.0f, TEXTALIGN_ML);
+		}
 	}
-	if(s_ConfigLoaderOpen)
+	if(s_ProfileDropdownOpen)
 	{
-		if(!s_ConfigFilesScanned)
-			RefreshConfigFiles();
+		MainView.HSplitTop(4.0f, nullptr, &MainView);
+		CUIRect ListPanel;
+		MainView.HSplitTop(100.0f, &ListPanel, &MainView);
+		ListPanel.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.18f), IGraphics::CORNER_ALL, 5.0f);
+		ListPanel.Margin(4.0f, &ListPanel);
+		if(s_vProfiles.empty())
+		{
+			Ui()->DoLabel(&ListPanel, TCLocalize("No profiles yet. Type a name and press Save."), 10.0f, TEXTALIGN_ML);
+		}
+		else
+		{
+			static CListBox s_ProfileListBox;
+			s_ProfileListBox.DoStart(18.0f, s_vProfiles.size(), 1, 5, -1, &ListPanel, true);
+			for(size_t i = 0; i < s_vProfiles.size(); i++)
+			{
+				CListboxItem Item = s_ProfileListBox.DoNextItem(&s_vProfiles[i], s_ProfileSelected == (int)i);
+				if(Item.m_Visible)
+					Ui()->DoLabel(&Item.m_Rect, s_vProfiles[i].m_Name.c_str(), 10.0f, TEXTALIGN_ML);
+			}
+			const int Clicked = s_ProfileListBox.DoEnd();
+			if(Clicked >= 0 && Clicked < (int)s_vProfiles.size())
+			{
+				SelectProfile(Clicked);
+				LoadProfileFile(Clicked);
+			}
+		}
+	}
+	if(s_ProfileConfigureOpen)
+	{
+		MainView.HSplitTop(4.0f, nullptr, &MainView);
+		CUIRect Panel;
+		MainView.HSplitTop(284.0f, &Panel, &MainView);
+		Panel.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.18f), IGraphics::CORNER_ALL, 5.0f);
+		Panel.Margin(8.0f, &Panel);
 
-		MainView.HSplitTop(MarginSmall, nullptr, &MainView);
-		CUIRect ConfigPanel;
-		MainView.HSplitTop(216.0f, &ConfigPanel, &MainView);
-		ConfigPanel.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.18f), IGraphics::CORNER_ALL, 5.0f);
-		ConfigPanel.Margin(8.0f, &ConfigPanel);
+		CUIRect Left, Right;
+		Panel.VSplitMid(&Left, &Right, 16.0f);
 
-		CUIRect Row, ConfigLabel;
-		ConfigPanel.HSplitTop(22.0f, &Row, &ConfigPanel);
-		Row.VSplitLeft(80.0f, &ConfigLabel, &Row);
-		Ui()->DoLabel(&ConfigLabel, TCLocalize("Quick load:"), 10.0f, TEXTALIGN_ML);
-		struct SQuickLoad
+		CUIRect Row;
+		Left.HSplitTop(16.0f, &Row, &Left);
+		Ui()->DoLabel(&Row, TCLocalize("# Include when saving"), 10.0f, TEXTALIGN_ML);
+		Left.HSplitTop(2.0f, nullptr, &Left);
+
+		const bool AllAssets = (s_ProfileContents & CONFIG_PROFILE_ASSETS_ALL) == CONFIG_PROFILE_ASSETS_ALL;
+		CUIRect AssetsRow;
+		Left.HSplitTop(LineSize, &AssetsRow, &Left);
+		if(DoButton_CheckBox(&s_aProfileCheckIds[0], TCLocalize("Assets (all)"), AllAssets ? 1 : 0, &AssetsRow))
+		{
+			if(AllAssets)
+				s_ProfileContents &= ~CONFIG_PROFILE_ASSETS_ALL;
+			else
+				s_ProfileContents |= CONFIG_PROFILE_ASSETS_ALL;
+		}
+
+		struct SAssetOption
 		{
 			const char *m_pLabel;
-			ConfigDomain m_Domain;
-			int m_Filter;
+			const char *m_pValue;
+			int m_Bit;
 		};
-		const SQuickLoad aQuickLoads[] = {
-			{TCLocalize("Assets"), ConfigDomain::DDNET, CONFIG_IMPORT_ASSETS},
-			{TCLocalize("DDNet"), ConfigDomain::DDNET, CONFIG_IMPORT_ALL},
-			{TCLocalize("Tater"), ConfigDomain::TCLIENT, CONFIG_IMPORT_ALL},
-			{TCLocalize("Lazy"), ConfigDomain::LAZY, CONFIG_IMPORT_ALL},
-			{TCLocalize("Binds"), ConfigDomain::DDNET, CONFIG_IMPORT_BINDS},
+		const SAssetOption aAssetOptions[] = {
+			{TCLocalize("Game"), g_Config.m_ClAssetGame, CONFIG_PROFILE_ASSET_GAME},
+			{TCLocalize("Emoticons"), g_Config.m_ClAssetEmoticons, CONFIG_PROFILE_ASSET_EMOTICONS},
+			{TCLocalize("Particles"), g_Config.m_ClAssetParticles, CONFIG_PROFILE_ASSET_PARTICLES},
+			{TCLocalize("HUD"), g_Config.m_ClAssetHud, CONFIG_PROFILE_ASSET_HUD},
+			{TCLocalize("Extras"), g_Config.m_ClAssetExtras, CONFIG_PROFILE_ASSET_EXTRAS},
+			{TCLocalize("Entities"), g_Config.m_ClAssetsEntities, CONFIG_PROFILE_ASSET_ENTITIES},
+			{TCLocalize("Sound pack"), g_Config.m_SndPack, CONFIG_PROFILE_ASSET_SOUND},
 		};
-		constexpr int NumQuickLoads = sizeof(aQuickLoads) / sizeof(aQuickLoads[0]);
-		static CButtonContainer s_aQuickLoadButtons[NumQuickLoads];
-		for(int i = 0; i < NumQuickLoads; i++)
+		for(int i = 0; i < (int)std::size(aAssetOptions); i++)
 		{
-			CUIRect QuickButton;
-			Row.VSplitLeft(Row.w / (NumQuickLoads - i), &QuickButton, &Row);
-			QuickButton.Margin(1.0f, &QuickButton);
-			if(DoButton_Menu(&s_aQuickLoadButtons[i], aQuickLoads[i].m_pLabel, 0, &QuickButton))
-				LoadConfigFile(s_aConfigDomains[aQuickLoads[i].m_Domain].m_aConfigPath, aQuickLoads[i].m_Filter);
+			char aLabel[160];
+			str_format(aLabel, sizeof(aLabel), "    %s: %s", aAssetOptions[i].m_pLabel, aAssetOptions[i].m_pValue);
+			CUIRect AssetRow;
+			Left.HSplitTop(LineSize, &AssetRow, &Left);
+			if(DoButton_CheckBox(&s_aProfileCheckIds[1 + i], aLabel, (s_ProfileContents & aAssetOptions[i].m_Bit) ? 1 : 0, &AssetRow))
+				s_ProfileContents ^= aAssetOptions[i].m_Bit;
 		}
-		ConfigPanel.HSplitTop(4.0f, nullptr, &ConfigPanel);
 
-		ConfigPanel.HSplitTop(22.0f, &Row, &ConfigPanel);
-		Row.VSplitLeft(80.0f, &ConfigLabel, &Row);
-		Ui()->DoLabel(&ConfigLabel, TCLocalize("Import only:"), 10.0f, TEXTALIGN_ML);
-		const char *apFilterNames[CONFIG_IMPORT_COUNT] = {
-			TCLocalize("All"),
-			TCLocalize("Assets"),
-			TCLocalize("DDNet"),
-			TCLocalize("Tater"),
-			TCLocalize("Lazy"),
-			TCLocalize("Binds"),
+		auto CheckRow = [&](int Id, const char *pText, int Bit) {
+			CUIRect CheckRowRect;
+			Left.HSplitTop(LineSize, &CheckRowRect, &Left);
+			if(DoButton_CheckBox(&s_aProfileCheckIds[Id], pText, (s_ProfileContents & Bit) ? 1 : 0, &CheckRowRect))
+				s_ProfileContents ^= Bit;
 		};
-		static CButtonContainer s_aConfigFilterButtons[CONFIG_IMPORT_COUNT];
-		for(int i = 0; i < CONFIG_IMPORT_COUNT; i++)
-		{
-			CUIRect FilterButton;
-			Row.VSplitLeft(Row.w / (CONFIG_IMPORT_COUNT - i), &FilterButton, &Row);
-			FilterButton.Margin(1.0f, &FilterButton);
-			if(DoButton_Menu(&s_aConfigFilterButtons[i], apFilterNames[i], s_ConfigFilter == i ? 1 : 0, &FilterButton))
-				s_ConfigFilter = i;
-		}
-		ConfigPanel.HSplitTop(4.0f, nullptr, &ConfigPanel);
+		CheckRow(8, TCLocalize("DDNet settings"), CONFIG_PROFILE_DDNET);
+		CheckRow(9, TCLocalize("Tater settings"), CONFIG_PROFILE_TATER);
+		CheckRow(10, TCLocalize("Lazy settings"), CONFIG_PROFILE_LAZY);
+		CheckRow(11, TCLocalize("Binds (replaces all binds)"), CONFIG_PROFILE_BINDS);
 
-		ConfigPanel.HSplitTop(18.0f, &Row, &ConfigPanel);
-		Ui()->DoLabel(&Row, TCLocalize("Config files in your config directory:"), 10.0f, TEXTALIGN_ML);
+		Right.HSplitTop(16.0f, &Row, &Right);
+		Ui()->DoLabel(&Row, TCLocalize("# Extra files (embedded)"), 10.0f, TEXTALIGN_ML);
+		Right.HSplitTop(2.0f, nullptr, &Right);
 
-		CUIRect ConfigListRect;
-		ConfigPanel.HSplitTop(82.0f, &ConfigListRect, &ConfigPanel);
-		static CListBox s_ConfigListBox;
-		s_ConfigListBox.DoStart(18.0f, s_vConfigFiles.size(), 1, 4, s_ConfigSelected, &ConfigListRect, true);
-		for(size_t i = 0; i < s_vConfigFiles.size(); i++)
+		for(size_t i = 0; i < s_vProfileExtras.size() && i < 5; i++)
 		{
-			CListboxItem Item = s_ConfigListBox.DoNextItem(&s_vConfigFiles[i], s_ConfigSelected == (int)i);
-			if(Item.m_Visible)
-				Ui()->DoLabel(&Item.m_Rect, s_vConfigFiles[i].c_str(), 10.0f, TEXTALIGN_ML);
+			CUIRect FileRow;
+			Right.HSplitTop(18.0f, &FileRow, &Right);
+			CUIRect RemoveButton;
+			FileRow.VSplitRight(60.0f, &FileRow, &RemoveButton);
+			Ui()->DoLabel(&FileRow, s_vProfileExtras[i].c_str(), 9.0f, TEXTALIGN_ML);
+			static CButtonContainer s_aExtraRemoveButtons[5];
+			if(DoButton_Menu(&s_aExtraRemoveButtons[i], TCLocalize("Remove"), 0, &RemoveButton))
+			{
+				s_vProfileExtras.erase(s_vProfileExtras.begin() + i);
+				break;
+			}
 		}
-		s_ConfigSelected = s_ConfigListBox.DoEnd();
-		if(s_ConfigListBox.WasItemActivated() && s_ConfigSelected >= 0 && s_ConfigSelected < (int)s_vConfigFiles.size())
-			LoadConfigFile(s_vConfigFiles[s_ConfigSelected].c_str(), s_ConfigFilter);
-
-		ConfigPanel.HSplitTop(4.0f, nullptr, &ConfigPanel);
-		CUIRect ActionsRow;
-		ConfigPanel.HSplitTop(22.0f, &ActionsRow, &ConfigPanel);
-		static CButtonContainer s_LoadConfigButton, s_RefreshConfigButton, s_OpenConfigFolderButton;
-		CUIRect LoadButton, RefreshButton, OpenFolderButton;
-		ActionsRow.VSplitLeft(130.0f, &LoadButton, &ActionsRow);
-		ActionsRow.VSplitLeft(MarginSmall, nullptr, &ActionsRow);
-		ActionsRow.VSplitLeft(90.0f, &RefreshButton, &ActionsRow);
-		ActionsRow.VSplitLeft(MarginSmall, nullptr, &ActionsRow);
-		ActionsRow.VSplitLeft(160.0f, &OpenFolderButton, &ActionsRow);
-		if(DoButton_Menu(&s_LoadConfigButton, TCLocalize("Load selected"), 0, &LoadButton) &&
-			s_ConfigSelected >= 0 && s_ConfigSelected < (int)s_vConfigFiles.size())
-			LoadConfigFile(s_vConfigFiles[s_ConfigSelected].c_str(), s_ConfigFilter);
-		if(DoButton_Menu(&s_RefreshConfigButton, TCLocalize("Refresh"), 0, &RefreshButton))
+		if(s_vProfileExtras.size() > 5)
 		{
-			s_ConfigFilesScanned = false;
-			RefreshConfigFiles();
-		}
-		if(DoButton_Menu(&s_OpenConfigFolderButton, TCLocalize("Open config folder"), 0, &OpenFolderButton))
-		{
-			char aConfigDir[IO_MAX_PATH_LENGTH];
-			Storage()->GetCompletePath(IStorage::TYPE_SAVE, "", aConfigDir, sizeof(aConfigDir));
-			Client()->ViewFile(aConfigDir);
+			CUIRect MoreRow;
+			Right.HSplitTop(14.0f, &MoreRow, &Right);
+			char aMore[64];
+			str_format(aMore, sizeof(aMore), TCLocalize("+%d more"), (int)s_vProfileExtras.size() - 5);
+			Ui()->DoLabel(&MoreRow, aMore, 8.0f, TEXTALIGN_ML);
 		}
 
-		CUIRect HintRow;
-		ConfigPanel.HSplitTop(18.0f, &HintRow, &ConfigPanel);
-		Ui()->DoLabel(&HintRow, TCLocalize("Put downloaded .cfg files in the config folder, then refresh. Activate a file to load it."), 9.0f, TEXTALIGN_ML);
+		CUIRect AttachButton;
+		Right.HSplitTop(LineSize, &AttachButton, &Right);
+		AttachButton.VSplitLeft(140.0f, &AttachButton, nullptr);
+		static CButtonContainer s_ProfileAttachButton;
+		if(DoButton_Menu(&s_ProfileAttachButton, TCLocalize("Attach file..."), 0, &AttachButton))
+		{
+			s_ProfilePickerOpen = !s_ProfilePickerOpen;
+			s_ProfilePickerNeedsRefresh = true;
+		}
+
+		CUIRect Hint;
+		Right.HSplitBottom(28.0f, &Right, &Hint);
+		Ui()->DoLabel(&Hint, TCLocalize("Extra files are stored inside the .cfg, so one file carries your whole setup. Existing files are never overwritten."), 8.0f, TEXTALIGN_ML);
+	}
+	if(s_ProfilePickerOpen)
+	{
+		MainView.HSplitTop(4.0f, nullptr, &MainView);
+		CUIRect PickerPanel;
+		MainView.HSplitTop(140.0f, &PickerPanel, &MainView);
+		PickerPanel.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.18f), IGraphics::CORNER_ALL, 5.0f);
+		PickerPanel.Margin(8.0f, &PickerPanel);
+
+		CUIRect HeaderRow;
+		PickerPanel.HSplitTop(16.0f, &HeaderRow, &PickerPanel);
+		CUIRect CloseButton;
+		HeaderRow.VSplitRight(60.0f, &HeaderRow, &CloseButton);
+		char aDirLabel[IO_MAX_PATH_LENGTH + 32];
+		str_format(aDirLabel, sizeof(aDirLabel), "%s: /%s", TCLocalize("Attach a file"), s_aProfilePickerDir);
+		Ui()->DoLabel(&HeaderRow, aDirLabel, 9.0f, TEXTALIGN_ML);
+		static CButtonContainer s_ProfilePickerCloseButton;
+		if(DoButton_Menu(&s_ProfilePickerCloseButton, TCLocalize("Close"), 0, &CloseButton))
+			s_ProfilePickerOpen = false;
+
+		if(s_ProfilePickerNeedsRefresh)
+		{
+			s_vProfilePickerEntries.clear();
+			Storage()->ListDirectory(IStorage::TYPE_SAVE, s_aProfilePickerDir, ConfigProfileScanFolder, &s_vProfilePickerEntries);
+			std::sort(s_vProfilePickerEntries.begin(), s_vProfilePickerEntries.end(), [](const SConfigProfileFileEntry &A, const SConfigProfileFileEntry &B) {
+				if(A.m_IsDir != B.m_IsDir)
+					return A.m_IsDir > B.m_IsDir;
+				return str_comp_nocase(A.m_Name.c_str(), B.m_Name.c_str()) < 0;
+			});
+			if(s_aProfilePickerDir[0] != '\0')
+				s_vProfilePickerEntries.insert(s_vProfilePickerEntries.begin(), {"..", true});
+			s_ProfilePickerNeedsRefresh = false;
+		}
+
+		CUIRect PickerList;
+		PickerPanel.HSplitTop(96.0f, &PickerList, &PickerPanel);
+		static CListBox s_ProfilePickerListBox;
+		s_ProfilePickerListBox.DoStart(16.0f, s_vProfilePickerEntries.size(), 1, 6, -1, &PickerList, true);
+		for(size_t i = 0; i < s_vProfilePickerEntries.size(); i++)
+		{
+			CListboxItem Item = s_ProfilePickerListBox.DoNextItem(&s_vProfilePickerEntries[i], false);
+			if(!Item.m_Visible)
+				continue;
+			char aLabel[IO_MAX_PATH_LENGTH + 8];
+			str_format(aLabel, sizeof(aLabel), "%s%s", s_vProfilePickerEntries[i].m_IsDir ? "[+] " : "", s_vProfilePickerEntries[i].m_Name.c_str());
+			Ui()->DoLabel(&Item.m_Rect, aLabel, 9.0f, TEXTALIGN_ML);
+		}
+		const int Clicked = s_ProfilePickerListBox.DoEnd();
+		if(Clicked >= 0 && Clicked < (int)s_vProfilePickerEntries.size())
+		{
+			const SConfigProfileFileEntry &Entry = s_vProfilePickerEntries[Clicked];
+			if(Entry.m_IsDir)
+			{
+				if(str_comp(Entry.m_Name.c_str(), "..") == 0)
+				{
+					char *pLastSlash = nullptr;
+					for(char *p = s_aProfilePickerDir; *p != '\0'; p++)
+					{
+						if(*p == '/')
+							pLastSlash = p;
+					}
+					if(pLastSlash != nullptr)
+						*pLastSlash = '\0';
+					else
+						s_aProfilePickerDir[0] = '\0';
+				}
+				else if(s_aProfilePickerDir[0] == '\0')
+				{
+					str_copy(s_aProfilePickerDir, Entry.m_Name.c_str());
+				}
+				else if(str_length(s_aProfilePickerDir) + 1 + str_length(Entry.m_Name.c_str()) < (int)sizeof(s_aProfilePickerDir))
+				{
+					str_append(s_aProfilePickerDir, "/");
+					str_append(s_aProfilePickerDir, Entry.m_Name.c_str());
+				}
+				s_ProfilePickerNeedsRefresh = true;
+			}
+			else
+			{
+				char aFile[IO_MAX_PATH_LENGTH];
+				if(s_aProfilePickerDir[0] == '\0')
+					str_copy(aFile, Entry.m_Name.c_str());
+				else
+					str_format(aFile, sizeof(aFile), "%s/%s", s_aProfilePickerDir, Entry.m_Name.c_str());
+
+				bool AlreadyAttached = false;
+				for(const std::string &Extra : s_vProfileExtras)
+				{
+					if(str_comp(Extra.c_str(), aFile) == 0)
+					{
+						AlreadyAttached = true;
+						break;
+					}
+				}
+				if(!AlreadyAttached)
+					s_vProfileExtras.emplace_back(aFile);
+				str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Attached '%s'."), aFile);
+			}
+		}
 	}
 	MainView.HSplitTop(MarginSmall, nullptr, &MainView);
 	{
