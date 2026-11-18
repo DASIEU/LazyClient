@@ -61,6 +61,7 @@ MACRO_CONFIG_INT(LcVoteFilterLength, lc_vote_filter_length, 0, 0, 127, CFGFLAG_C
 MACRO_CONFIG_INT(LcZeroGravPredict, lc_zerograv_predict, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict freeze tiles after holding a zero-gravity wall position")
 MACRO_CONFIG_INT(LcZeroGravMode, lc_zerograv_mode, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity predictor mode: 0 = always on, 1 = key toggles it")
 MACRO_CONFIG_INT(LcZeroGravPredictTime, lc_zerograv_predict_time, 5, 1, 10, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity freeze warning time in seconds")
+MACRO_CONFIG_INT(LcZeroGravStartDelay, lc_zerograv_start_delay, 2, 0, 5, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Seconds the tee must hold a wall before freeze prediction starts")
 MACRO_CONFIG_INT(LcZeroGravHoldTiles, lc_zerograv_hold_tiles, 4, 1, 16, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Zero-gravity hold area radius in tiles")
 MACRO_CONFIG_INT(LcZeroGravSpeedrunGuard, lc_zerograv_speedrun_guard, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Suppress the freeze warning while moving fast (anti-speedrun guard)")
 MACRO_CONFIG_INT(LcZeroGravSpeedrunSpeed, lc_zerograv_speedrun_speed, 25, 5, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-speedrun guard horizontal speed threshold in tiles per second")

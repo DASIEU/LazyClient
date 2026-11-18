@@ -54,6 +54,16 @@ enum EHudModule
 	HUD_MODULE_COUNT,
 };
 
+// Which client a HUD module originally comes from. Used by the HUD editor
+// filter so overlapping module outlines can be hidden while editing.
+enum EHudModuleSource
+{
+	HUD_SOURCE_DDNET = 0,
+	HUD_SOURCE_TATER,
+	HUD_SOURCE_LAZY,
+	HUD_SOURCE_COUNT,
+};
+
 class CLazyClient : public CComponent
 {
 public:
@@ -348,6 +358,7 @@ private:
 	vec2 m_HudEditorDragLast = vec2(0.0f, 0.0f);
 	int m_HudEditorSettings = -1;
 	bool m_HudEditorConfirm = false;
+	int m_HudEditorFilter = -1; // -1 = all clients, otherwise an EHudModuleSource
 	void LoadHudLayout();
 	void SaveHudLayout();
 	static void ConHudEditor(IConsole::IResult *pResult, void *pUserData);
@@ -368,7 +379,7 @@ private:
 	std::unordered_map<std::string, std::unordered_set<std::string>> m_BestClientPlayers;
 
 	// Hooked freeze predictor
-	static constexpr int ZERO_GRAV_HISTORY_SIZE = 40;
+	static constexpr int ZERO_GRAV_HISTORY_SIZE = 100; // 5 s at the 0.05 s check interval
 	float m_ZeroGravCheckTimer = 0.0f;
 	bool m_ZeroGravWarning = false;
 	float m_ZeroGravSeconds = 0.0f;

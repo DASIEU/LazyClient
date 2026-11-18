@@ -554,6 +554,9 @@ void CMenus::RenderSettingsLazyVisuals(CUIRect MainView)
 			g_Config.m_LcZeroGravMode = NewZeroGravMode;
 
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
+		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravStartDelay, &g_Config.m_LcZeroGravStartDelay, &Button, Localize("Start delay"), 0, 5, &CUi::ms_LinearScrollbarScale, 0, "s");
+
+		MainView.HSplitTop(LazyLineSize, &Button, &MainView);
 		Ui()->DoScrollbarOption(&g_Config.m_LcZeroGravPredictTime, &g_Config.m_LcZeroGravPredictTime, &Button, Localize("Warning time"), 1, 10, &CUi::ms_LinearScrollbarScale, 0, "s");
 
 		MainView.HSplitTop(LazyLineSize, &Button, &MainView);

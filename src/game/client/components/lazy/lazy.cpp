@@ -61,6 +61,7 @@ constexpr int AUTO_MARGIN_STEP_DOWN = 5;
 constexpr int ASPECT_CONFIRM_SECONDS = 5;
 constexpr int64_t GORES_WEAPON_SELECT_GRACE_MS = 500;
 constexpr float ZERO_GRAV_TILE_SIZE = 32.0f;
+constexpr float ZERO_GRAV_CHECK_INTERVAL = 0.05f;
 constexpr int ZERO_GRAV_HOLD_GRACE_CHECKS = 10;
 constexpr float ZERO_GRAV_HOOK_MOVE_DISTANCE = 16.0f;
 constexpr float ZERO_GRAV_WARNING_HIDE_DELAY = 0.20f;
@@ -293,37 +294,49 @@ struct SHudModuleDef
 	float m_Y;
 	float m_W;
 	float m_H;
+	int m_Source;
 };
 
 // Approximate on-screen bounds in the standard 300-unit-high HUD space. The
 // editor uses these as drag handles and outlines; the actual drawing is moved
 // by translating the render target, so the bounds only need to be close.
 const SHudModuleDef s_aHudModuleDefs[HUD_MODULE_COUNT] = {
-	{"Health and ammo", HUD_ALIGN_LEFT, 0.0f, 0.0f, 62.0f, 52.0f},
-	{"Player state", HUD_ALIGN_LEFT, 0.0f, 0.0f, 150.0f, 76.0f},
-	{"Spectator count", HUD_ALIGN_RIGHT, 0.0f, 250.0f, 46.0f, 16.0f},
-	{"Movement information", HUD_ALIGN_RIGHT, 0.0f, 222.0f, 72.0f, 62.0f},
-	{"DDRace effects", HUD_ALIGN_CENTER, 0.0f, 22.0f, 160.0f, 24.0f},
-	{"Spectating bar", HUD_ALIGN_RIGHT, 0.0f, 272.0f, 190.0f, 16.0f},
-	{"Game timer", HUD_ALIGN_CENTER, 0.0f, 0.0f, 100.0f, 14.0f},
-	{"Pause notification", HUD_ALIGN_CENTER, 0.0f, 48.0f, 150.0f, 26.0f},
-	{"Sudden death", HUD_ALIGN_CENTER, 0.0f, 0.0f, 110.0f, 14.0f},
-	{"Score HUD", HUD_ALIGN_RIGHT, 0.0f, 224.0f, 170.0f, 60.0f},
-	{"Dummy actions", HUD_ALIGN_RIGHT, 0.0f, 218.0f, 20.0f, 32.0f},
-	{"Warmup timer", HUD_ALIGN_CENTER, 0.0f, 46.0f, 130.0f, 30.0f},
-	{"FPS and debug info", HUD_ALIGN_RIGHT, 0.0f, 0.0f, 90.0f, 44.0f},
-	{"Local time", HUD_ALIGN_FRACTION, 0.42f, 0.0f, 34.0f, 14.0f},
-	{"Connection warning", HUD_ALIGN_CENTER, 0.0f, 48.0f, 220.0f, 26.0f},
-	{"Team balance warning", HUD_ALIGN_LEFT, 5.0f, 50.0f, 130.0f, 14.0f},
-	{"Vote HUD", HUD_ALIGN_LEFT, 0.0f, 58.0f, 122.0f, 52.0f},
-	{"Best times", HUD_ALIGN_LEFT, 0.0f, 72.0f, 110.0f, 22.0f},
-	{"Center lines", HUD_ALIGN_CENTER, 0.0f, 138.0f, 48.0f, 24.0f},
-	{"Status bar", HUD_ALIGN_FULL, 0.0f, -16.0f, 0.0f, 16.0f},
-	{"Telemetry", HUD_ALIGN_RIGHT, 0.0f, 34.0f, 112.0f, 72.0f},
-	{"Swap timers", HUD_ALIGN_LEFT, 0.0f, 34.0f, 150.0f, 90.0f},
-	{"Zero-gravity warning", HUD_ALIGN_CENTER, 0.0f, 32.0f, 170.0f, 24.0f},
-	{"Zero-gravity status", HUD_ALIGN_CENTER, 0.0f, 32.0f, 170.0f, 24.0f},
+	{"Health and ammo", HUD_ALIGN_LEFT, 0.0f, 0.0f, 62.0f, 52.0f, HUD_SOURCE_DDNET},
+	{"Player state", HUD_ALIGN_LEFT, 0.0f, 0.0f, 150.0f, 76.0f, HUD_SOURCE_DDNET},
+	{"Spectator count", HUD_ALIGN_RIGHT, 0.0f, 250.0f, 46.0f, 16.0f, HUD_SOURCE_DDNET},
+	{"Movement information", HUD_ALIGN_RIGHT, 0.0f, 222.0f, 72.0f, 62.0f, HUD_SOURCE_DDNET},
+	{"DDRace effects", HUD_ALIGN_CENTER, 0.0f, 22.0f, 160.0f, 24.0f, HUD_SOURCE_DDNET},
+	{"Spectating bar", HUD_ALIGN_RIGHT, 0.0f, 272.0f, 190.0f, 16.0f, HUD_SOURCE_DDNET},
+	{"Game timer", HUD_ALIGN_CENTER, 0.0f, 0.0f, 100.0f, 14.0f, HUD_SOURCE_DDNET},
+	{"Pause notification", HUD_ALIGN_CENTER, 0.0f, 48.0f, 150.0f, 26.0f, HUD_SOURCE_DDNET},
+	{"Sudden death", HUD_ALIGN_CENTER, 0.0f, 0.0f, 110.0f, 14.0f, HUD_SOURCE_DDNET},
+	{"Score HUD", HUD_ALIGN_RIGHT, 0.0f, 224.0f, 170.0f, 60.0f, HUD_SOURCE_DDNET},
+	{"Dummy actions", HUD_ALIGN_RIGHT, 0.0f, 218.0f, 20.0f, 32.0f, HUD_SOURCE_DDNET},
+	{"Warmup timer", HUD_ALIGN_CENTER, 0.0f, 46.0f, 130.0f, 30.0f, HUD_SOURCE_DDNET},
+	{"FPS and debug info", HUD_ALIGN_RIGHT, 0.0f, 0.0f, 90.0f, 44.0f, HUD_SOURCE_DDNET},
+	{"Local time", HUD_ALIGN_FRACTION, 0.42f, 0.0f, 34.0f, 14.0f, HUD_SOURCE_DDNET},
+	{"Connection warning", HUD_ALIGN_CENTER, 0.0f, 48.0f, 220.0f, 26.0f, HUD_SOURCE_DDNET},
+	{"Team balance warning", HUD_ALIGN_LEFT, 5.0f, 50.0f, 130.0f, 14.0f, HUD_SOURCE_DDNET},
+	{"Vote HUD", HUD_ALIGN_LEFT, 0.0f, 58.0f, 122.0f, 52.0f, HUD_SOURCE_DDNET},
+	{"Best times", HUD_ALIGN_LEFT, 0.0f, 72.0f, 110.0f, 22.0f, HUD_SOURCE_DDNET},
+	{"Center lines", HUD_ALIGN_CENTER, 0.0f, 138.0f, 48.0f, 24.0f, HUD_SOURCE_TATER},
+	{"Status bar", HUD_ALIGN_FULL, 0.0f, -16.0f, 0.0f, 16.0f, HUD_SOURCE_TATER},
+	{"Telemetry", HUD_ALIGN_RIGHT, 0.0f, 34.0f, 112.0f, 72.0f, HUD_SOURCE_LAZY},
+	{"Swap timers", HUD_ALIGN_LEFT, 0.0f, 34.0f, 150.0f, 90.0f, HUD_SOURCE_LAZY},
+	{"Zero-gravity warning", HUD_ALIGN_CENTER, 0.0f, 32.0f, 170.0f, 24.0f, HUD_SOURCE_LAZY},
+	{"Zero-gravity status", HUD_ALIGN_CENTER, 0.0f, 32.0f, 170.0f, 24.0f, HUD_SOURCE_LAZY},
 };
+
+static const char *HudModuleSourceName(int Source)
+{
+	switch(Source)
+	{
+	case HUD_SOURCE_DDNET: return "DDNet";
+	case HUD_SOURCE_TATER: return "Tater";
+	case HUD_SOURCE_LAZY: return "Lazy";
+	default: return "";
+	}
+}
 
 static_assert(sizeof(s_aHudModuleDefs) / sizeof(s_aHudModuleDefs[0]) == HUD_MODULE_COUNT, "HUD module table out of sync");
 
@@ -3268,7 +3281,12 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravCheckTimer -= Client()->RenderFrameTime();
 	if(m_ZeroGravCheckTimer > 0.0f)
 		return;
-	m_ZeroGravCheckTimer = 0.05f;
+	m_ZeroGravCheckTimer = ZERO_GRAV_CHECK_INTERVAL;
+	// 0 s starts predicting on the first check; higher values wait until the
+	// tee has held the wall for that many seconds.
+	const int RequiredChecks = std::clamp(
+		round_to_int((float)g_Config.m_LcZeroGravStartDelay / ZERO_GRAV_CHECK_INTERVAL),
+		1, ZERO_GRAV_HISTORY_SIZE);
 
 	const vec2 HookPos = Core.m_HookState == HOOK_GRABBED ? Core.m_HookPos : vec2(pCharacter->m_HookX, pCharacter->m_HookY);
 	const vec2 HookDelta = HookPos - Core.m_Pos;
@@ -3319,7 +3337,7 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	m_ZeroGravHistoryNext = (m_ZeroGravHistoryNext + 1) % ZERO_GRAV_HISTORY_SIZE;
 	m_ZeroGravHistoryCount = std::min(m_ZeroGravHistoryCount + 1, ZERO_GRAV_HISTORY_SIZE);
 
-	if(m_ZeroGravHistoryCount < ZERO_GRAV_HISTORY_SIZE)
+	if(m_ZeroGravHistoryCount < RequiredChecks)
 	{
 		ClearZeroGravityWarning(false);
 		m_ZeroGravMissedChecks = 0;
@@ -3327,19 +3345,23 @@ void CLazyClient::UpdateZeroGravityPredictor()
 	}
 
 	// Only start predicting when the tee has stayed inside the configured
-	// hold area for the last two seconds, which filters out fast map traversal.
-	bool StayedInArea = true;
+	// hold area for the configured start delay, which filters out fast map
+	// traversal. Only the most recent samples are considered so reducing the
+	// delay while holding a wall takes effect immediately.
 	const float HoldRadius = (float)g_Config.m_LcZeroGravHoldTiles * ZERO_GRAV_TILE_SIZE;
-	float MinX = m_aZeroGravHistory[0].x, MaxX = MinX;
-	float MinY = m_aZeroGravHistory[0].y, MaxY = MinY;
-	for(const vec2 &Pos : m_aZeroGravHistory)
+	const int FirstIndex = (m_ZeroGravHistoryNext + ZERO_GRAV_HISTORY_SIZE - RequiredChecks) % ZERO_GRAV_HISTORY_SIZE;
+	const vec2 &FirstPos = m_aZeroGravHistory[FirstIndex];
+	float MinX = FirstPos.x, MaxX = FirstPos.x;
+	float MinY = FirstPos.y, MaxY = FirstPos.y;
+	for(int i = 0; i < RequiredChecks; i++)
 	{
+		const vec2 &Pos = m_aZeroGravHistory[(FirstIndex + i) % ZERO_GRAV_HISTORY_SIZE];
 		MinX = std::min(MinX, Pos.x);
 		MaxX = std::max(MaxX, Pos.x);
 		MinY = std::min(MinY, Pos.y);
 		MaxY = std::max(MaxY, Pos.y);
 	}
-	StayedInArea = MaxX - MinX <= HoldRadius * 2.0f && MaxY - MinY <= HoldRadius * 2.0f;
+	const bool StayedInArea = MaxX - MinX <= HoldRadius * 2.0f && MaxY - MinY <= HoldRadius * 2.0f;
 
 	if(!StayedInArea)
 	{
@@ -3925,6 +3947,15 @@ void CLazyClient::RenderHudEditor()
 	const float Scale = UiHeight / HudHeight;
 	const vec2 MouseHud = Ui()->MousePos() / Scale;
 
+	// The filter bar sits on top of the module outlines. Keep the cursor from
+	// grabbing a module underneath it while the filter buttons are used.
+	const CUIRect FilterBar = {UiWidth / 2.0f - 260.0f, 50.0f, 520.0f, 24.0f};
+	const bool MouseOverFilterBar = Ui()->MouseInside(&FilterBar);
+
+	const auto ModuleMatchesFilter = [&](int ModuleId) {
+		return m_HudEditorFilter < 0 || s_aHudModuleDefs[ModuleId].m_Source == m_HudEditorFilter;
+	};
+
 	auto ModuleRect = [&](int ModuleId) {
 		const CUIRect &StoredRect = m_aHudModuleRects[ModuleId];
 		const bool UseStored = LiveHud && StoredRect.w > 0.0f && StoredRect.h > 0.0f;
@@ -3935,10 +3966,12 @@ void CLazyClient::RenderHudEditor()
 	};
 
 	int Hovered = -1;
-	if(m_HudEditorSettings < 0 && !m_HudEditorConfirm)
+	if(m_HudEditorSettings < 0 && !m_HudEditorConfirm && !MouseOverFilterBar)
 	{
 		for(int i = HUD_MODULE_COUNT - 1; i >= 0; i--)
 		{
+			if(!ModuleMatchesFilter(i))
+				continue;
 			CUIRect Rect = ModuleRect(i);
 			if(Ui()->MouseInside(&Rect))
 			{
@@ -3979,7 +4012,7 @@ void CLazyClient::RenderHudEditor()
 			m_HudEditorSettings = Hovered;
 			m_HudEditorConfirm = false;
 		}
-		else if(Hovered < 0 && Ui()->MouseButtonClicked(1))
+		else if(Hovered < 0 && !MouseOverFilterBar && Ui()->MouseButtonClicked(1))
 		{
 			m_HudEditorConfirm = true;
 			m_HudEditorSettings = -1;
@@ -3991,6 +4024,8 @@ void CLazyClient::RenderHudEditor()
 
 	for(int i = 0; i < HUD_MODULE_COUNT; i++)
 	{
+		if(!ModuleMatchesFilter(i))
+			continue;
 		CUIRect Rect = ModuleRect(i);
 		const bool Hidden = m_aHudModules[i].m_Hidden;
 		const bool Highlight = i == Hovered || i == m_HudEditorSettings;
@@ -4018,9 +4053,31 @@ void CLazyClient::RenderHudEditor()
 	HelpBar.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.75f));
 	Ui()->DoLabel(&HelpBar, Localize("HUD Editor  —  drag to move  •  right-click a module for settings  •  Shift+left-click to hide/show  •  right-click empty space to save/discard"), 8.5f, TEXTALIGN_MC);
 
+	// Client filter. Only outlines from the selected client are drawn and
+	// interactive, which makes overlapping HUD modules much easier to grab.
+	CUIRect FilterBarInner = FilterBar;
+	FilterBarInner.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.90f), IGraphics::CORNER_ALL, 5.0f);
+	FilterBarInner.DrawOutline(ColorRGBA(0.45f, 0.70f, 1.0f, 0.55f));
+	FilterBarInner.Margin(3.0f, &FilterBarInner);
+	CUIRect FilterLabel, FilterButtons;
+	FilterBarInner.VSplitLeft(80.0f, &FilterLabel, &FilterButtons);
+	FilterBar.VSplitLeft(80.0f, &FilterLabel, &FilterButtons);
+	Ui()->DoLabel(&FilterLabel, Localize("Client filter:"), 8.5f, TEXTALIGN_ML);
+	static CButtonContainer s_aHudFilterButtons[HUD_SOURCE_COUNT + 1];
+	const int aFilterValues[HUD_SOURCE_COUNT + 1] = {-1, HUD_SOURCE_DDNET, HUD_SOURCE_TATER, HUD_SOURCE_LAZY};
+	const char *apFilterNames[HUD_SOURCE_COUNT + 1] = {Localize("All"), "DDNet", "Tater", "Lazy"};
+	for(int i = 0; i < HUD_SOURCE_COUNT + 1; i++)
+	{
+		CUIRect FilterButton;
+		FilterButtons.VSplitLeft(FilterButtons.w / (HUD_SOURCE_COUNT + 1 - i), &FilterButton, &FilterButtons);
+		FilterButton.Margin(1.0f, &FilterButton);
+		if(GameClient()->m_Menus.DoButton_Menu(&s_aHudFilterButtons[i], apFilterNames[i], m_HudEditorFilter == aFilterValues[i] ? 1 : 0, &FilterButton))
+			m_HudEditorFilter = aFilterValues[i];
+	}
+
 	if(!LiveHud)
 	{
-		CUIRect PreviewHint = {UiWidth / 2.0f - 360.0f, 48.0f, 720.0f, 20.0f};
+		CUIRect PreviewHint = {UiWidth / 2.0f - 360.0f, 80.0f, 720.0f, 20.0f};
 		PreviewHint.Draw(ColorRGBA(0.03f, 0.04f, 0.06f, 0.80f), IGraphics::CORNER_ALL, 4.0f);
 		Ui()->DoLabel(&PreviewHint, Localize("Preview mode  —  connect to a server to see the live HUD behind these outlines"), 8.0f, TEXTALIGN_MC);
 	}
@@ -4087,7 +4144,7 @@ void CLazyClient::RenderHudEditor()
 		CUIRect Title, Row;
 		Inner.HSplitTop(28.0f, &Title, &Inner);
 		char aTitle[160];
-		str_format(aTitle, sizeof(aTitle), "%s — %s", Localize("Module settings"), Localize(s_aHudModuleDefs[ModuleId].m_pName));
+		str_format(aTitle, sizeof(aTitle), "%s — %s (%s)", Localize("Module settings"), Localize(s_aHudModuleDefs[ModuleId].m_pName), HudModuleSourceName(s_aHudModuleDefs[ModuleId].m_Source));
 		Ui()->DoLabel(&Title, aTitle, 13.0f, TEXTALIGN_ML);
 		Inner.HSplitTop(6.0f, nullptr, &Inner);
 
