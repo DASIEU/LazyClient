@@ -1,5 +1,6 @@
 #include <base/io.h>
 #include <base/log.h>
+#include <base/mem.h>
 #include <base/math.h>
 #include <base/types.h>
 
@@ -235,6 +236,66 @@ static bool ConfigProfileAssetExists(IStorage *pStorage, const char *pKind, cons
 		return true;
 	str_format(aPath, sizeof(aPath), "assets/%s/%s", pKind, pName);
 	return pStorage->FolderExists(aPath, IStorage::TYPE_ALL);
+}
+
+static bool ConfigProfileIsPng(const char *pName)
+{
+	return str_endswith_nocase(pName, ".png") != nullptr;
+}
+
+static bool ConfigProfileIsPngData(const void *pData, unsigned Size)
+{
+	static const unsigned char s_aSignature[] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+	return Size >= sizeof(s_aSignature) && mem_comp(pData, s_aSignature, sizeof(s_aSignature)) == 0;
+}
+
+static void ConfigProfileCollectPngs(IStorage *pStorage, const std::string &Dir, std::vector<std::string> &vOut, int Depth)
+{
+	if(Depth > 4 || vOut.size() >= 512)
+		return;
+
+	struct SPngScanUser
+	{
+		IStorage *m_pStorage;
+		std::string m_Dir;
+		std::vector<std::string> *m_pOut;
+		int m_Depth;
+	};
+	SPngScanUser User{pStorage, Dir, &vOut, Depth};
+	pStorage->ListDirectory(IStorage::TYPE_ALL, Dir.c_str(), [](const char *pName, int IsDir, int DirType, void *pUser) -> int {
+		auto *pScanUser = static_cast<SPngScanUser *>(pUser);
+		if(pName[0] == '.')
+			return 0;
+		const std::string Path = pScanUser->m_Dir + "/" + pName;
+		if(IsDir)
+			ConfigProfileCollectPngs(pScanUser->m_pStorage, Path, *pScanUser->m_pOut, pScanUser->m_Depth + 1);
+		else if(ConfigProfileIsPng(pName))
+			pScanUser->m_pOut->push_back(Path);
+		return 0;
+	}, &User);
+}
+
+static void ConfigProfileCollectAssetPngs(IStorage *pStorage, const char *pKind, const char *pName, std::vector<std::string> &vOut)
+{
+	if(pName[0] == '\0' || str_comp(pName, "default") == 0 || str_comp(pKind, "audio") == 0)
+		return;
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(ConfigProfileIsPng(pName))
+	{
+		str_format(aPath, sizeof(aPath), "assets/%s/%s", pKind, pName);
+		if(pStorage->FileExists(aPath, IStorage::TYPE_ALL))
+			vOut.emplace_back(aPath);
+		return;
+	}
+
+	str_format(aPath, sizeof(aPath), "assets/%s/%s.png", pKind, pName);
+	if(pStorage->FileExists(aPath, IStorage::TYPE_ALL))
+		vOut.emplace_back(aPath);
+
+	str_format(aPath, sizeof(aPath), "assets/%s/%s", pKind, pName);
+	if(pStorage->FolderExists(aPath, IStorage::TYPE_ALL))
+		ConfigProfileCollectPngs(pStorage, aPath, vOut, 0);
 }
 
 static int ConfigProfileScan(const char *pName, int IsDir, int DirType, void *pUser)
@@ -2641,6 +2702,7 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 	static bool s_ProfilePickerNeedsRefresh = true;
 	static int s_ProfileSelected = -1;
 	static int s_ProfileContents = CONFIG_PROFILE_ALL;
+	static bool s_ProfileEmbedAssets = true;
 	static int s_aProfileCheckIds[16];
 	static char s_aProfileStatus[256] = "";
 	static char s_aProfilePickerDir[IO_MAX_PATH_LENGTH] = "";
@@ -2755,13 +2817,70 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 			}, &File);
 		}
 
-		int Files = 0;
+		std::vector<std::string> vEmbeddedFiles;
+		if(s_ProfileEmbedAssets)
+		{
+			if(s_ProfileContents & CONFIG_PROFILE_ASSET_GAME)
+				ConfigProfileCollectAssetPngs(Storage(), "game", g_Config.m_ClAssetGame, vEmbeddedFiles);
+			if(s_ProfileContents & CONFIG_PROFILE_ASSET_EMOTICONS)
+				ConfigProfileCollectAssetPngs(Storage(), "emoticons", g_Config.m_ClAssetEmoticons, vEmbeddedFiles);
+			if(s_ProfileContents & CONFIG_PROFILE_ASSET_PARTICLES)
+				ConfigProfileCollectAssetPngs(Storage(), "particles", g_Config.m_ClAssetParticles, vEmbeddedFiles);
+			if(s_ProfileContents & CONFIG_PROFILE_ASSET_HUD)
+				ConfigProfileCollectAssetPngs(Storage(), "hud", g_Config.m_ClAssetHud, vEmbeddedFiles);
+			if(s_ProfileContents & CONFIG_PROFILE_ASSET_EXTRAS)
+				ConfigProfileCollectAssetPngs(Storage(), "extras", g_Config.m_ClAssetExtras, vEmbeddedFiles);
+			if(s_ProfileContents & CONFIG_PROFILE_ASSET_ENTITIES)
+				ConfigProfileCollectAssetPngs(Storage(), "entities", g_Config.m_ClAssetsEntities, vEmbeddedFiles);
+		}
+
 		for(const std::string &Extra : s_vProfileExtras)
+		{
+			bool Duplicate = false;
+			for(const std::string &Existing : vEmbeddedFiles)
+			{
+				if(str_comp(Existing.c_str(), Extra.c_str()) == 0)
+				{
+					Duplicate = true;
+					break;
+				}
+			}
+			if(!Duplicate)
+				vEmbeddedFiles.push_back(Extra);
+		}
+
+		std::vector<std::string> vUniqueFiles;
+		for(const std::string &EmbeddedFile : vEmbeddedFiles)
+		{
+			bool Duplicate = false;
+			for(const std::string &Existing : vUniqueFiles)
+			{
+				if(str_comp(Existing.c_str(), EmbeddedFile.c_str()) == 0)
+				{
+					Duplicate = true;
+					break;
+				}
+			}
+			if(!Duplicate)
+				vUniqueFiles.push_back(EmbeddedFile);
+		}
+		vEmbeddedFiles = std::move(vUniqueFiles);
+
+		int Files = 0;
+		int PngFiles = 0;
+		for(const std::string &Extra : vEmbeddedFiles)
 		{
 			void *pData = nullptr;
 			unsigned DataSize = 0;
-			if(!ConfigProfileSafePath(Extra.c_str()) || !Storage()->ReadFile(Extra.c_str(), IStorage::TYPE_SAVE, &pData, &DataSize))
+			if(!ConfigProfileSafePath(Extra.c_str()) || !Storage()->ReadFile(Extra.c_str(), IStorage::TYPE_ALL, &pData, &DataSize))
 				continue;
+
+			const bool IsPng = ConfigProfileIsPng(Extra.c_str());
+			if(IsPng && !ConfigProfileIsPngData(pData, DataSize))
+			{
+				free(pData);
+				continue;
+			}
 
 			std::string EncodedName;
 			ConfigProfileEncodeString(Extra.c_str(), EncodedName);
@@ -2777,6 +2896,8 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 			for(size_t Offset = 0; Offset < Encoded.size(); Offset += ChunkSize)
 				WriteLine((std::string(CONFIG_PROFILE_DATA_MARKER) + Encoded.substr(Offset, ChunkSize)).c_str());
 			WriteLine(CONFIG_PROFILE_END_MARKER);
+			if(IsPng)
+				PngFiles++;
 			Files++;
 		}
 
@@ -2798,7 +2919,7 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 				break;
 			}
 		}
-		str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Saved '%s': %d settings, %d extra files."), aSanitized, Settings, Files);
+		str_format(s_aProfileStatus, sizeof(s_aProfileStatus), TCLocalize("Saved '%s': %d settings, %d files embedded (%d PNG assets)."), aSanitized, Settings, Files, PngFiles);
 	};
 
 	auto LoadProfileFile = [&](int Index) {
@@ -2892,6 +3013,12 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 			std::vector<char> Decoded(Encoded.size() / 4 * 3 + 4);
 			const int DecodedSize = str_base64_decode(Decoded.data(), Decoded.size(), Encoded.c_str());
 			if(DecodedSize < 0)
+			{
+				Skipped++;
+				continue;
+			}
+
+			if(ConfigProfileIsPng(Name.c_str()) && !ConfigProfileIsPngData(Decoded.data(), DecodedSize))
 			{
 				Skipped++;
 				continue;
@@ -3098,7 +3225,7 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 
 		CUIRect ProfileHeader;
 		MainView.HSplitTop(16.0f, &ProfileHeader, &MainView);
-		Ui()->DoLabel(&ProfileHeader, TCLocalize("Config profiles (one file: assets, settings, binds and embedded extra files)"), 10.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&ProfileHeader, TCLocalize("Config profiles (one file: settings, binds, asset .png files and extra files)"), 10.0f, TEXTALIGN_ML);
 
 		CUIRect ProfileRow, DropdownButton, NameInputRect, RenameButton, SaveButton, ConfigureButton, NewButton;
 		MainView.HSplitTop(LineSize, &ProfileRow, &MainView);
@@ -3289,6 +3416,12 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 		Ui()->DoLabel(&Row, TCLocalize("# Extra files (embedded)"), 10.0f, TEXTALIGN_ML);
 		Right.HSplitTop(2.0f, nullptr, &Right);
 
+		CUIRect EmbedRow;
+		Right.HSplitTop(LineSize, &EmbedRow, &Right);
+		if(DoButton_CheckBox(&s_aProfileCheckIds[12], TCLocalize("Embed referenced .png assets"), s_ProfileEmbedAssets ? 1 : 0, &EmbedRow))
+			s_ProfileEmbedAssets = !s_ProfileEmbedAssets;
+		Right.HSplitTop(2.0f, nullptr, &Right);
+
 		for(size_t i = 0; i < s_vProfileExtras.size() && i < 5; i++)
 		{
 			CUIRect FileRow;
@@ -3324,7 +3457,7 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 
 		CUIRect Hint;
 		Right.HSplitBottom(28.0f, &Right, &Hint);
-		Ui()->DoLabel(&Hint, TCLocalize("Extra files are stored inside the .cfg, so one file carries your whole setup. Existing files are never overwritten."), 8.0f, TEXTALIGN_ML);
+		Ui()->DoLabel(&Hint, TCLocalize("Referenced .png assets and extra files are stored inside the .cfg, so one file carries your whole setup. Existing files are never overwritten."), 8.0f, TEXTALIGN_ML);
 	}
 	if(s_ProfilePickerOpen)
 	{
