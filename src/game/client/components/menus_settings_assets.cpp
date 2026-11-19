@@ -747,36 +747,294 @@ void CMenus::RenderSettingsAssets(CUIRect MainView)
 	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 }
 
-struct SAssetBakeSlot
+enum
+{
+	BAKE_KIND_GAME = 0,
+	BAKE_KIND_EMOTICONS,
+	BAKE_KIND_PARTICLES,
+	BAKE_KIND_HUD,
+	BAKE_KIND_EXTRAS,
+	BAKE_KIND_ENTITIES,
+	BAKE_KIND_AUDIO,
+	BAKE_KIND_COUNT,
+};
+
+struct SBakeKind
+{
+	const char *m_pLabel;
+	const char *m_pAssetName;
+	const char *m_pFolder;
+	bool m_IsSheet;
+};
+
+static const SBakeKind s_aBakeKinds[BAKE_KIND_COUNT] = {
+	{"Game skin", "game", "assets/game", true},
+	{"Emoticons", "emoticons", "assets/emoticons", true},
+	{"Particles", "particles", "assets/particles", true},
+	{"HUD", "hud", "assets/hud", true},
+	{"Extras", "extras", "assets/extras", true},
+	{"Entities", nullptr, "assets/entities", false},
+	{"Audio", nullptr, "assets/audio", false},
+};
+
+struct SBakeCategory
 {
 	const char *m_pName;
 	std::vector<int> m_vSprites;
 };
 
-static const std::vector<SAssetBakeSlot> &GetAssetBakeSlots()
+struct SBakePackEntry
 {
-	static const std::vector<SAssetBakeSlot> s_vSlots = {
-		{"Crosshairs", {SPRITE_WEAPON_HAMMER_CURSOR, SPRITE_WEAPON_GUN_CURSOR, SPRITE_WEAPON_SHOTGUN_CURSOR, SPRITE_WEAPON_GRENADE_CURSOR, SPRITE_WEAPON_LASER_CURSOR, SPRITE_WEAPON_NINJA_CURSOR}},
-		{"Health & armor", {SPRITE_HEALTH_FULL, SPRITE_HEALTH_EMPTY, SPRITE_ARMOR_FULL, SPRITE_ARMOR_EMPTY}},
-		{"Weapon bodies", {SPRITE_WEAPON_HAMMER_BODY, SPRITE_WEAPON_GUN_BODY, SPRITE_WEAPON_SHOTGUN_BODY, SPRITE_WEAPON_GRENADE_BODY, SPRITE_WEAPON_LASER_BODY, SPRITE_WEAPON_NINJA_BODY}},
-		{"Projectiles", {SPRITE_WEAPON_GUN_PROJ, SPRITE_WEAPON_SHOTGUN_PROJ, SPRITE_WEAPON_GRENADE_PROJ, SPRITE_WEAPON_LASER_PROJ}},
-		{"Muzzles", {SPRITE_WEAPON_GUN_MUZZLE1, SPRITE_WEAPON_GUN_MUZZLE2, SPRITE_WEAPON_GUN_MUZZLE3, SPRITE_WEAPON_SHOTGUN_MUZZLE1, SPRITE_WEAPON_SHOTGUN_MUZZLE2, SPRITE_WEAPON_SHOTGUN_MUZZLE3, SPRITE_WEAPON_NINJA_MUZZLE1, SPRITE_WEAPON_NINJA_MUZZLE2, SPRITE_WEAPON_NINJA_MUZZLE3}},
-		{"Hook", {SPRITE_HOOK_CHAIN, SPRITE_HOOK_HEAD}},
-		{"Pickups", {SPRITE_PICKUP_HEALTH, SPRITE_PICKUP_FREEZE, SPRITE_PICKUP_ARMOR, SPRITE_PICKUP_HAMMER, SPRITE_PICKUP_GUN, SPRITE_PICKUP_SHOTGUN, SPRITE_PICKUP_GRENADE, SPRITE_PICKUP_LASER, SPRITE_PICKUP_NINJA, SPRITE_PICKUP_ARMOR_SHOTGUN, SPRITE_PICKUP_ARMOR_GRENADE, SPRITE_PICKUP_ARMOR_NINJA, SPRITE_PICKUP_ARMOR_LASER}},
-		{"Flags", {SPRITE_FLAG_BLUE, SPRITE_FLAG_RED}},
-		{"Particles & stars", {SPRITE_PART1, SPRITE_PART2, SPRITE_PART3, SPRITE_PART4, SPRITE_PART5, SPRITE_PART6, SPRITE_PART7, SPRITE_PART8, SPRITE_PART9, SPRITE_STAR1, SPRITE_STAR2, SPRITE_STAR3}},
-	};
-	return s_vSlots;
-}
+	std::string m_Name;
+	IGraphics::CTextureHandle m_Texture;
+};
 
-static std::vector<std::string> s_vBakeSlotPacks;
-static std::string s_BakeBasePack;
-static int s_BakeCurrentSlot = 0;
+struct SBakeOverride
+{
+	int m_Kind = 0;
+	int m_SpriteId = -1;
+	std::string m_SourcePack;
+};
+
+static std::vector<SBakeCategory> s_avBakeCategories[BAKE_KIND_COUNT];
+static bool s_aBakeCategoriesInit[BAKE_KIND_COUNT] = {};
+
+static std::vector<SBakePackEntry> s_avBakePacks[BAKE_KIND_COUNT];
+static bool s_aBakePacksLoaded[BAKE_KIND_COUNT] = {};
+static std::vector<SBakeOverride> s_vBakeOverrides;
+
+static int s_BakeKind = BAKE_KIND_GAME;
+static int s_aBakeCategory[BAKE_KIND_COUNT] = {};
+static std::string s_aBakeBasePack[BAKE_KIND_COUNT];
 static bool s_BakeStateInitialized = false;
 static char s_aBakeStatus[256] = "";
 static CLineInputBuffered<64> s_BakeOutputName;
-static CUi::SDropDownState s_BakeBaseDropDown;
-static CButtonContainer s_aBakeSlotButtons[32];
+static CUi::SDropDownState s_BakeKindDropDown;
+static CUi::SDropDownState s_aBakeBaseDropDown[BAKE_KIND_COUNT];
+static CUi::SDropDownState s_aBakeSpriteDropDown[512];
+static CButtonContainer s_aBakeCategoryButtons[32];
+static CScrollRegion s_BakeCategoryScroll;
+static CScrollRegion s_BakeItemScroll;
+static CScrollRegion s_BakeFolderScroll;
+
+static bool BakeSpriteBelongsToImage(const CDataSprite &Sprite, const char *pImageName)
+{
+	return Sprite.m_pSet != nullptr && Sprite.m_pSet->m_pImage != nullptr &&
+	       pImageName != nullptr && str_comp(Sprite.m_pSet->m_pImage->m_pName, pImageName) == 0;
+}
+
+static const std::vector<SBakeCategory> &GetBakeCategories(int Kind)
+{
+	if(!s_aBakeCategoriesInit[Kind] && g_pData != nullptr)
+	{
+		s_aBakeCategoriesInit[Kind] = true;
+		std::vector<SBakeCategory> &vCategories = s_avBakeCategories[Kind];
+		vCategories.clear();
+
+		if(Kind == BAKE_KIND_GAME)
+		{
+			vCategories = {
+				{"Weapons", {SPRITE_WEAPON_HAMMER_BODY, SPRITE_WEAPON_HAMMER_CURSOR, SPRITE_WEAPON_GUN_BODY, SPRITE_WEAPON_GUN_CURSOR, SPRITE_WEAPON_GUN_PROJ, SPRITE_WEAPON_GUN_MUZZLE1, SPRITE_WEAPON_GUN_MUZZLE2, SPRITE_WEAPON_GUN_MUZZLE3, SPRITE_WEAPON_SHOTGUN_BODY, SPRITE_WEAPON_SHOTGUN_CURSOR, SPRITE_WEAPON_SHOTGUN_PROJ, SPRITE_WEAPON_SHOTGUN_MUZZLE1, SPRITE_WEAPON_SHOTGUN_MUZZLE2, SPRITE_WEAPON_SHOTGUN_MUZZLE3, SPRITE_WEAPON_GRENADE_BODY, SPRITE_WEAPON_GRENADE_CURSOR, SPRITE_WEAPON_GRENADE_PROJ, SPRITE_WEAPON_LASER_BODY, SPRITE_WEAPON_LASER_CURSOR, SPRITE_WEAPON_LASER_PROJ, SPRITE_WEAPON_NINJA_BODY, SPRITE_WEAPON_NINJA_CURSOR, SPRITE_WEAPON_NINJA_MUZZLE1, SPRITE_WEAPON_NINJA_MUZZLE2, SPRITE_WEAPON_NINJA_MUZZLE3}},
+				{"Pickups", {SPRITE_PICKUP_HEALTH, SPRITE_PICKUP_ARMOR, SPRITE_PICKUP_HAMMER, SPRITE_PICKUP_GUN, SPRITE_PICKUP_SHOTGUN, SPRITE_PICKUP_GRENADE, SPRITE_PICKUP_LASER, SPRITE_PICKUP_NINJA, SPRITE_PICKUP_ARMOR_SHOTGUN, SPRITE_PICKUP_ARMOR_GRENADE, SPRITE_PICKUP_ARMOR_NINJA, SPRITE_PICKUP_ARMOR_LASER, SPRITE_PICKUP_FREEZE}},
+				{"Health & armor", {SPRITE_HEALTH_FULL, SPRITE_HEALTH_EMPTY, SPRITE_ARMOR_FULL, SPRITE_ARMOR_EMPTY}},
+				{"Hook", {SPRITE_HOOK_CHAIN, SPRITE_HOOK_HEAD}},
+				{"Flags", {SPRITE_FLAG_BLUE, SPRITE_FLAG_RED}},
+				{"Particles & stars", {SPRITE_PART1, SPRITE_PART2, SPRITE_PART3, SPRITE_PART4, SPRITE_PART5, SPRITE_PART6, SPRITE_PART7, SPRITE_PART8, SPRITE_PART9, SPRITE_STAR1, SPRITE_STAR2, SPRITE_STAR3}},
+			};
+
+			// Also expose any game sprite that is not in one of the curated groups,
+			// so the baker stays complete when sprites are added.
+			std::vector<bool> vUsed(g_pData->m_NumSprites, false);
+			for(const SBakeCategory &Category : vCategories)
+			{
+				for(int SpriteId : Category.m_vSprites)
+				{
+					if(SpriteId >= 0 && SpriteId < g_pData->m_NumSprites)
+						vUsed[SpriteId] = true;
+				}
+			}
+			SBakeCategory Other;
+			Other.m_pName = "Other game sprites";
+			for(int i = 0; i < g_pData->m_NumSprites; i++)
+			{
+				if(BakeSpriteBelongsToImage(g_pData->m_aSprites[i], "game") && !vUsed[i])
+					Other.m_vSprites.push_back(i);
+			}
+			if(!Other.m_vSprites.empty())
+				vCategories.push_back(Other);
+		}
+		else
+		{
+			SBakeCategory All;
+			All.m_pName = "All sprites";
+			for(int i = 0; i < g_pData->m_NumSprites; i++)
+			{
+				if(BakeSpriteBelongsToImage(g_pData->m_aSprites[i], s_aBakeKinds[Kind].m_pAssetName))
+					All.m_vSprites.push_back(i);
+			}
+			vCategories.push_back(All);
+		}
+	}
+	return s_avBakeCategories[Kind];
+}
+
+struct SBakePackScanUser
+{
+	std::vector<std::string> *m_pNames;
+	bool m_AllowFiles;
+};
+
+static int BakePackScan(const char *pName, int IsDir, int DirType, void *pUser)
+{
+	auto *pUserData = static_cast<SBakePackScanUser *>(pUser);
+	if(pName[0] == '.')
+		return 0;
+	if(!IsDir && (!pUserData->m_AllowFiles || str_endswith_nocase(pName, ".png") == nullptr))
+		return 0;
+
+	std::string Name = pName;
+	if(!IsDir)
+		Name.resize(Name.size() - 4);
+	for(const std::string &Existing : *pUserData->m_pNames)
+	{
+		if(Existing == Name)
+			return 0;
+	}
+	pUserData->m_pNames->push_back(Name);
+	return 0;
+}
+
+static bool FindBakeSheetPath(int Kind, const char *pPack, char *pBuffer, int BufferSize, IStorage *pStorage)
+{
+	const SBakeKind &KindInfo = s_aBakeKinds[Kind];
+	if(str_comp(pPack, "default") == 0)
+	{
+		str_format(pBuffer, BufferSize, "%s.png", KindInfo.m_pAssetName);
+		return pStorage->FileExists(pBuffer, IStorage::TYPE_ALL);
+	}
+
+	str_format(pBuffer, BufferSize, "%s/%s.png", KindInfo.m_pFolder, pPack);
+	if(pStorage->FileExists(pBuffer, IStorage::TYPE_ALL))
+		return true;
+
+	str_format(pBuffer, BufferSize, "%s/%s/%s.png", KindInfo.m_pFolder, pPack, KindInfo.m_pAssetName);
+	return pStorage->FileExists(pBuffer, IStorage::TYPE_ALL);
+}
+
+static void BakeUnloadPacks(IGraphics *pGraphics)
+{
+	for(int Kind = 0; Kind < BAKE_KIND_COUNT; Kind++)
+	{
+		for(SBakePackEntry &Pack : s_avBakePacks[Kind])
+		{
+			if(Pack.m_Texture.IsValid())
+				pGraphics->UnloadTexture(&Pack.m_Texture);
+		}
+		s_avBakePacks[Kind].clear();
+		s_aBakePacksLoaded[Kind] = false;
+		s_aBakeCategoriesInit[Kind] = false;
+		s_avBakeCategories[Kind].clear();
+	}
+}
+
+static void BakeLoadPacks(int Kind, IGraphics *pGraphics, IStorage *pStorage)
+{
+	if(s_aBakePacksLoaded[Kind])
+		return;
+	s_aBakePacksLoaded[Kind] = true;
+
+	const SBakeKind &KindInfo = s_aBakeKinds[Kind];
+	std::vector<SBakePackEntry> &vPacks = s_avBakePacks[Kind];
+	vPacks.clear();
+
+	SBakePackEntry Default;
+	Default.m_Name = "default";
+	if(KindInfo.m_IsSheet)
+	{
+		char aPath[IO_MAX_PATH_LENGTH];
+		if(FindBakeSheetPath(Kind, "default", aPath, sizeof(aPath), pStorage))
+			Default.m_Texture = pGraphics->LoadTexture(aPath, IStorage::TYPE_ALL);
+	}
+	vPacks.push_back(std::move(Default));
+
+	std::vector<std::string> vNames;
+	// Sheet packs can be either folders or plain PNGs. Entities additionally
+	// accept a single PNG. Audio packs are always folders.
+	SBakePackScanUser User{&vNames, Kind != BAKE_KIND_AUDIO};
+	pStorage->ListDirectory(IStorage::TYPE_ALL, KindInfo.m_pFolder, BakePackScan, &User);
+	if(Kind == BAKE_KIND_AUDIO)
+	{
+		// Stock audio packs may live in the regular data "audio" folder too.
+		pStorage->ListDirectory(IStorage::TYPE_ALL, "audio", BakePackScan, &User);
+	}
+	std::sort(vNames.begin(), vNames.end());
+
+	for(const std::string &Name : vNames)
+	{
+		SBakePackEntry Pack;
+		Pack.m_Name = Name;
+		if(KindInfo.m_IsSheet)
+		{
+			char aPath[IO_MAX_PATH_LENGTH];
+			if(FindBakeSheetPath(Kind, Name.c_str(), aPath, sizeof(aPath), pStorage))
+				Pack.m_Texture = pGraphics->LoadTexture(aPath, IStorage::TYPE_ALL);
+		}
+		vPacks.push_back(std::move(Pack));
+	}
+}
+
+static int BakeFindPackIndex(int Kind, const char *pName)
+{
+	const std::vector<SBakePackEntry> &vPacks = s_avBakePacks[Kind];
+	for(size_t i = 0; i < vPacks.size(); i++)
+	{
+		if(str_comp(vPacks[i].m_Name.c_str(), pName) == 0)
+			return (int)i;
+	}
+	return -1;
+}
+
+static int BakeFindOverride(int Kind, int SpriteId)
+{
+	for(size_t i = 0; i < s_vBakeOverrides.size(); i++)
+	{
+		if(s_vBakeOverrides[i].m_Kind == Kind && s_vBakeOverrides[i].m_SpriteId == SpriteId)
+			return (int)i;
+	}
+	return -1;
+}
+
+static bool LoadBakeSheetImage(int Kind, const char *pPack, CImageInfo &Image, IStorage *pStorage)
+{
+	char aPath[IO_MAX_PATH_LENGTH];
+	if(!FindBakeSheetPath(Kind, pPack, aPath, sizeof(aPath), pStorage))
+		return false;
+
+	IOHANDLE File = pStorage->OpenFile(aPath, IOFLAG_READ, IStorage::TYPE_ALL);
+	if(!File)
+		return false;
+
+	int PngliteIncompatible = 0;
+	return CImageLoader::LoadPng(File, aPath, Image, PngliteIncompatible);
+}
+
+static void CopyToRgba(const CImageInfo &Src, CImageInfo &Dst)
+{
+	Dst.m_Width = Src.m_Width;
+	Dst.m_Height = Src.m_Height;
+	Dst.m_Format = CImageInfo::FORMAT_RGBA;
+	Dst.Allocate();
+	if(Src.m_Format == CImageInfo::FORMAT_RGBA)
+	{
+		mem_copy(Dst.m_pData, Src.m_pData, Src.DataSize());
+		return;
+	}
+	for(size_t y = 0; y < Src.m_Height; ++y)
+	{
+		for(size_t x = 0; x < Src.m_Width; ++x)
+			Dst.SetPixelColor(x, y, Src.PixelColor(x, y));
+	}
+}
 
 static void GetBakeSpriteRect(const CImageInfo &Image, const CDataSprite &Sprite, int &X, int &Y, int &W, int &H)
 {
@@ -831,57 +1089,9 @@ static void BlitBakeSprite(CImageInfo &Dst, const CImageInfo &Src, const CDataSp
 	}
 }
 
-static bool FindGameAssetPath(const char *pName, char *pBuffer, int BufferSize, IStorage *pStorage)
-{
-	if(str_comp(pName, "default") == 0)
-	{
-		str_copy(pBuffer, "game.png", BufferSize);
-		return pStorage->FileExists(pBuffer, IStorage::TYPE_ALL);
-	}
-
-	str_format(pBuffer, BufferSize, "assets/game/%s.png", pName);
-	if(pStorage->FileExists(pBuffer, IStorage::TYPE_ALL))
-		return true;
-
-	str_format(pBuffer, BufferSize, "assets/game/%s/game.png", pName);
-	return pStorage->FileExists(pBuffer, IStorage::TYPE_ALL);
-}
-
-static bool LoadGameAssetImage(const char *pName, CImageInfo &Image, IStorage *pStorage)
-{
-	char aPath[IO_MAX_PATH_LENGTH];
-	if(!FindGameAssetPath(pName, aPath, sizeof(aPath), pStorage))
-		return false;
-
-	IOHANDLE File = pStorage->OpenFile(aPath, IOFLAG_READ, IStorage::TYPE_ALL);
-	if(!File)
-		return false;
-
-	int PngliteIncompatible = 0;
-	return CImageLoader::LoadPng(File, aPath, Image, PngliteIncompatible);
-}
-
-static void CopyToRgba(const CImageInfo &Src, CImageInfo &Dst)
-{
-	Dst.m_Width = Src.m_Width;
-	Dst.m_Height = Src.m_Height;
-	Dst.m_Format = CImageInfo::FORMAT_RGBA;
-	Dst.Allocate();
-	if(Src.m_Format == CImageInfo::FORMAT_RGBA)
-	{
-		mem_copy(Dst.m_pData, Src.m_pData, Src.DataSize());
-		return;
-	}
-	for(size_t y = 0; y < Src.m_Height; ++y)
-	{
-		for(size_t x = 0; x < Src.m_Width; ++x)
-			Dst.SetPixelColor(x, y, Src.PixelColor(x, y));
-	}
-}
-
 static void DrawBakePreview(IGraphics *pGraphics, IGraphics::CTextureHandle Texture, const std::vector<int> &vSprites, CUIRect Area)
 {
-	if(!Texture.IsValid())
+	if(!Texture.IsValid() || Texture.IsNullTexture())
 		return;
 
 	pGraphics->WrapClamp();
@@ -939,213 +1149,463 @@ static void DrawBakePreview(IGraphics *pGraphics, IGraphics::CTextureHandle Text
 	pGraphics->WrapNormal();
 }
 
-void CMenus::BakeGameSkin()
-{
-	const std::vector<SAssetBakeSlot> &vSlots = GetAssetBakeSlots();
-	if(s_vBakeSlotPacks.size() != vSlots.size())
-		s_vBakeSlotPacks.resize(vSlots.size());
+static bool CopyBakeFile(IStorage *pStorage, const char *pSrc, const char *pDst);
 
-	const SCustomGame *pBasePack = nullptr;
-	for(const SCustomGame &Pack : m_vGameList)
+struct SBakeDirScanUser
+{
+	std::vector<std::string> *m_pFiles;
+	std::vector<std::string> *m_pDirs;
+};
+
+static int BakeDirScan(const char *pName, int IsDir, int DirType, void *pUser)
+{
+	auto *pUserData = static_cast<SBakeDirScanUser *>(pUser);
+	if(pName[0] == '.')
+		return 0;
+	if(IsDir)
+		pUserData->m_pDirs->emplace_back(pName);
+	else
+		pUserData->m_pFiles->emplace_back(pName);
+	return 0;
+}
+
+static void CollectBakeFiles(IStorage *pStorage, const char *pDir, const std::string &Prefix, std::vector<std::string> &vOut)
+{
+	std::vector<std::string> vFiles, vDirs;
+	SBakeDirScanUser User{&vFiles, &vDirs};
+	pStorage->ListDirectory(IStorage::TYPE_ALL, pDir, BakeDirScan, &User);
+	std::sort(vFiles.begin(), vFiles.end());
+	std::sort(vDirs.begin(), vDirs.end());
+
+	for(const std::string &File : vFiles)
+		vOut.push_back(Prefix + File);
+	for(const std::string &SubDir : vDirs)
 	{
-		if(str_comp(Pack.m_aName, s_BakeBasePack.c_str()) == 0)
+		char aSubPath[IO_MAX_PATH_LENGTH];
+		str_format(aSubPath, sizeof(aSubPath), "%s/%s", pDir, SubDir.c_str());
+		CollectBakeFiles(pStorage, aSubPath, Prefix + SubDir + "/", vOut);
+	}
+}
+
+static bool CopyBakeFolder(IStorage *pStorage, const char *pSrc, const char *pDst, int &FilesCopied)
+{
+	std::vector<std::string> vFiles, vDirs;
+	SBakeDirScanUser User{&vFiles, &vDirs};
+	pStorage->ListDirectory(IStorage::TYPE_ALL, pSrc, BakeDirScan, &User);
+	if(vFiles.empty() && vDirs.empty())
+		return false;
+
+	std::sort(vFiles.begin(), vFiles.end());
+	std::sort(vDirs.begin(), vDirs.end());
+	pStorage->CreateFolder(pDst, IStorage::TYPE_SAVE);
+
+	for(const std::string &File : vFiles)
+	{
+		char aSrcPath[IO_MAX_PATH_LENGTH];
+		char aDstPath[IO_MAX_PATH_LENGTH];
+		str_format(aSrcPath, sizeof(aSrcPath), "%s/%s", pSrc, File.c_str());
+		str_format(aDstPath, sizeof(aDstPath), "%s/%s", pDst, File.c_str());
+		if(CopyBakeFile(pStorage, aSrcPath, aDstPath))
+			FilesCopied++;
+	}
+	for(const std::string &SubDir : vDirs)
+	{
+		char aSrcPath[IO_MAX_PATH_LENGTH];
+		char aDstPath[IO_MAX_PATH_LENGTH];
+		str_format(aSrcPath, sizeof(aSrcPath), "%s/%s", pSrc, SubDir.c_str());
+		str_format(aDstPath, sizeof(aDstPath), "%s/%s", pDst, SubDir.c_str());
+		CopyBakeFolder(pStorage, aSrcPath, aDstPath, FilesCopied);
+	}
+	return true;
+}
+
+static bool BakeFolderSource(int Kind, const char *pPack, char *pDir, int DirSize, bool &SingleFile, IStorage *pStorage)
+{
+	SingleFile = false;
+	if(Kind == BAKE_KIND_ENTITIES)
+	{
+		if(str_comp(pPack, "default") == 0)
 		{
-			pBasePack = &Pack;
+			str_copy(pDir, "editor/entities_clear", DirSize);
+			return pStorage->FolderExists(pDir, IStorage::TYPE_ALL);
+		}
+		str_format(pDir, DirSize, "assets/entities/%s", pPack);
+		if(pStorage->FolderExists(pDir, IStorage::TYPE_ALL))
+			return true;
+		str_format(pDir, DirSize, "assets/entities/%s.png", pPack);
+		if(pStorage->FileExists(pDir, IStorage::TYPE_ALL))
+		{
+			SingleFile = true;
+			return true;
+		}
+		return false;
+	}
+
+	if(str_comp(pPack, "default") == 0)
+	{
+		str_copy(pDir, "audio", DirSize);
+		return pStorage->FolderExists(pDir, IStorage::TYPE_ALL);
+	}
+	str_format(pDir, DirSize, "assets/audio/%s", pPack);
+	if(pStorage->FolderExists(pDir, IStorage::TYPE_ALL))
+		return true;
+	str_format(pDir, DirSize, "audio/%s", pPack);
+	return pStorage->FolderExists(pDir, IStorage::TYPE_ALL);
+}
+
+static bool CopyBakeFile(IStorage *pStorage, const char *pSrc, const char *pDst)
+{
+	IOHANDLE In = pStorage->OpenFile(pSrc, IOFLAG_READ, IStorage::TYPE_ALL);
+	if(!In)
+		return false;
+	IOHANDLE Out = pStorage->OpenFile(pDst, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+	if(!Out)
+	{
+		io_close(In);
+		return false;
+	}
+
+	char aBuffer[8192];
+	bool Success = true;
+	while(true)
+	{
+		const unsigned Read = io_read(In, aBuffer, sizeof(aBuffer));
+		if(Read == 0)
+			break;
+		if(io_write(Out, aBuffer, Read) != Read)
+		{
+			Success = false;
 			break;
 		}
 	}
-	if(pBasePack == nullptr)
+	io_close(In);
+	io_close(Out);
+	return Success;
+}
+
+static void BakeSanitizeName(const char *pIn, char *pOut, int OutSize)
+{
+	char aRaw[64];
+	int Out = 0;
+	for(int i = 0; pIn[i] != '\0' && Out < (int)sizeof(aRaw) - 1; i++)
+	{
+		unsigned char c = (unsigned char)pIn[i];
+		if(!std::isalnum(c) && c != '-' && c != '_' && c != ' ')
+			c = '_';
+		aRaw[Out++] = (char)c;
+	}
+	while(Out > 0 && aRaw[Out - 1] == ' ')
+		Out--;
+	aRaw[Out] = '\0';
+	if(aRaw[0] == '\0')
+		str_copy(aRaw, "custom", sizeof(aRaw));
+	str_copy(pOut, aRaw, OutSize);
+}
+
+void CMenus::BakeGameSkin()
+{
+	BakeLoadPacks(s_BakeKind, Graphics(), Storage());
+	const SBakeKind &KindInfo = s_aBakeKinds[s_BakeKind];
+	const std::vector<SBakePackEntry> &vPacks = s_avBakePacks[s_BakeKind];
+
+	if(vPacks.empty())
+	{
+		str_copy(s_aBakeStatus, "No asset packs found.", sizeof(s_aBakeStatus));
+		return;
+	}
+
+	const std::string &BasePack = s_aBakeBasePack[s_BakeKind];
+	if(BakeFindPackIndex(s_BakeKind, BasePack.c_str()) < 0)
 	{
 		str_copy(s_aBakeStatus, "Select a valid base pack first.", sizeof(s_aBakeStatus));
 		return;
 	}
 
-	CImageInfo BaseImage;
-	if(!LoadGameAssetImage(s_BakeBasePack.c_str(), BaseImage, Storage()))
-	{
-		str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not load base pack \"%s\".", s_BakeBasePack.c_str());
-		return;
-	}
+	char aRequested[64];
+	BakeSanitizeName(s_BakeOutputName.GetString(), aRequested, sizeof(aRequested));
 
-	CImageInfo Result;
-	CopyToRgba(BaseImage, Result);
-	BaseImage.Free();
-
-	std::map<std::string, std::unique_ptr<CImageInfo>> LoadedImages;
-	int OverrideCount = 0;
-	for(size_t i = 0; i < vSlots.size(); ++i)
-	{
-		const std::string &SelectedPack = s_vBakeSlotPacks[i];
-		if(SelectedPack.empty() || SelectedPack == s_BakeBasePack)
-			continue;
-
-		auto It = LoadedImages.find(SelectedPack);
-		if(It == LoadedImages.end())
-		{
-			auto pImage = std::make_unique<CImageInfo>();
-			if(!LoadGameAssetImage(SelectedPack.c_str(), *pImage, Storage()))
-			{
-				str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not load \"%s\" for %s.", SelectedPack.c_str(), vSlots[i].m_pName);
-				Result.Free();
-				return;
-			}
-			It = LoadedImages.emplace(SelectedPack, std::move(pImage)).first;
-		}
-
-		for(int SpriteId : vSlots[i].m_vSprites)
-			BlitBakeSprite(Result, *It->second, g_pData->m_aSprites[SpriteId]);
-		OverrideCount++;
-	}
-
-	char aName[64];
-	str_copy(aName, s_BakeOutputName.GetString(), sizeof(aName));
-	if(aName[0] == '\0')
-		str_copy(aName, "custom", sizeof(aName));
-	for(char *p = aName; *p != '\0'; ++p)
-	{
-		const unsigned char c = (unsigned char)*p;
-		if(!std::isalnum(c) && c != '-' && c != '_' && c != ' ')
-			*p = '_';
-	}
-
+	// Find a free output name.
 	char aFinalName[64];
-	str_copy(aFinalName, aName, sizeof(aFinalName));
+	str_copy(aFinalName, aRequested, sizeof(aFinalName));
 	int Suffix = 1;
 	auto NameExists = [&](const char *pName) {
-		for(const SCustomGame &Pack : m_vGameList)
-		{
-			if(str_comp(Pack.m_aName, pName) == 0)
-				return true;
-		}
+		if(BakeFindPackIndex(s_BakeKind, pName) >= 0)
+			return true;
 		char aPath[IO_MAX_PATH_LENGTH];
-		str_format(aPath, sizeof(aPath), "assets/game/%s.png", pName);
-		return Storage()->FileExists(aPath, IStorage::TYPE_SAVE);
+		if(s_BakeKind == BAKE_KIND_ENTITIES)
+			str_format(aPath, sizeof(aPath), "assets/entities/%s", pName);
+		else if(s_BakeKind == BAKE_KIND_AUDIO)
+			str_format(aPath, sizeof(aPath), "assets/audio/%s", pName);
+		else
+			str_format(aPath, sizeof(aPath), "%s/%s.png", KindInfo.m_pFolder, pName);
+		return Storage()->FileExists(aPath, IStorage::TYPE_SAVE) || Storage()->FolderExists(aPath, IStorage::TYPE_SAVE);
 	};
 	while(NameExists(aFinalName))
 	{
-		str_format(aFinalName, sizeof(aFinalName), "%s_%d", aName, Suffix++);
+		str_format(aFinalName, sizeof(aFinalName), "%s_%d", aRequested, Suffix++);
 		if(Suffix > 1000)
 			break;
 	}
 
-	Storage()->CreateFolder("assets", IStorage::TYPE_SAVE);
-	Storage()->CreateFolder("assets/game", IStorage::TYPE_SAVE);
-	char aOutputPath[IO_MAX_PATH_LENGTH];
-	str_format(aOutputPath, sizeof(aOutputPath), "assets/game/%s.png", aFinalName);
-	IOHANDLE File = Storage()->OpenFile(aOutputPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
-	if(!File || !CImageLoader::SavePng(File, aOutputPath, Result))
+	int FilesCopied = 0;
+	int SpriteOverrides = 0;
+
+	if(KindInfo.m_IsSheet)
 	{
+		CImageInfo BaseImage;
+		if(!LoadBakeSheetImage(s_BakeKind, BasePack.c_str(), BaseImage, Storage()))
+		{
+			str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not load base pack \"%s\".", BasePack.c_str());
+			return;
+		}
+
+		CImageInfo Result;
+		CopyToRgba(BaseImage, Result);
+		BaseImage.Free();
+
+		std::map<std::string, std::unique_ptr<CImageInfo>> LoadedImages;
+		for(const SBakeOverride &Override : s_vBakeOverrides)
+		{
+			if(Override.m_Kind != s_BakeKind || Override.m_SourcePack == BasePack)
+				continue;
+			if(Override.m_SpriteId < 0 || Override.m_SpriteId >= g_pData->m_NumSprites)
+				continue;
+
+			auto It = LoadedImages.find(Override.m_SourcePack);
+			if(It == LoadedImages.end())
+			{
+				auto pImage = std::make_unique<CImageInfo>();
+				if(!LoadBakeSheetImage(s_BakeKind, Override.m_SourcePack.c_str(), *pImage, Storage()))
+				{
+					str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not load \"%s\" for %s.", Override.m_SourcePack.c_str(), g_pData->m_aSprites[Override.m_SpriteId].m_pName);
+					Result.Free();
+					return;
+				}
+				It = LoadedImages.emplace(Override.m_SourcePack, std::move(pImage)).first;
+			}
+
+			BlitBakeSprite(Result, *It->second, g_pData->m_aSprites[Override.m_SpriteId]);
+			SpriteOverrides++;
+		}
+
+		Storage()->CreateFolder("assets", IStorage::TYPE_SAVE);
+		Storage()->CreateFolder(KindInfo.m_pFolder, IStorage::TYPE_SAVE);
+		char aOutputPath[IO_MAX_PATH_LENGTH];
+		str_format(aOutputPath, sizeof(aOutputPath), "%s/%s.png", KindInfo.m_pFolder, aFinalName);
+		IOHANDLE File = Storage()->OpenFile(aOutputPath, IOFLAG_WRITE, IStorage::TYPE_SAVE);
+		if(!File || !CImageLoader::SavePng(File, aOutputPath, Result))
+		{
+			Result.Free();
+			str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not write \"%s\".", aOutputPath);
+			return;
+		}
 		Result.Free();
-		str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not write \"%s\".", aOutputPath);
-		return;
 	}
-	Result.Free();
+	else
+	{
+		char aSource[IO_MAX_PATH_LENGTH];
+		bool SingleFile = false;
+		if(!BakeFolderSource(s_BakeKind, BasePack.c_str(), aSource, sizeof(aSource), SingleFile, Storage()))
+		{
+			str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not read base pack \"%s\".", BasePack.c_str());
+			return;
+		}
 
-	str_copy(g_Config.m_ClAssetGame, aFinalName);
+		Storage()->CreateFolder("assets", IStorage::TYPE_SAVE);
+		Storage()->CreateFolder(KindInfo.m_pFolder, IStorage::TYPE_SAVE);
+
+		if(SingleFile)
+		{
+			char aOutputPath[IO_MAX_PATH_LENGTH];
+			str_format(aOutputPath, sizeof(aOutputPath), "%s/%s.png", KindInfo.m_pFolder, aFinalName);
+			if(!CopyBakeFile(Storage(), aSource, aOutputPath))
+			{
+				str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not write \"%s\".", aOutputPath);
+				return;
+			}
+			FilesCopied = 1;
+		}
+		else
+		{
+			std::vector<std::string> vFiles;
+			CollectBakeFiles(Storage(), aSource, "", vFiles);
+			if(vFiles.empty())
+			{
+				str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Base pack \"%s\" contains no files.", BasePack.c_str());
+				return;
+			}
+
+			char aOutputDir[IO_MAX_PATH_LENGTH];
+			str_format(aOutputDir, sizeof(aOutputDir), "%s/%s", KindInfo.m_pFolder, aFinalName);
+			CopyBakeFolder(Storage(), aSource, aOutputDir, FilesCopied);
+			if(FilesCopied == 0)
+			{
+				str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Could not copy the files of \"%s\".", BasePack.c_str());
+				return;
+			}
+		}
+	}
+
+	switch(s_BakeKind)
+	{
+	case BAKE_KIND_GAME:
+		str_copy(g_Config.m_ClAssetGame, aFinalName);
+		GameClient()->LoadGameSkin(aFinalName);
+		ClearCustomItems(ASSETS_TAB_GAME);
+		break;
+	case BAKE_KIND_EMOTICONS:
+		str_copy(g_Config.m_ClAssetEmoticons, aFinalName);
+		GameClient()->LoadEmoticonsSkin(aFinalName);
+		ClearCustomItems(ASSETS_TAB_EMOTICONS);
+		break;
+	case BAKE_KIND_PARTICLES:
+		str_copy(g_Config.m_ClAssetParticles, aFinalName);
+		GameClient()->LoadParticlesSkin(aFinalName);
+		ClearCustomItems(ASSETS_TAB_PARTICLES);
+		break;
+	case BAKE_KIND_HUD:
+		str_copy(g_Config.m_ClAssetHud, aFinalName);
+		GameClient()->LoadHudSkin(aFinalName);
+		ClearCustomItems(ASSETS_TAB_HUD);
+		break;
+	case BAKE_KIND_EXTRAS:
+		str_copy(g_Config.m_ClAssetExtras, aFinalName);
+		GameClient()->LoadExtrasSkin(aFinalName);
+		ClearCustomItems(ASSETS_TAB_EXTRAS);
+		break;
+	case BAKE_KIND_ENTITIES:
+		str_copy(g_Config.m_ClAssetsEntities, aFinalName);
+		GameClient()->m_MapImages.ChangeEntitiesPath(aFinalName);
+		ClearCustomItems(ASSETS_TAB_ENTITIES);
+		break;
+	case BAKE_KIND_AUDIO:
+		str_copy(g_Config.m_SndPack, aFinalName);
+		GameClient()->m_Sounds.Clear();
+		ClearCustomItems(ASSETS_TAB_AUDIO);
+		break;
+	default:
+		dbg_assert_failed("Invalid bake kind %d", s_BakeKind);
+		break;
+	}
+
+	BakeUnloadPacks(Graphics());
+	BakeLoadPacks(s_BakeKind, Graphics(), Storage());
 	s_BakeOutputName.Set(aFinalName);
-	ClearCustomItems(ASSETS_TAB_GAME);
 
-	// Rebuild the pack list immediately so the rest of this frame can use it.
-	SMenuAssetScanUser User;
-	User.m_pUser = this;
-	User.m_LoadedFunc = []() {};
-	SCustomGame DefaultPack;
-	str_copy(DefaultPack.m_aName, "default");
-	LoadAsset(&DefaultPack, "game", Graphics());
-	m_vGameList.push_back(DefaultPack);
-	Storage()->ListDirectory(IStorage::TYPE_ALL, "assets/game", GameScan, &User);
-	std::sort(m_vGameList.begin(), m_vGameList.end());
+	if(KindInfo.m_IsSheet)
+		str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Baked \"%s\" with %d sprite overrides.", aFinalName, SpriteOverrides);
+	else
+		str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Baked \"%s\" with %d files.", aFinalName, FilesCopied);
+}
 
-	str_format(s_aBakeStatus, sizeof(s_aBakeStatus), "Baked \"%s\" with %d overrides.", aFinalName, OverrideCount);
+static void BakeSpriteDisplayName(const char *pName, char *pBuffer, int BufferSize)
+{
+	static const char *const s_apPrefixes[] = {"weapon_", "pickup_", "hud_", "part_"};
+	const char *pDisplay = pName;
+	for(const char *pPrefix : s_apPrefixes)
+	{
+		if(str_startswith(pName, pPrefix) != nullptr)
+		{
+			pDisplay = pName + str_length(pPrefix);
+			break;
+		}
+	}
+
+	int Out = 0;
+	bool Capitalize = true;
+	for(int i = 0; pDisplay[i] != '\0' && Out < BufferSize - 1; i++)
+	{
+		char c = pDisplay[i];
+		if(c == '_')
+		{
+			c = ' ';
+			Capitalize = true;
+		}
+		else if(Capitalize)
+		{
+			c = (char)std::toupper((unsigned char)c);
+			Capitalize = false;
+		}
+		else if(c == ' ')
+		{
+			Capitalize = true;
+		}
+		pBuffer[Out++] = c;
+	}
+	pBuffer[Out] = '\0';
+	if(pBuffer[0] == '\0')
+		str_copy(pBuffer, pName, BufferSize);
 }
 
 void CMenus::RenderAssetBaker(CUIRect MainView)
 {
-	SMenuAssetScanUser User;
-	User.m_pUser = this;
-	User.m_LoadedFunc = []() {};
-
-	if(m_vGameList.empty())
-	{
-		SCustomGame DefaultPack;
-		str_copy(DefaultPack.m_aName, "default");
-		LoadAsset(&DefaultPack, "game", Graphics());
-		m_vGameList.push_back(DefaultPack);
-
-		Storage()->ListDirectory(IStorage::TYPE_ALL, "assets/game", GameScan, &User);
-		std::sort(m_vGameList.begin(), m_vGameList.end());
-	}
-
-	const std::vector<SAssetBakeSlot> &vSlots = GetAssetBakeSlots();
-	if(s_vBakeSlotPacks.size() != vSlots.size())
-		s_vBakeSlotPacks.resize(vSlots.size());
 	if(!s_BakeStateInitialized)
 	{
 		s_BakeStateInitialized = true;
-		s_BakeBasePack = g_Config.m_ClAssetGame;
 		s_BakeOutputName.Set("custom");
+		s_aBakeBasePack[BAKE_KIND_GAME] = g_Config.m_ClAssetGame;
+		s_aBakeBasePack[BAKE_KIND_EMOTICONS] = g_Config.m_ClAssetEmoticons;
+		s_aBakeBasePack[BAKE_KIND_PARTICLES] = g_Config.m_ClAssetParticles;
+		s_aBakeBasePack[BAKE_KIND_HUD] = g_Config.m_ClAssetHud;
+		s_aBakeBasePack[BAKE_KIND_EXTRAS] = g_Config.m_ClAssetExtras;
+		s_aBakeBasePack[BAKE_KIND_ENTITIES] = g_Config.m_ClAssetsEntities;
+		s_aBakeBasePack[BAKE_KIND_AUDIO] = g_Config.m_SndPack;
 	}
-	if(s_BakeCurrentSlot < 0 || s_BakeCurrentSlot >= (int)vSlots.size())
-		s_BakeCurrentSlot = 0;
+	if(s_BakeKind < 0 || s_BakeKind >= BAKE_KIND_COUNT)
+		s_BakeKind = BAKE_KIND_GAME;
 
-	bool BasePackExists = false;
-	for(const SCustomGame &Pack : m_vGameList)
-	{
-		if(str_comp(Pack.m_aName, s_BakeBasePack.c_str()) == 0)
-		{
-			BasePackExists = true;
-			break;
-		}
-	}
-	if(!BasePackExists)
-		s_BakeBasePack = m_vGameList.front().m_aName;
-
-	for(std::string &SelectedPack : s_vBakeSlotPacks)
-	{
-		if(SelectedPack.empty())
-			continue;
-		bool Exists = false;
-		for(const SCustomGame &Pack : m_vGameList)
-		{
-			if(SelectedPack == Pack.m_aName)
-			{
-				Exists = true;
-				break;
-			}
-		}
-		if(!Exists)
-			SelectedPack.clear();
-	}
+	BakeLoadPacks(s_BakeKind, Graphics(), Storage());
+	const SBakeKind &KindInfo = s_aBakeKinds[s_BakeKind];
+	std::vector<SBakePackEntry> &vPacks = s_avBakePacks[s_BakeKind];
 
 	CUIRect Header, Body, Status;
 	MainView.HSplitTop(24.0f, &Header, &Body);
 	Body.HSplitBottom(18.0f, &Body, &Status);
 
-	CUIRect BaseLabel, BaseDropDown, NameLabel, NameEdit, BakeButton, ReloadButton;
-	Header.VSplitLeft(64.0f, &BaseLabel, &Header);
-	Header.VSplitLeft(std::min(210.0f, Header.w * 0.3f), &BaseDropDown, &Header);
-	Header.VSplitLeft(8.0f, nullptr, &Header);
-	Header.VSplitLeft(72.0f, &NameLabel, &Header);
-	Header.VSplitLeft(std::min(170.0f, Header.w * 0.3f), &NameEdit, &Header);
+	CUIRect KindLabel, KindDropDown, BaseLabel, BaseDropDown, NameLabel, NameEdit, BakeButton, ReloadButton;
 	Header.VSplitRight(70.0f, &Header, &ReloadButton);
 	Header.VSplitRight(6.0f, nullptr, &Header);
-	Header.VSplitRight(90.0f, &Header, &BakeButton);
+	Header.VSplitRight(84.0f, &Header, &BakeButton);
+	Header.VSplitRight(6.0f, nullptr, &Header);
+	Header.VSplitRight(120.0f, &Header, &NameEdit);
+	Header.VSplitRight(74.0f, &Header, &NameLabel);
+	Header.VSplitLeft(42.0f, &KindLabel, &Header);
+	Header.VSplitLeft(std::min(140.0f, Header.w * 0.28f), &KindDropDown, &Header);
+	Header.VSplitLeft(8.0f, nullptr, &Header);
+	Header.VSplitLeft(64.0f, &BaseLabel, &Header);
+	Header.VSplitLeft(std::min(140.0f, Header.w * 0.4f), &BaseDropDown, &Header);
 
-	Ui()->DoLabel(&BaseLabel, "Base pack", 11.0f, TEXTALIGN_ML);
-	Ui()->DoLabel(&NameLabel, "Output name", 11.0f, TEXTALIGN_ML);
+	Ui()->DoLabel(&KindLabel, Localize("Asset"), 11.0f, TEXTALIGN_ML);
+	Ui()->DoLabel(&BaseLabel, Localize("Base pack"), 11.0f, TEXTALIGN_ML);
+	Ui()->DoLabel(&NameLabel, Localize("Output name"), 11.0f, TEXTALIGN_ML);
+
+	const char *apKindNames[BAKE_KIND_COUNT];
+	for(int i = 0; i < BAKE_KIND_COUNT; i++)
+		apKindNames[i] = Localize(s_aBakeKinds[i].m_pLabel);
+	const int NewKind = Ui()->DoDropDown(&KindDropDown, s_BakeKind, apKindNames, BAKE_KIND_COUNT, s_BakeKindDropDown);
+	if(NewKind != s_BakeKind && NewKind >= 0 && NewKind < BAKE_KIND_COUNT)
+	{
+		s_BakeKind = NewKind;
+		s_aBakeStatus[0] = '\0';
+		// The rest of this frame uses pack data for the previous kind.
+		return;
+	}
 
 	std::vector<const char *> vpPackNames;
-	vpPackNames.reserve(m_vGameList.size());
+	vpPackNames.reserve(vPacks.size());
 	int BasePackIndex = 0;
-	for(size_t i = 0; i < m_vGameList.size(); ++i)
+	for(size_t i = 0; i < vPacks.size(); i++)
 	{
-		vpPackNames.push_back(m_vGameList[i].m_aName);
-		if(str_comp(m_vGameList[i].m_aName, s_BakeBasePack.c_str()) == 0)
+		vpPackNames.push_back(vPacks[i].m_Name.c_str());
+		if(str_comp(vPacks[i].m_Name.c_str(), s_aBakeBasePack[s_BakeKind].c_str()) == 0)
 			BasePackIndex = (int)i;
 	}
-	const int NewBasePack = Ui()->DoDropDown(&BaseDropDown, BasePackIndex, vpPackNames.data(), (int)vpPackNames.size(), s_BakeBaseDropDown);
-	if(NewBasePack >= 0 && NewBasePack < (int)m_vGameList.size())
-		s_BakeBasePack = m_vGameList[NewBasePack].m_aName;
+	if(!vpPackNames.empty())
+	{
+		const int NewBasePack = Ui()->DoDropDown(&BaseDropDown, BasePackIndex, vpPackNames.data(), (int)vpPackNames.size(), s_aBakeBaseDropDown[s_BakeKind]);
+		if(NewBasePack >= 0 && NewBasePack < (int)vPacks.size())
+			s_aBakeBasePack[s_BakeKind] = vPacks[NewBasePack].m_Name;
+	}
 
 	Ui()->DoEditBox(&s_BakeOutputName, &NameEdit, 11.0f);
 
@@ -1155,113 +1615,185 @@ void CMenus::RenderAssetBaker(CUIRect MainView)
 
 	static CButtonContainer s_BakeReloadId;
 	if(DoButton_Menu(&s_BakeReloadId, Localize("Reload"), 0, &ReloadButton))
-		ClearCustomItems(ASSETS_TAB_GAME);
+	{
+		BakeUnloadPacks(Graphics());
+		s_aBakeStatus[0] = '\0';
+	}
 
 	Ui()->DoLabel(&Status, s_aBakeStatus, 9.5f, TEXTALIGN_ML);
 
-	CUIRect SlotList, Preview;
-	Body.VSplitLeft(190.0f, &SlotList, &Preview);
-	SlotList.VSplitRight(8.0f, &SlotList, nullptr);
-
-	static CScrollRegion s_BakeSlotScroll;
-	CScrollRegionParams ScrollParams;
-	ScrollParams.m_ScrollUnit = 20.0f;
-	ScrollParams.m_ScrollbarThickness = 10.0f;
-	ScrollParams.m_ScrollbarMargin = 3.0f;
-	s_BakeSlotScroll.Begin(&SlotList, &ScrollParams);
-
-	for(int i = 0; i < (int)vSlots.size(); ++i)
+	if(KindInfo.m_IsSheet)
 	{
-		CUIRect Button;
-		SlotList.HSplitTop(22.0f, &Button, &SlotList);
-		SlotList.HSplitTop(3.0f, nullptr, &SlotList);
-		if(!s_BakeSlotScroll.AddRect(Button))
-			continue;
-
-		char aSlotName[80];
-		if(s_vBakeSlotPacks[i].empty())
-			str_copy(aSlotName, vSlots[i].m_pName, sizeof(aSlotName));
-		else
-			str_format(aSlotName, sizeof(aSlotName), "%s *", vSlots[i].m_pName);
-		if(DoButton_MenuTab(&s_aBakeSlotButtons[i], aSlotName, i == s_BakeCurrentSlot, &Button, IGraphics::CORNER_ALL, nullptr, nullptr, nullptr, nullptr, 4.0f))
-			s_BakeCurrentSlot = i;
-	}
-	s_BakeSlotScroll.End();
-
-	const int CurSlot = s_BakeCurrentSlot;
-	const std::vector<int> &vSprites = vSlots[CurSlot].m_vSprites;
-
-	int SelectedIndex = 0;
-	if(!s_vBakeSlotPacks[CurSlot].empty())
-	{
-		SelectedIndex = -1;
-		for(size_t i = 0; i < m_vGameList.size(); ++i)
+		const std::vector<SBakeCategory> &vCategories = GetBakeCategories(s_BakeKind);
+		if(vCategories.empty())
 		{
-			if(s_vBakeSlotPacks[CurSlot] == m_vGameList[i].m_aName)
+			Ui()->DoLabel(&Body, Localize("No sprites found for this asset."), 10.0f, TEXTALIGN_ML);
+			return;
+		}
+		if(s_aBakeCategory[s_BakeKind] < 0 || s_aBakeCategory[s_BakeKind] >= (int)vCategories.size())
+			s_aBakeCategory[s_BakeKind] = 0;
+
+		CUIRect CategoryList, Items;
+		Body.VSplitLeft(160.0f, &CategoryList, &Items);
+		CategoryList.VSplitRight(8.0f, &CategoryList, nullptr);
+
+		CScrollRegionParams CategoryParams;
+		CategoryParams.m_ScrollUnit = 24.0f;
+		CategoryParams.m_ScrollbarThickness = 8.0f;
+		CategoryParams.m_ScrollbarMargin = 2.0f;
+		s_BakeCategoryScroll.Begin(&CategoryList, &CategoryParams);
+		for(int i = 0; i < (int)vCategories.size(); i++)
+		{
+			CUIRect Button;
+			CategoryList.HSplitTop(22.0f, &Button, &CategoryList);
+			CategoryList.HSplitTop(3.0f, nullptr, &CategoryList);
+			if(!s_BakeCategoryScroll.AddRect(Button))
+				continue;
+			if(DoButton_MenuTab(&s_aBakeCategoryButtons[i], Localize(vCategories[i].m_pName), i == s_aBakeCategory[s_BakeKind], &Button, IGraphics::CORNER_ALL, nullptr, nullptr, nullptr, nullptr, 4.0f))
+				s_aBakeCategory[s_BakeKind] = i;
+		}
+		s_BakeCategoryScroll.End();
+
+		const SBakeCategory &Category = vCategories[s_aBakeCategory[s_BakeKind]];
+		if(Category.m_vSprites.empty())
+		{
+			Ui()->DoLabel(&Items, Localize("No sprites found for this category."), 10.0f, TEXTALIGN_ML);
+			return;
+		}
+
+		CUIRect ItemsHeader;
+		Items.HSplitTop(18.0f, &ItemsHeader, &Items);
+		Ui()->DoLabel(&ItemsHeader, Localize("Pick a source pack per sprite. \"Base\" keeps the base pack's sprite."), 10.0f, TEXTALIGN_ML);
+
+		std::vector<const char *> vpSourceNames;
+		vpSourceNames.reserve(vPacks.size() + 1);
+		vpSourceNames.push_back(Localize("Base"));
+		for(const SBakePackEntry &Pack : vPacks)
+			vpSourceNames.push_back(Pack.m_Name.c_str());
+
+		const std::string &BasePackName = s_aBakeBasePack[s_BakeKind];
+		int BaseTextureIndex = BakeFindPackIndex(s_BakeKind, BasePackName.c_str());
+		if(BaseTextureIndex < 0)
+			BaseTextureIndex = 0;
+
+		CScrollRegionParams ItemParams;
+		ItemParams.m_ScrollUnit = 3.0f * 26.0f;
+		ItemParams.m_ScrollbarThickness = 10.0f;
+		ItemParams.m_ScrollbarMargin = 3.0f;
+		ItemParams.m_ForceShowScrollbar = true;
+		s_BakeItemScroll.Begin(&Items, &ItemParams);
+
+		for(int SpriteId : Category.m_vSprites)
+		{
+			if(SpriteId < 0 || SpriteId >= g_pData->m_NumSprites)
+				continue;
+			const CDataSprite &Sprite = g_pData->m_aSprites[SpriteId];
+
+			CUIRect Row;
+			Items.HSplitTop(24.0f, &Row, &Items);
+			Items.HSplitTop(2.0f, nullptr, &Items);
+			if(!s_BakeItemScroll.AddRect(Row))
+				continue;
+
+			int OverrideIndex = BakeFindOverride(s_BakeKind, SpriteId);
+			int CurrentSource = 0;
+			if(OverrideIndex >= 0)
 			{
-				SelectedIndex = (int)i + 1;
-				break;
+				const int PackIndex = BakeFindPackIndex(s_BakeKind, s_vBakeOverrides[OverrideIndex].m_SourcePack.c_str());
+				if(PackIndex >= 0)
+					CurrentSource = PackIndex + 1;
+			}
+
+			CUIRect Thumb, LabelRect, DropDown;
+			Row.VSplitLeft(24.0f, &Thumb, &Row);
+			Row.VSplitRight(190.0f, &LabelRect, &DropDown);
+			DropDown.VSplitLeft(6.0f, nullptr, &DropDown);
+
+			IGraphics::CTextureHandle Texture = vPacks[BaseTextureIndex].m_Texture;
+			if(CurrentSource > 0)
+			{
+				const int PackIndex = CurrentSource - 1;
+				if(PackIndex >= 0 && PackIndex < (int)vPacks.size() && vPacks[PackIndex].m_Texture.IsValid() && !vPacks[PackIndex].m_Texture.IsNullTexture())
+					Texture = vPacks[PackIndex].m_Texture;
+			}
+			const std::vector<int> vOne{SpriteId};
+			DrawBakePreview(Graphics(), Texture, vOne, Thumb);
+
+			char aDisplayName[128];
+			BakeSpriteDisplayName(Sprite.m_pName, aDisplayName, sizeof(aDisplayName));
+			SLabelProperties Props;
+			Props.m_MaxWidth = LabelRect.w;
+			Props.m_EllipsisAtEnd = true;
+			Ui()->DoLabel(&LabelRect, aDisplayName, 10.0f, TEXTALIGN_ML, Props);
+
+			if(SpriteId < (int)(sizeof(s_aBakeSpriteDropDown) / sizeof(s_aBakeSpriteDropDown[0])))
+			{
+				const int NewSource = Ui()->DoDropDown(&DropDown, CurrentSource, vpSourceNames.data(), (int)vpSourceNames.size(), s_aBakeSpriteDropDown[SpriteId]);
+				if(NewSource != CurrentSource && NewSource >= 0)
+				{
+					if(NewSource == 0)
+					{
+						if(OverrideIndex >= 0)
+							s_vBakeOverrides.erase(s_vBakeOverrides.begin() + OverrideIndex);
+					}
+					else
+					{
+						const int PackIndex = NewSource - 1;
+						if(PackIndex >= 0 && PackIndex < (int)vPacks.size())
+						{
+							if(OverrideIndex >= 0)
+								s_vBakeOverrides[OverrideIndex].m_SourcePack = vPacks[PackIndex].m_Name;
+							else
+								s_vBakeOverrides.push_back({s_BakeKind, SpriteId, vPacks[PackIndex].m_Name});
+						}
+					}
+				}
 			}
 		}
+		s_BakeItemScroll.End();
 	}
+	else
+	{
+		CUIRect Info;
+		Body.HSplitTop(20.0f, &Info, &Body);
+		char aInfo[256];
+		str_format(aInfo, sizeof(aInfo), Localize("Baking %s copies every file of the base pack into a new pack. Pick the base pack above."), Localize(KindInfo.m_pLabel));
+		Ui()->DoLabel(&Info, aInfo, 10.0f, TEXTALIGN_ML);
 
-	static CListBox s_BakePreviewList;
-	const int NumItems = (int)m_vGameList.size() + 1;
-	Preview.HSplitTop(18.0f, &Header, &Preview);
-	char aPreviewTitle[128];
-	str_format(aPreviewTitle, sizeof(aPreviewTitle), "Pick %s for this pack (click the base card to use the base pack)", vSlots[CurSlot].m_pName);
-	Ui()->DoLabel(&Header, aPreviewTitle, 11.0f, TEXTALIGN_ML);
-
-	const float Margin = 8.0f;
-	const float CardWidth = 160.0f;
-	const float CardHeight = 112.0f;
-	const int PerRow = std::max(1, (int)(Preview.w / (CardWidth + Margin)));
-	s_BakePreviewList.DoStart(CardHeight + Margin, NumItems, PerRow, 1, SelectedIndex, &Preview, false);
-
-	const IGraphics::CTextureHandle BaseTexture = [&]() {
-		for(const SCustomGame &Pack : m_vGameList)
+		char aSource[IO_MAX_PATH_LENGTH];
+		bool SingleFile = false;
+		if(BakeFolderSource(s_BakeKind, s_aBakeBasePack[s_BakeKind].c_str(), aSource, sizeof(aSource), SingleFile, Storage()))
 		{
-			if(str_comp(Pack.m_aName, s_BakeBasePack.c_str()) == 0)
-				return Pack.m_RenderTexture;
+			std::vector<std::string> vFiles;
+			if(SingleFile)
+			{
+				const char *pFileName = str_rchr(aSource, '/');
+				vFiles.push_back(pFileName != nullptr ? pFileName + 1 : aSource);
+			}
+			else
+			{
+				CollectBakeFiles(Storage(), aSource, "", vFiles);
+			}
+
+			CScrollRegionParams FolderParams;
+			FolderParams.m_ScrollUnit = 3.0f * 18.0f;
+			FolderParams.m_ScrollbarThickness = 10.0f;
+			FolderParams.m_ScrollbarMargin = 3.0f;
+			s_BakeFolderScroll.Begin(&Body, &FolderParams);
+			for(const std::string &File : vFiles)
+			{
+				CUIRect Row;
+				Body.HSplitTop(18.0f, &Row, &Body);
+				if(!s_BakeFolderScroll.AddRect(Row))
+					continue;
+				Ui()->DoLabel(&Row, File.c_str(), 10.0f, TEXTALIGN_ML);
+			}
+			s_BakeFolderScroll.End();
 		}
-		return IGraphics::CTextureHandle();
-	}();
-
-	for(int i = 0; i < NumItems; ++i)
-	{
-		const SCustomGame *pPack = i == 0 ? nullptr : &m_vGameList[i - 1];
-		const void *pId = i == 0 ? (const void *)&s_BakePreviewList : (const void *)pPack;
-		const CListboxItem Item = s_BakePreviewList.DoNextItem(pId, SelectedIndex >= 0 && SelectedIndex == i);
-		if(!Item.m_Visible)
-			continue;
-
-		CUIRect Card = Item.m_Rect;
-		Card.Margin(Margin / 2.0f, &Card);
-		Graphics()->DrawRect(Card.x, Card.y, Card.w, Card.h, ColorRGBA(0.0f, 0.0f, 0.0f, 0.35f), IGraphics::CORNER_ALL, 4.0f);
-
-		CUIRect CardName, CardPreview;
-		Card.HSplitTop(16.0f, &CardName, &CardPreview);
-		CardPreview.Margin(4.0f, &CardPreview);
-
-		SLabelProperties Props;
-		Props.m_MaxWidth = CardName.w;
-		Props.m_EllipsisAtEnd = true;
-		const char *pName = i == 0 ? "Use base pack" : pPack->m_aName;
-		Ui()->DoLabel(&CardName, pName, 10.0f, TEXTALIGN_MC, Props);
-
-		if(i == 0)
-			DrawBakePreview(Graphics(), BaseTexture, {}, CardPreview);
 		else
-			DrawBakePreview(Graphics(), pPack->m_RenderTexture, vSprites, CardPreview);
-	}
-
-	const int NewSelected = s_BakePreviewList.DoEnd();
-	if(NewSelected != SelectedIndex && NewSelected >= 0 && NewSelected < NumItems)
-	{
-		if(NewSelected == 0)
-			s_vBakeSlotPacks[CurSlot].clear();
-		else
-			s_vBakeSlotPacks[CurSlot] = m_vGameList[NewSelected - 1].m_aName;
+		{
+			Ui()->DoLabel(&Body, Localize("Select a valid base pack to see its files."), 10.0f, TEXTALIGN_ML);
+		}
 	}
 }
 
