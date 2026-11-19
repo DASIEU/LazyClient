@@ -1564,9 +1564,9 @@ void CMenus::RenderAssetBaker(CUIRect MainView)
 
 	CUIRect KindLabel, KindDropDown, BaseLabel, BaseDropDown, NameLabel, NameEdit, BakeButton, ReloadButton;
 	Header.VSplitRight(70.0f, &Header, &ReloadButton);
-	Header.VSplitRight(6.0f, nullptr, &Header);
+	Header.VSplitRight(6.0f, &Header, nullptr);
 	Header.VSplitRight(84.0f, &Header, &BakeButton);
-	Header.VSplitRight(6.0f, nullptr, &Header);
+	Header.VSplitRight(6.0f, &Header, nullptr);
 	Header.VSplitRight(120.0f, &Header, &NameEdit);
 	Header.VSplitRight(74.0f, &Header, &NameLabel);
 	Header.VSplitLeft(42.0f, &KindLabel, &Header);
