@@ -37,7 +37,17 @@ void CMenus::RenderSettings(CUIRect MainView)
 		MainView.HSplitBottom(10.0f, &MainView, nullptr);
 	}
 
-	TabBar.HSplitTop(50.0f, &Button, &TabBar);
+	// The tab bar must always fit inside the available height, otherwise the
+	// last tabs are drawn over the screen edge or the settings content. There
+	// are more tabs than the original 600-unit layout was designed for, so
+	// compress spacing and button height (and then the header block) instead
+	// of using hardcoded values.
+	const float TabHeaderHeight = std::min(50.0f, TabBar.h * 0.15f);
+	const float TabRowSpace = std::max(4.0f, (TabBar.h - TabHeaderHeight) / (float)SETTINGS_LENGTH);
+	const float TabSpacing = std::min(10.0f, TabRowSpace * 0.3f);
+	const float TabButtonHeight = std::max(14.0f, std::min(26.0f, TabRowSpace - TabSpacing));
+
+	TabBar.HSplitTop(TabHeaderHeight, &Button, &TabBar);
 	Button.Draw(ms_ColorTabbarActive, IGraphics::CORNER_BR, 10.0f);
 
 	const char *apTabs[SETTINGS_LENGTH] = {
@@ -60,8 +70,8 @@ void CMenus::RenderSettings(CUIRect MainView)
 
 	for(int i = 0; i < SETTINGS_LENGTH; i++)
 	{
-		TabBar.HSplitTop(10.0f, nullptr, &TabBar);
-		TabBar.HSplitTop(26.0f, &Button, &TabBar);
+		TabBar.HSplitTop(TabSpacing, nullptr, &TabBar);
+		TabBar.HSplitTop(TabButtonHeight, &Button, &TabBar);
 		if(DoButton_MenuTab(&s_aTabButtons[i], apTabs[i], g_Config.m_UiSettingsPage == i, &Button, IGraphics::CORNER_R, &m_aAnimatorsSettingsTab[i]))
 			g_Config.m_UiSettingsPage = i;
 	}

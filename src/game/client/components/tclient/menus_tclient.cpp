@@ -2597,6 +2597,19 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 		pCurrentName,
 		pCurrentClan);
 
+	// This page contains many stacked blocks and panels, so it is taller than
+	// the available settings area on small windows, narrow custom aspect
+	// ratios and high-DPI screens. Scroll the whole page instead of letting
+	// the lower blocks (config profiles, file picker, skin profile list) be
+	// pushed out of the window or overlap the blocks above them.
+	CUIRect Viewport = MainView;
+	static CScrollRegion s_ProfilesPageScroll;
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollUnit = 3.0f * LineSize;
+	s_ProfilesPageScroll.Begin(&Viewport, &ScrollParams);
+	MainView = Viewport;
+	const float ContentStartY = MainView.y;
+
 	static int s_SelectedProfile = -1;
 
 	CUIRect Label, Button;
@@ -3233,17 +3246,23 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 
 		CUIRect ProfileRow, DropdownButton, NameInputRect, RenameButton, SaveButton, ConfigureButton, NewButton;
 		MainView.HSplitTop(LineSize, &ProfileRow, &MainView);
-		ProfileRow.VSplitLeft(200.0f, &DropdownButton, &ProfileRow);
-		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
-		ProfileRow.VSplitLeft(170.0f, &NameInputRect, &ProfileRow);
-		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
-		ProfileRow.VSplitLeft(70.0f, &RenameButton, &ProfileRow);
-		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
-		ProfileRow.VSplitLeft(60.0f, &SaveButton, &ProfileRow);
-		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
-		ProfileRow.VSplitLeft(90.0f, &ConfigureButton, &ProfileRow);
-		ProfileRow.VSplitLeft(4.0f, nullptr, &ProfileRow);
-		ProfileRow.VSplitLeft(50.0f, &NewButton, &ProfileRow);
+
+		// Widths are relative so the row cannot draw over the settings tab bar
+		// on narrow windows/custom aspect ratios where the absolute widths
+		// used to exceed the available content area.
+		const float RowGap = 4.0f;
+		const float RowUsable = std::max(0.0f, ProfileRow.w - 5.0f * RowGap);
+		auto TakeRowPart = [&](float Width, CUIRect *pOut) {
+			ProfileRow.VSplitLeft(Width, pOut, &ProfileRow);
+			if(ProfileRow.w > RowGap)
+				ProfileRow.VSplitLeft(RowGap, nullptr, &ProfileRow);
+		};
+		TakeRowPart(RowUsable * 0.30f, &DropdownButton);
+		TakeRowPart(RowUsable * 0.25f, &NameInputRect);
+		TakeRowPart(RowUsable * 0.11f, &RenameButton);
+		TakeRowPart(RowUsable * 0.09f, &SaveButton);
+		TakeRowPart(RowUsable * 0.15f, &ConfigureButton);
+		TakeRowPart(RowUsable * 0.10f, &NewButton);
 
 		static CButtonContainer s_ProfileDropdownButton, s_ProfileRenameButton, s_ProfileSaveButton, s_ProfileConfigureButton, s_ProfileNewButton;
 
@@ -3578,9 +3597,15 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 		}
 	}
 
+	// Give the skin profile list a fixed height so it is part of the page's
+	// scroll layout instead of consuming "whatever is left", which becomes
+	// negative once the blocks above need more than one screen height.
+	CUIRect ProfileListRect;
+	MainView.HSplitTop(220.0f, &ProfileListRect, &MainView);
+
 	const std::vector<CProfile> &ProfileList = GameClient()->m_SkinProfiles.m_Profiles;
 	static CListBox s_ListBox;
-	s_ListBox.DoStart(50.0f, ProfileList.size(), MainView.w / 200.0f, 3, s_SelectedProfile, &MainView, true, IGraphics::CORNER_ALL, true);
+	s_ListBox.DoStart(50.0f, ProfileList.size(), ProfileListRect.w / 200.0f, 3, s_SelectedProfile, &ProfileListRect, true, IGraphics::CORNER_ALL, true);
 
 	static bool s_Indexes[1024];
 
@@ -3594,6 +3619,12 @@ void CMenus::RenderSettingsTClientProfiles(CUIRect MainView)
 	}
 
 	s_SelectedProfile = s_ListBox.DoEnd();
+
+	// Register the full laid-out height so the scrollbar appears whenever the
+	// page does not fit and the page can be scrolled all the way down.
+	const CUIRect ContentRect = {MainView.x, ContentStartY, MainView.w, MainView.y - ContentStartY};
+	s_ProfilesPageScroll.AddRect(ContentRect);
+	s_ProfilesPageScroll.End();
 }
 
 void CMenus::RenderSettingsTClientConfigs(CUIRect MainView)

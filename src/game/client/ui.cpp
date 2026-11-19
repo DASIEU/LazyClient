@@ -452,8 +452,31 @@ float CUi::ButtonColorMul(const void *pId)
 
 const CUIRect *CUi::Screen()
 {
-	m_Screen.h = 600.0f;
-	m_Screen.w = Graphics()->ScreenAspect() * m_Screen.h;
+	// The UI is laid out in a virtual canvas. 600 units of height is the
+	// design baseline, which keeps menu sizes consistent across resolutions.
+	//
+	// The width used to be purely `aspect * 600`. That is fine for wide
+	// windows but makes the canvas narrower and narrower for narrow custom
+	// aspect ratios, portrait windows and some high-DPI setups. Fixed-width
+	// layouts then run out of horizontal space and draw over neighbouring
+	// elements (e.g. the settings pages overlapping their tab bar).
+	//
+	// Instead, grow the canvas vertically for narrow aspect ratios so its
+	// width never drops below the minimum the layouts are designed for. The
+	// whole UI is then scaled down uniformly (and keeps the window's aspect
+	// ratio), which cannot cause overlap. The upper bound stops extremely
+	// narrow aspects from making everything unreadably small.
+	constexpr float DesignHeight = 600.0f;
+	constexpr float MinWidth = 960.0f;
+	constexpr float MaxHeight = 1100.0f;
+
+	const float Aspect = Graphics()->ScreenAspect();
+	float Height = DesignHeight;
+	if(Aspect > 0.0f)
+		Height = std::clamp(MinWidth / Aspect, DesignHeight, MaxHeight);
+
+	m_Screen.h = Height;
+	m_Screen.w = Aspect * Height;
 	return &m_Screen;
 }
 
