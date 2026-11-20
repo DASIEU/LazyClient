@@ -812,6 +812,11 @@ static CLineInputBuffered<64> s_BakeOutputName;
 static CUi::SDropDownState s_BakeKindDropDown;
 static CUi::SDropDownState s_aBakeBaseDropDown[BAKE_KIND_COUNT];
 static CUi::SDropDownState s_aBakeSpriteDropDown[512];
+// Every selection popup needs a scroll region; the popup dereferences it
+// unconditionally when it is rendered.
+static CScrollRegion s_BakeKindScrollRegion;
+static CScrollRegion s_aBakeBaseScrollRegion[BAKE_KIND_COUNT];
+static CScrollRegion s_aBakeSpriteScrollRegion[512];
 static CButtonContainer s_aBakeCategoryButtons[32];
 static CScrollRegion s_BakeCategoryScroll;
 static CScrollRegion s_BakeItemScroll;
@@ -1582,6 +1587,7 @@ void CMenus::RenderAssetBaker(CUIRect MainView)
 	const char *apKindNames[BAKE_KIND_COUNT];
 	for(int i = 0; i < BAKE_KIND_COUNT; i++)
 		apKindNames[i] = Localize(s_aBakeKinds[i].m_pLabel);
+	s_BakeKindDropDown.m_SelectionPopupContext.m_pScrollRegion = &s_BakeKindScrollRegion;
 	const int NewKind = Ui()->DoDropDown(&KindDropDown, s_BakeKind, apKindNames, BAKE_KIND_COUNT, s_BakeKindDropDown);
 	if(NewKind != s_BakeKind && NewKind >= 0 && NewKind < BAKE_KIND_COUNT)
 	{
@@ -1602,6 +1608,7 @@ void CMenus::RenderAssetBaker(CUIRect MainView)
 	}
 	if(!vpPackNames.empty())
 	{
+		s_aBakeBaseDropDown[s_BakeKind].m_SelectionPopupContext.m_pScrollRegion = &s_aBakeBaseScrollRegion[s_BakeKind];
 		const int NewBasePack = Ui()->DoDropDown(&BaseDropDown, BasePackIndex, vpPackNames.data(), (int)vpPackNames.size(), s_aBakeBaseDropDown[s_BakeKind]);
 		if(NewBasePack >= 0 && NewBasePack < (int)vPacks.size())
 			s_aBakeBasePack[s_BakeKind] = vPacks[NewBasePack].m_Name;
@@ -1618,9 +1625,18 @@ void CMenus::RenderAssetBaker(CUIRect MainView)
 	{
 		BakeUnloadPacks(Graphics());
 		s_aBakeStatus[0] = '\0';
+		// The pack list is now empty; it is reloaded at the start of the next
+		// frame, so do not touch it for the remainder of this one.
+		return;
 	}
 
 	Ui()->DoLabel(&Status, s_aBakeStatus, 9.5f, TEXTALIGN_ML);
+
+	if(vPacks.empty())
+	{
+		Ui()->DoLabel(&Body, Localize("No asset packs found."), 10.0f, TEXTALIGN_ML);
+		return;
+	}
 
 	if(KindInfo.m_IsSheet)
 	{
@@ -1728,6 +1744,7 @@ void CMenus::RenderAssetBaker(CUIRect MainView)
 
 			if(SpriteId < (int)(sizeof(s_aBakeSpriteDropDown) / sizeof(s_aBakeSpriteDropDown[0])))
 			{
+				s_aBakeSpriteDropDown[SpriteId].m_SelectionPopupContext.m_pScrollRegion = &s_aBakeSpriteScrollRegion[SpriteId];
 				const int NewSource = Ui()->DoDropDown(&DropDown, CurrentSource, vpSourceNames.data(), (int)vpSourceNames.size(), s_aBakeSpriteDropDown[SpriteId]);
 				if(NewSource != CurrentSource && NewSource >= 0)
 				{
